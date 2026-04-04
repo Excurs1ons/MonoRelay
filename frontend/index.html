@@ -16,8 +16,9 @@
   --accent: #6c5ce7;
   --accent-hover: #7c6ff7;
   --green: #00b894;
-  --red: #e74c3c;
-  --yellow: #fdcb6e;
+--red: #e74c3c;
+--blue: #3498db;
+--yellow: #fdcb6e;
   --orange: #e17055;
   --radius: 10px;
 }
@@ -129,6 +130,7 @@ body {
 }
 .badge-green { background: rgba(0,184,148,0.15); color: var(--green); }
 .badge-red { background: rgba(231,76,60,0.15); color: var(--red); }
+.badge-blue { background: rgba(52,152,219,0.15); color: var(--blue); }
 .badge-yellow { background: rgba(253,203,110,0.15); color: var(--yellow); }
 
 .btn {
@@ -203,6 +205,7 @@ tr:last-child td { border-bottom: none; }
 }
 .toast.success { border-color: var(--green); }
 .toast.error { border-color: var(--red); }
+.toast.info { border-color: var(--blue); }
 @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } }
 
 /* Modal */
@@ -321,6 +324,7 @@ tr:last-child td { border-bottom: none; }
     <div class="tab active" data-tab="overview" onclick="switchTab('overview')"><i data-lucide="layout-dashboard"></i>概览</div>
     <div class="tab" data-tab="providers" onclick="switchTab('providers')"><i data-lucide="plug"></i>提供商</div>
     <div class="tab" data-tab="logs" onclick="switchTab('logs')"><i data-lucide="scroll-text"></i>日志</div>
+    <div class="tab" data-tab="sync" onclick="switchTab('sync')"><i data-lucide="refresh-cw"></i>同步</div>
     <div class="tab" data-tab="config" onclick="switchTab('config')"><i data-lucide="settings"></i>配置</div>
   </div>
 
@@ -372,6 +376,14 @@ tr:last-child td { border-bottom: none; }
           <tbody id="logsTable"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <div id="tab-sync" style="display:none">
+    <div class="card">
+      <div class="card-title"><i data-lucide="refresh-cw"></i> Gist 配置同步</div>
+      <div class="hint" style="margin-bottom:16px">通过 GitHub Gist 同步配置文件，支持多设备备份与恢复</div>
+      <div id="syncStatus"></div>
     </div>
   </div>
 
@@ -444,6 +456,11 @@ tr:last-child td { border-bottom: none; }
       <label>测试模型 ID</label>
       <input type="text" id="provTestModel" placeholder="留空则使用默认模型">
       <div class="hint">测试连接时使用的模型，留空自动选择</div>
+    </div>
+    <div class="form-group" id="provConsoleUrlGroup">
+      <label>控制台 URL</label>
+      <input type="text" id="provConsoleUrl" placeholder="https://console.example.com">
+      <div class="hint">可选，用于快速跳转到提供商管理页面</div>
     </div>
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="closeModal('providerModal')">取消</button>
@@ -603,13 +620,14 @@ function fallbackCopy(text) {
 function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  ['overview','providers','logs','config'].forEach(t => {
+  ['overview','providers','logs','sync','config'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
   });
   lucide.createIcons();
   if (tab === 'overview') refreshAll();
   if (tab === 'providers') loadProviders();
   if (tab === 'logs') loadLogs();
+  if (tab === 'sync') loadSyncStatus();
   if (tab === 'config') loadConfig();
 }
 
@@ -719,6 +737,7 @@ function showAddProvider() {
   document.getElementById('provTimeout').value = '120';
   document.getElementById('provHeaders').value = '';
   document.getElementById('provTestModel').value = '';
+  document.getElementById('provConsoleUrl').value = '';
   onProvTypeChange();
   openModal('providerModal');
 }
@@ -743,6 +762,7 @@ function showEditProvider(name, data) {
   document.getElementById('provTimeout').value = data.timeout || 120;
   document.getElementById('provHeaders').value = data.headers ? JSON.stringify(data.headers, null, 2) : '';
   document.getElementById('provTestModel').value = data.test_model || '';
+  document.getElementById('provConsoleUrl').value = data.console_url || '';
   onProvTypeChange();
   openModal('providerModal');
 }
@@ -763,6 +783,7 @@ async function saveProvider() {
     rate_limit_cooldown: parseInt(document.getElementById('provCooldown').value) || 60,
     timeout: parseInt(document.getElementById('provTimeout').value) || 120,
     test_model: document.getElementById('provTestModel').value.trim() || '',
+    console_url: document.getElementById('provConsoleUrl').value.trim() || '',
   };
 
   const headersStr = document.getElementById('provHeaders').value.trim();
@@ -901,6 +922,9 @@ async function loadProviders() {
     html += '</div>';
     html += '<div style="display:flex;align-items:center;gap:8px">';
     html += '<span class="provider-keys">' + p.keys.length + ' 个密钥</span>';
+    if (p.console_url) {
+      html += '<a href="' + p.console_url + '" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm" onclick="event.stopPropagation()" title="打开控制台"><i data-lucide="external-link"></i></a>';
+    }
     html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();testProvider(\'' + name + '\')"><i data-lucide="zap"></i>测试</button>';
     html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();showModelLibrary(\'' + name + '\')" title="模型库"><i data-lucide="library"></i></button>';
     html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editProvider(\'' + name + '\')" title="编辑"><i data-lucide="pencil"></i></button>';
@@ -1313,6 +1337,111 @@ async function saveConfig() {
   } catch (e) {
     toast('JSON 格式无效: ' + e.message, 'error');
   }
+}
+
+// ---- Sync ----
+async function loadSyncStatus() {
+  const status = await api('/api/sync');
+  if (!status) return;
+
+  const el = document.getElementById('syncStatus');
+  if (!status.enabled || !status.has_token) {
+    el.innerHTML = `
+      <div class="form-group">
+        <label>GitHub Personal Access Token</label>
+        <input type="text" id="syncToken" placeholder="ghp_xxxxx 或 github_pat_xxxxx">
+        <div class="hint">Settings → Developer settings → Personal access tokens → Fine-grained token (Gists read/write)</div>
+      </div>
+      <div class="form-group">
+        <label>Gist ID（留空则自动创建）</label>
+        <input type="text" id="syncGistId" placeholder="留空自动创建新 Gist" value="${status.gist_id || ''}">
+      </div>
+      <button class="btn btn-primary" onclick="setupSync()"><i data-lucide="link"></i>配置同步</button>
+    `;
+  } else {
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <span class="badge badge-green">已启用</span>
+        <span class="mono" style="font-size:12px">Gist: ${status.gist_id || '未创建'}</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="btn btn-primary" onclick="pushConfig()"><i data-lucide="upload"></i>推送到 Gist</button>
+        <button class="btn btn-ghost" onclick="pullConfig()"><i data-lucide="download"></i>从 Gist 拉取</button>
+        <button class="btn btn-danger" onclick="disableSync()"><i data-lucide="unlink"></i>禁用</button>
+      </div>
+      <div id="syncHistory" style="font-size:12px"></div>
+    `;
+    loadSyncHistory();
+  }
+  lucide.createIcons();
+}
+
+async function setupSync() {
+  const token = document.getElementById('syncToken').value.trim();
+  const gistId = document.getElementById('syncGistId').value.trim();
+  if (!token) { toast('Token 不能为空', 'error'); return; }
+
+  const r = await apiPost('/api/sync/setup', { gist_token: token, gist_id: gistId });
+  if (r && r.status === 'ok') {
+    toast('Gist 同步已配置', 'success');
+    loadSyncStatus();
+  } else {
+    toast(r?.detail || '配置失败', 'error');
+  }
+}
+
+async function pushConfig() {
+  toast('正在推送配置...', 'info');
+  const r = await apiPost('/api/sync/push', {});
+  if (r && r.status === 'ok') {
+    toast(`配置已推送到 Gist (${r.gist_id})`, 'success');
+    loadSyncStatus();
+  } else {
+    toast(r?.detail || '推送失败', 'error');
+  }
+}
+
+async function pullConfig() {
+  if (!confirm('从 Gist 拉取配置将覆盖当前配置，确定继续？')) return;
+  toast('正在拉取配置...', 'info');
+  const r = await apiPost('/api/sync/pull', {});
+  if (r && r.status === 'ok') {
+    toast('配置已从 Gist 拉取并应用', 'success');
+    loadSyncStatus();
+    loadConfig();
+  } else {
+    toast(r?.detail || '拉取失败', 'error');
+  }
+}
+
+async function disableSync() {
+  if (!confirm('确定禁用 Gist 同步？')) return;
+  const cfg = await api('/api/config');
+  if (!cfg) return;
+  cfg.sync = { enabled: false, gist_token: '', gist_id: '' };
+  const r = await apiPut('/api/config', cfg);
+  if (r && r.status === 'ok') {
+    toast('同步已禁用', 'success');
+    loadSyncStatus();
+  }
+}
+
+async function loadSyncHistory() {
+  const history = await api('/api/sync/history');
+  const el = document.getElementById('syncHistory');
+  if (!history || !history.length) {
+    el.innerHTML = '<div class="hint">暂无同步历史</div>';
+    return;
+  }
+  let html = '<div style="margin-top:8px"><div style="font-weight:600;margin-bottom:8px">历史记录</div>';
+  for (const h of history) {
+    html += `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span class="mono">${h.version}</span>
+      <span style="color:var(--text-dim)">${new Date(h.committed_at).toLocaleString('zh-CN')}</span>
+    </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 async function checkConnection() {

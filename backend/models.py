@@ -88,6 +88,7 @@ class ProviderConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     web_reverse: Optional[WebReverseConfig] = None
     test_model: str = ""
+    console_url: str = ""
 
 
 class ComplexityConfig(BaseModel):
@@ -137,6 +138,12 @@ class KeySelectionConfig(BaseModel):
     strategy: str = "round-robin"
 
 
+class SyncConfig(BaseModel):
+    enabled: bool = False
+    gist_token: str = ""
+    gist_id: str = ""
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
@@ -144,3 +151,4 @@ class AppConfig(BaseModel):
     key_selection: KeySelectionConfig = Field(default_factory=KeySelectionConfig)
     tool_calling: ToolCallingConfig = Field(default_factory=ToolCallingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    sync: SyncConfig = Field(default_factory=SyncConfig)

@@ -20,6 +20,24 @@ from .streaming import stream_openai_response
 logger = logging.getLogger("prisma.openai_proxy")
 
 
+def _build_url(base_url: str, path: str) -> str:
+    """Build full URL from base_url and endpoint path.
+
+    If base_url already ends with the path (or a longer path containing it),
+    use base_url directly. Otherwise append the path.
+
+    Examples:
+        _build_url("https://api.example.com/v1", "/chat/completions")
+        -> "https://api.example.com/v1/chat/completions"
+
+        _build_url("https://api.example.com/v1/chat/completions", "/chat/completions")
+        -> "https://api.example.com/v1/chat/completions"
+    """
+    if base_url.endswith(path):
+        return base_url
+    return f"{base_url}{path}"
+
+
 async def handle_chat_completions(
     body: dict,
     config: AppConfig,
@@ -50,7 +68,7 @@ async def handle_chat_completions(
     if not key:
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    url = provider_cfg.base_url
+    url = _build_url(provider_cfg.base_url, "/chat/completions")
     headers = {
         "Authorization": f"Bearer {key.key.key}",
         "Content-Type": "application/json",
@@ -102,7 +120,7 @@ async def handle_completions(
     if not key:
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    url = f"{provider_cfg.base_url}/completions"
+    url = _build_url(provider_cfg.base_url, "/completions")
     headers = {
         "Authorization": f"Bearer {key.key.key}",
         "Content-Type": "application/json",
@@ -163,7 +181,7 @@ async def handle_embeddings(
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
             resp = await client.post(
-                f"{provider_cfg.base_url}/embeddings",
+                _build_url(provider_cfg.base_url, "/embeddings"),
                 headers=headers,
                 json=body,
             )

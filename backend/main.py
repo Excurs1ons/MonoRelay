@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+import yaml
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,7 @@ from .proxy.openai_format import (
     handle_models_list,
 )
 from .proxy.anthropic_format import handle_messages
+from .sync import GistSync
 
 logger = logging.getLogger("prisma.main")
 
@@ -80,6 +82,9 @@ async def lifespan(app: FastAPI):
 
     import asyncio
     asyncio.create_task(config_manager.watch())
+
+    # Register hot-reload callback
+    config_manager.on_reload(lambda new, old: init_components(new))
 
     yield
 
@@ -265,6 +270,7 @@ async def api_providers():
             "models": pc.models,
             "headers": pc.headers,
             "test_model": pc.test_model,
+            "console_url": pc.console_url,
             "web_reverse": pc.web_reverse.model_dump() if pc.web_reverse else None,
         }
     return result
@@ -326,6 +332,8 @@ async def api_test_provider(name: str):
     }
 
     url = pc.base_url
+    if pc.provider_type != "web_reverse" and not url.endswith("/chat/completions"):
+        url = f"{url}/chat/completions"
     import time as _time
     start = _time.monotonic()
 
@@ -593,7 +601,10 @@ async def api_get_remote_models(name: str):
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{pc.base_url}/models", headers=headers, timeout=15.0)
+            models_url = pc.base_url
+            if not models_url.endswith("/models"):
+                models_url = f"{pc.base_url}/models"
+            resp = await client.get(models_url, headers=headers, timeout=15.0)
             if resp.status_code == 200:
                 data = resp.json()
                 upstream_models = data.get("data", data) if isinstance(data, dict) else data
@@ -663,6 +674,96 @@ async def api_router_info():
         "model_overrides": cfg.model_overrides,
         "complexity": cfg.complexity.model_dump() if cfg.complexity else None,
     }
+
+
+# Config Sync
+@app.get("/api/sync")
+async def api_sync_status():
+    """Return current sync configuration and status."""
+    sc = config_manager.config.sync
+    return {
+        "enabled": sc.enabled,
+        "gist_id": sc.gist_id,
+        "has_token": bool(sc.gist_token),
+    }
+
+
+@app.post("/api/sync/setup")
+async def api_sync_setup(request: Request):
+    """Configure Gist sync with token and optional gist_id."""
+    try:
+        body = await request.json()
+        token = body.get("gist_token", "").strip()
+        gist_id = body.get("gist_id", "").strip()
+
+        if not token:
+            raise HTTPException(status_code=400, detail="gist_token is required")
+
+        cfg = config_manager.config.model_copy(deep=True)
+        cfg.sync.enabled = True
+        cfg.sync.gist_token = token
+        cfg.sync.gist_id = gist_id
+        config_manager.save(cfg)
+        return {"status": "ok", "message": "Gist sync configured"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/sync/push")
+async def api_sync_push():
+    """Push current config to Gist."""
+    sc = config_manager.config.sync
+    if not sc.enabled or not sc.gist_token:
+        raise HTTPException(status_code=400, detail="Gist sync not configured")
+
+    sync = GistSync(sc.gist_token, sc.gist_id)
+    content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
+    ok = await sync.push(content)
+
+    if ok:
+        # Save updated gist_id if a new gist was created
+        if sync.gist_id and sync.gist_id != sc.gist_id:
+            cfg = config_manager.config.model_copy(deep=True)
+            cfg.sync.gist_id = sync.gist_id
+            config_manager.save(cfg)
+        return {"status": "ok", "message": "Config pushed to Gist", "gist_id": sync.gist_id}
+    raise HTTPException(status_code=500, detail="Failed to push config to Gist")
+
+
+@app.post("/api/sync/pull")
+async def api_sync_pull():
+    """Pull config from Gist and apply."""
+    sc = config_manager.config.sync
+    if not sc.enabled or not sc.gist_token or not sc.gist_id:
+        raise HTTPException(status_code=400, detail="Gist sync not configured")
+
+    sync = GistSync(sc.gist_token, sc.gist_id)
+    content = await sync.pull()
+    if not content:
+        raise HTTPException(status_code=500, detail="Failed to pull config from Gist")
+
+    try:
+        import yaml
+        raw = yaml.safe_load(content)
+        new_cfg = AppConfig(**raw)
+        config_manager.save(new_cfg)
+        init_components(new_cfg)
+        return {"status": "ok", "message": "Config pulled and applied from Gist"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse pulled config: {e}")
+
+
+@app.get("/api/sync/history")
+async def api_sync_history():
+    """Get Gist commit history."""
+    sc = config_manager.config.sync
+    if not sc.enabled or not sc.gist_token or not sc.gist_id:
+        return []
+
+    sync = GistSync(sc.gist_token, sc.gist_id)
+    return await sync.get_history()
 
 
 def run():
