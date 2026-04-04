@@ -231,6 +231,7 @@ async def api_stats():
         "in_memory": summary,
         "persistent": db_stats,
         "keys": key_manager.get_stats(),
+        "models": stats_tracker.get_model_details(),
     }
 
 

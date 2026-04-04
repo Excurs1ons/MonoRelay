@@ -333,6 +333,7 @@ tr:last-child td { border-bottom: none; }
       <div class="stat-card"><div class="stat-label"><i data-lucide="arrow-up-right"></i>总请求数</div><div class="stat-value accent" id="statTotal">0</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="alert-triangle"></i>错误率</div><div class="stat-value red" id="statErrorRate">0%</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="coins"></i>总 Token 数</div><div class="stat-value" id="statTokens">0</div></div>
+      <div class="stat-card"><div class="stat-label"><i data-lucide="calculator"></i>估算 Token 数</div><div class="stat-value yellow" id="statEstimatedTokens">0</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="dollar-sign"></i>预估费用</div><div class="stat-value green" id="statCost">$0</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="clock"></i>平均延迟</div><div class="stat-value yellow" id="statLatency">0ms</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="shield-check"></i>可用密钥</div><div class="stat-value" id="statKeys">0</div></div>
@@ -341,6 +342,16 @@ tr:last-child td { border-bottom: none; }
     <div class="card">
       <div class="card-title"><i data-lucide="bar-chart-3"></i> 各提供商请求分布</div>
       <div id="providerBreakdown" class="empty">暂无数据</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><i data-lucide="cpu"></i> 各模型详细统计</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>模型</th><th>请求数</th><th>错误</th><th>输入Token</th><th>输出Token</th><th>平均延迟</th><th>首字延迟</th><th>输出速度</th><th>流式请求</th></tr></thead>
+          <tbody id="modelStatsTable"><tr><td colspan="9" class="empty">暂无数据</td></tr></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card">
@@ -1238,6 +1249,7 @@ async function refreshAll() {
   document.getElementById('statTotal').textContent = (db.total_requests || s.total_requests || 0).toLocaleString();
   document.getElementById('statErrorRate').textContent = ((s.error_rate || 0) * 100).toFixed(1) + '%';
   document.getElementById('statTokens').textContent = fmtTokens((s.total_tokens_in || 0) + (s.total_tokens_out || 0));
+  document.getElementById('statEstimatedTokens').textContent = fmtTokens(s.total_tokens_estimated || 0);
   document.getElementById('statCost').textContent = '$' + (s.estimated_total_cost || 0).toFixed(4);
   document.getElementById('statLatency').textContent = Math.round(db.avg_latency_ms || 0) + 'ms';
 
@@ -1270,6 +1282,21 @@ async function refreshAll() {
     ).join('');
   } else {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无请求</td></tr>';
+  }
+
+  // Model detailed stats
+  const models = data.models || {};
+  const modelTbody = document.getElementById('modelStatsTable');
+  const modelKeys = Object.keys(models);
+  if (modelKeys.length) {
+    modelTbody.innerHTML = modelKeys.map(m => {
+      const md = models[m];
+      const avgFtt = md.avg_first_token_ms ? Math.round(md.avg_first_token_ms) + 'ms' : '-';
+      const avgSpeed = md.avg_speed_tps ? md.avg_speed_tps.toFixed(1) + ' t/s' : '-';
+      return '<tr><td class="mono" style="font-size:12px">' + m + '</td><td class="mono">' + md.requests + '</td><td class="mono">' + md.errors + '</td><td class="mono">' + fmtTokens(md.total_tokens_in) + '</td><td class="mono">' + fmtTokens(md.total_tokens_out) + '</td><td class="mono">' + Math.round(md.avg_latency_ms) + 'ms</td><td class="mono">' + avgFtt + '</td><td class="mono">' + avgSpeed + '</td><td class="mono">' + md.streaming_requests + '</td></tr>';
+    }).join('');
+  } else {
+    modelTbody.innerHTML = '<tr><td colspan="9" class="empty">暂无数据</td></tr>';
   }
 
   lucide.createIcons();

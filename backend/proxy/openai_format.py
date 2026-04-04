@@ -15,9 +15,44 @@ from ..models import AppConfig
 from ..router import ModelRouter
 from ..stats import StatsTracker, estimate_cost, extract_token_usage
 from ..web_reverse.chatgpt import WebReverseService
-from .streaming import stream_openai_response
+from .streaming import stream_openai_response, extract_stream_usage
 
 logger = logging.getLogger("prisma.openai_proxy")
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count from text.
+
+    Rules:
+    - Chinese characters: 1 char ≈ 1 token
+    - English words: 1 word ≈ 1.3 tokens (average)
+    - Punctuation/spaces: counted as part of words
+    """
+    if not text:
+        return 0
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    non_chinese = text.replace(' ', '').replace('\n', '').replace('\t', '')
+    # Remove Chinese chars from non_chinese count
+    english_chars = len(non_chinese) - sum(1 for c in non_chinese if '\u4e00' <= c <= '\u9fff')
+    # Estimate: Chinese = 1 token/char, English = ~1.3 tokens/word (avg 4 chars/word)
+    english_tokens = max(1, int(english_chars / 4 * 1.3)) if english_chars > 0 else 0
+    return chinese_chars + english_tokens
+
+
+def _estimate_input_tokens(messages: list) -> int:
+    """Estimate input tokens from messages list."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += _estimate_tokens(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and "text" in item:
+                    total += _estimate_tokens(item["text"])
+    # Add overhead for message structure (~3 tokens per message)
+    total += len(messages) * 3
+    return total
 
 
 def _build_url(base_url: str, path: str) -> str:
@@ -83,6 +118,9 @@ async def handle_chat_completions(
     is_stream = body.get("stream", False)
     start_time = time.time()
 
+    mode = "流式" if is_stream else "非流式"
+    logger.info(f"请求发送 | {mode} | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
+
     if is_stream:
         return StreamingResponse(
             _stream_chat(
@@ -138,6 +176,8 @@ async def handle_completions(
     is_stream = body.get("stream", False)
     start_time = time.time()
 
+    logger.info(f"Completion请求发送 | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
+
     if is_stream:
         return StreamingResponse(
             _stream_completion(
@@ -188,6 +228,7 @@ async def handle_embeddings(
         headers.update(provider_cfg.headers)
 
     start_time = time.time()
+    logger.info(f"Embeddings请求发送 | 模型={resolved_model} | 提供商={provider_name}")
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
             resp = await client.post(
@@ -199,8 +240,10 @@ async def handle_embeddings(
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
+                logger.error(f"Embeddings错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 return resp.json()
             key_manager.report_success(key)
+            logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -213,6 +256,7 @@ async def handle_embeddings(
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
+            logger.error(f"Embeddings失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
 
@@ -222,11 +266,122 @@ async def _stream_chat(
 ) -> AsyncGenerator[bytes, None]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
-            async for chunk in stream_openai_response(client, url, headers, body, provider_cfg.timeout):
-                yield chunk
+            tokens_in = None
+            tokens_out = None
+            thinking_tokens = None
+            stream_chunks = 0
+            buffer = b""
+            last_chunk_data = None
+            first_token_ms = None
+            first_token_recorded = False
+            output_content = []  # Accumulate output content for estimation
+
+            async with client.stream(
+                "POST", url, headers=headers, json=body,
+                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")
+                    logger.error(f"Upstream error {response.status_code}: {error_text}")
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    elapsed = time.time() - start_time
+                    await request_logger.log_request(
+                        model=resolved_model, provider=provider_name,
+                        key_label=key.key.label, status_code=response.status_code,
+                        latency_ms=round(elapsed * 1000, 2), streaming=True,
+                        error_message=error_text,
+                    )
+                    stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
+                    err = json.dumps({"error": {"message": error_text, "status_code": response.status_code}})
+                    yield f"data: {err}\n\n".encode()
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+                        buffer += chunk
+                        stream_chunks += 1
+
+                        # Track first token time
+                        if not first_token_recorded:
+                            first_token_ms = (time.time() - start_time) * 1000
+                            first_token_recorded = True
+
+                        # Parse SSE events from buffer
+                        while b"\n\n" in buffer:
+                            event, buffer = buffer.split(b"\n\n", 1)
+                            for line in event.decode("utf-8", errors="replace").split("\n"):
+                                line = line.strip()
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    if data_str == "[DONE]":
+                                        continue
+                                    try:
+                                        data = json.loads(data_str)
+                                        last_chunk_data = data
+                                        usage = data.get("usage")
+                                        if usage:
+                                            tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
+                                            tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
+                                            details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
+                                            thinking_tokens = details.get("reasoning_tokens")
+                                        # Accumulate content for output estimation
+                                        choices = data.get("choices", [])
+                                        if choices and isinstance(choices, list) and len(choices) > 0:
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
+                                            if content:
+                                                output_content.append(content)
+                                    except Exception:
+                                        pass
+
+            # Estimate missing tokens independently
+            is_estimated_in = False
+            is_estimated_out = False
+
+            if tokens_in is None:
+                messages = body.get("messages", [])
+                tokens_in = _estimate_input_tokens(messages)
+                is_estimated_in = True
+
+            if tokens_out is None:
+                full_output = "".join(output_content)
+                if full_output:
+                    tokens_out = _estimate_tokens(full_output)
+                    is_estimated_out = True
+
+            is_estimated = is_estimated_in or is_estimated_out
 
             key_manager.report_success(key)
             elapsed = time.time() - start_time
+            tokens_in = int(tokens_in) if tokens_in is not None else None
+            tokens_out = int(tokens_out) if tokens_out is not None else None
+            thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
+
+            # Detailed logging
+            log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
+            if tokens_in is not None:
+                label = "输入token(估算)" if is_estimated_in else "输入token"
+                log_parts.append(f"{label}={tokens_in}")
+            if thinking_tokens is not None:
+                log_parts.append(f"思考token={thinking_tokens}")
+            log_parts.append(f"流式chunk数={stream_chunks}")
+            if tokens_out is not None:
+                label = "输出token(估算)" if is_estimated_out else "输出token"
+                log_parts.append(f"{label}={tokens_out}")
+            total = (tokens_in or 0) + (tokens_out or 0)
+            if tokens_in is not None or tokens_out is not None:
+                log_parts.append(f"总token={total}")
+            if first_token_ms is not None:
+                log_parts.append(f"首字延迟={round(first_token_ms)}ms")
+            if tokens_out and elapsed > 0:
+                speed = tokens_out / elapsed
+                log_parts.append(f"输出速度={round(speed, 1)} t/s")
+            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(" | ".join(log_parts))
+
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -234,11 +389,24 @@ async def _stream_chat(
                 status_code=200,
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
             )
-            stats_tracker.record_request(provider_name, resolved_model, success=True)
+            stats_tracker.record_request(
+                provider_name, resolved_model,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                success=True,
+                is_estimated=is_estimated_in or is_estimated_out,
+                latency_ms=elapsed * 1000,
+                is_streaming=True,
+                first_token_ms=first_token_ms,
+                stream_chunks=stream_chunks,
+            )
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
+            logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -248,7 +416,7 @@ async def _stream_chat(
                 streaming=True,
                 error_message=str(e),
             )
-            stats_tracker.record_request(provider_name, resolved_model, success=False)
+            stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
             yield f"data: {err}".encode() + b"\n\n"
             yield b"data: [DONE]\n\n"
@@ -280,6 +448,31 @@ async def _non_stream_chat(
             result = resp.json()
             tokens_in, tokens_out = extract_token_usage(result)
 
+            # Extract thinking tokens if available
+            thinking_tokens = None
+            usage = result.get("usage", {})
+            if usage:
+                details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
+                thinking_tokens = details.get("reasoning_tokens")
+
+            tokens_in = int(tokens_in) if tokens_in is not None else None
+            tokens_out = int(tokens_out) if tokens_out is not None else None
+            thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
+
+            # Detailed logging
+            log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
+            if tokens_in is not None:
+                log_parts.append(f"输入token={tokens_in}")
+            if thinking_tokens is not None:
+                log_parts.append(f"思考token={thinking_tokens}")
+            if tokens_out is not None:
+                log_parts.append(f"输出token={tokens_out}")
+            total = (tokens_in or 0) + (tokens_out or 0)
+            if tokens_in is not None or tokens_out is not None:
+                log_parts.append(f"总token={total}")
+            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(" | ".join(log_parts))
+
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -299,6 +492,7 @@ async def _non_stream_chat(
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
+            logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -317,10 +511,68 @@ async def _stream_completion(
 ) -> AsyncGenerator[bytes, None]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
-            async for chunk in stream_openai_response(client, url, headers, body, provider_cfg.timeout):
-                yield chunk
+            tokens_in = None
+            tokens_out = None
+            stream_chunks = 0
+            buffer = b""
+
+            async with client.stream(
+                "POST", url, headers=headers, json=body,
+                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")
+                    logger.error(f"Completion upstream error {response.status_code}: {error_text}")
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    elapsed = time.time() - start_time
+                    await request_logger.log_request(
+                        model=resolved_model, provider=provider_name,
+                        key_label=key.key.label, status_code=response.status_code,
+                        latency_ms=round(elapsed * 1000, 2), streaming=True,
+                        error_message=error_text,
+                    )
+                    stats_tracker.record_request(provider_name, resolved_model, success=False)
+                    err = json.dumps({"error": {"message": error_text, "status_code": response.status_code}})
+                    yield f"data: {err}\n\n".encode()
+                    yield b"data: [DONE]\n\n"
+                    return
+
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+                        buffer += chunk
+                        stream_chunks += 1
+
+                        while b"\n\n" in buffer:
+                            event, buffer = buffer.split(b"\n\n", 1)
+                            for line in event.decode("utf-8", errors="replace").split("\n"):
+                                line = line.strip()
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    if data_str == "[DONE]":
+                                        continue
+                                    try:
+                                        data = json.loads(data_str)
+                                        usage = data.get("usage")
+                                        if usage:
+                                            tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
+                                            tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
+                                    except Exception:
+                                        pass
+
             key_manager.report_success(key)
             elapsed = time.time() - start_time
+            tokens_in = int(tokens_in) if tokens_in is not None else None
+            tokens_out = int(tokens_out) if tokens_out is not None else None
+
+            log_parts = [f"流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
+            if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+            log_parts.append(f"流式chunk数={stream_chunks}")
+            if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
+            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(" | ".join(log_parts))
+
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -328,11 +580,17 @@ async def _stream_completion(
                 status_code=200,
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
             )
-            stats_tracker.record_request(provider_name, resolved_model, success=True)
+            stats_tracker.record_request(
+                provider_name, resolved_model,
+                input_tokens=tokens_in, output_tokens=tokens_out, success=True,
+            )
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
+            logger.error(f"流式Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -358,11 +616,21 @@ async def _non_stream_completion(
             elapsed = time.time() - start_time
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                logger.error(f"Completion错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
             key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_token_usage(result)
+            tokens_in = int(tokens_in) if tokens_in is not None else None
+            tokens_out = int(tokens_out) if tokens_out is not None else None
+
+            log_parts = [f"非流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
+            if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+            if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
+            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(" | ".join(log_parts))
+
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -374,13 +642,12 @@ async def _non_stream_completion(
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
-                input_tokens=tokens_in,
-                output_tokens=tokens_out,
-                success=True,
+                input_tokens=tokens_in, output_tokens=tokens_out, success=True,
             )
             return result
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            logger.error(f"Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
@@ -414,6 +681,7 @@ async def handle_models_list(config: AppConfig) -> dict:
                 "object": "model",
             })
 
+    logger.info(f"模型列表查询 | 返回{len(all_models)}个模型 | 提供商数={len([n for n, p in config.providers.items() if p.enabled])}")
     return {"object": "list", "data": all_models}
 
 

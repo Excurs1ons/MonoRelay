@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 import httpx
 
@@ -16,7 +16,7 @@ async def stream_openai_response(
     headers: dict,
     json_body: dict,
     timeout: int = 120,
-) -> AsyncGenerator[bytes, None]:
+) -> AsyncGenerator[bytes]:
     async with client.stream(
         "POST",
         url,
@@ -44,7 +44,7 @@ async def stream_anthropic_response(
     headers: dict,
     json_body: dict,
     timeout: int = 120,
-) -> AsyncGenerator[bytes, None]:
+) -> AsyncGenerator[bytes]:
     async with client.stream(
         "POST",
         url,
@@ -69,3 +69,26 @@ async def stream_anthropic_response(
 
         if buffer:
             yield buffer
+
+
+def extract_stream_usage(chunk_bytes: bytes) -> Optional[dict]:
+    """Parse SSE chunk to extract token usage from the final [DONE] message.
+
+    OpenAI-compatible APIs include usage in the last data chunk before [DONE].
+    Returns the usage dict if found, None otherwise.
+    """
+    try:
+        text = chunk_bytes.decode("utf-8", errors="replace")
+        for line in text.split("\n"):
+            line = line.strip()
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    continue
+                data = json.loads(data_str)
+                usage = data.get("usage")
+                if usage:
+                    return usage
+    except Exception:
+        pass
+    return None

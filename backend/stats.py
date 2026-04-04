@@ -1,7 +1,10 @@
 """Statistics tracking and cost estimation."""
 from __future__ import annotations
 
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("prisma.stats")
@@ -60,15 +63,65 @@ def extract_anthropic_token_usage(response_data: dict) -> tuple[Optional[int], O
 
 
 class StatsTracker:
-    def __init__(self):
+    DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "stats.json"
+
+    def __init__(self, db_path: str | Path | None = None):
+        self.db_path = Path(db_path) if db_path else self.DEFAULT_PATH
         self.total_requests: int = 0
         self.total_errors: int = 0
         self.total_tokens_in: int = 0
         self.total_tokens_out: int = 0
+        self.total_tokens_estimated: int = 0
         self.total_cost: float = 0.0
         self.requests_by_provider: dict[str, int] = {}
         self.requests_by_model: dict[str, int] = {}
         self.errors_by_provider: dict[str, int] = {}
+        self.model_stats: dict[str, dict] = {}
+
+        # Load persisted stats on init
+        self._load()
+
+    def _load(self):
+        """Load stats from disk if file exists."""
+        if not self.db_path.exists():
+            return
+        try:
+            with open(self.db_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.total_requests = data.get("total_requests", 0)
+            self.total_errors = data.get("total_errors", 0)
+            self.total_tokens_in = data.get("total_tokens_in", 0)
+            self.total_tokens_out = data.get("total_tokens_out", 0)
+            self.total_tokens_estimated = data.get("total_tokens_estimated", 0)
+            self.total_cost = data.get("total_cost", 0.0)
+            self.requests_by_provider = data.get("requests_by_provider", {})
+            self.requests_by_model = data.get("requests_by_model", {})
+            self.errors_by_provider = data.get("errors_by_provider", {})
+            self.model_stats = data.get("model_stats", {})
+            logger.info(f"Stats loaded from {self.db_path} ({self.total_requests} requests)")
+        except Exception as e:
+            logger.warning(f"Failed to load stats: {e}")
+
+    def save(self):
+        """Persist stats to disk."""
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "total_requests": self.total_requests,
+                "total_errors": self.total_errors,
+                "total_tokens_in": self.total_tokens_in,
+                "total_tokens_out": self.total_tokens_out,
+                "total_tokens_estimated": self.total_tokens_estimated,
+                "total_cost": self.total_cost,
+                "requests_by_provider": self.requests_by_provider,
+                "requests_by_model": self.requests_by_model,
+                "errors_by_provider": self.errors_by_provider,
+                "model_stats": self.model_stats,
+            }
+            with open(self.db_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save stats: {e}")
 
     def record_request(
         self,
@@ -77,23 +130,69 @@ class StatsTracker:
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
         success: bool = True,
+        is_estimated: bool = False,
+        latency_ms: float = 0,
+        is_streaming: bool = False,
+        first_token_ms: Optional[float] = None,
+        stream_chunks: int = 0,
     ):
         self.total_requests += 1
         self.requests_by_provider[provider] = self.requests_by_provider.get(provider, 0) + 1
         self.requests_by_model[model] = self.requests_by_model.get(model, 0) + 1
 
-        if input_tokens:
-            self.total_tokens_in += input_tokens
-        if output_tokens:
-            self.total_tokens_out += output_tokens
+        in_tokens = input_tokens or 0
+        out_tokens = output_tokens or 0
 
-        if input_tokens and output_tokens:
-            cost = estimate_cost(model, input_tokens, output_tokens)
+        if input_tokens is not None:
+            self.total_tokens_in += in_tokens
+        if output_tokens is not None:
+            self.total_tokens_out += out_tokens
+        if is_estimated and (input_tokens is not None or output_tokens is not None):
+            self.total_tokens_estimated += in_tokens + out_tokens
+
+        # Calculate cost even with partial token data
+        cost = estimate_cost(model, in_tokens, out_tokens)
+        if input_tokens is not None or output_tokens is not None:
             self.total_cost += cost
 
         if not success:
             self.total_errors += 1
             self.errors_by_provider[provider] = self.errors_by_provider.get(provider, 0) + 1
+
+        # Per-model detailed stats
+        if model not in self.model_stats:
+            self.model_stats[model] = {
+                "requests": 0,
+                "errors": 0,
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "total_latency_ms": 0,
+                "total_first_token_ms": 0,
+                "first_token_count": 0,
+                "streaming_requests": 0,
+                "total_stream_chunks": 0,
+                "total_output_tokens_for_speed": 0,
+                "total_stream_duration_ms": 0,
+            }
+        ms = self.model_stats[model]
+        ms["requests"] += 1
+        if not success:
+            ms["errors"] += 1
+        ms["total_tokens_in"] += in_tokens
+        ms["total_tokens_out"] += out_tokens
+        ms["total_latency_ms"] += latency_ms
+        if is_streaming:
+            ms["streaming_requests"] += 1
+            ms["total_stream_chunks"] += stream_chunks
+            if output_tokens is not None and latency_ms > 0:
+                ms["total_output_tokens_for_speed"] += out_tokens
+                ms["total_stream_duration_ms"] += latency_ms
+        if first_token_ms is not None:
+            ms["total_first_token_ms"] += first_token_ms
+            ms["first_token_count"] += 1
+
+        # Auto-save after each request
+        self.save()
 
     def get_summary(self) -> dict:
         return {
@@ -102,12 +201,36 @@ class StatsTracker:
             "error_rate": self.total_errors / max(self.total_requests, 1),
             "total_tokens_in": self.total_tokens_in,
             "total_tokens_out": self.total_tokens_out,
+            "total_tokens_estimated": self.total_tokens_estimated,
             "total_tokens": self.total_tokens_in + self.total_tokens_out,
             "estimated_total_cost": round(self.total_cost, 6),
             "requests_by_provider": dict(self.requests_by_provider),
             "requests_by_model": dict(self.requests_by_model),
             "errors_by_provider": dict(self.errors_by_provider),
         }
+
+    def get_model_details(self) -> dict:
+        """Get detailed per-model statistics."""
+        result = {}
+        for model, ms in self.model_stats.items():
+            req = ms["requests"]
+            if req == 0:
+                continue
+            avg_latency = ms["total_latency_ms"] / req if req > 0 else 0
+            avg_first_token = ms["total_first_token_ms"] / ms["first_token_count"] if ms["first_token_count"] > 0 else None
+            avg_speed = ms["total_output_tokens_for_speed"] / (ms["total_stream_duration_ms"] / 1000) if ms["total_stream_duration_ms"] > 0 else None
+
+            result[model] = {
+                "requests": req,
+                "errors": ms["errors"],
+                "total_tokens_in": ms["total_tokens_in"],
+                "total_tokens_out": ms["total_tokens_out"],
+                "avg_latency_ms": round(avg_latency, 1),
+                "avg_first_token_ms": round(avg_first_token, 1) if avg_first_token is not None else None,
+                "avg_speed_tps": round(avg_speed, 1) if avg_speed is not None else None,
+                "streaming_requests": ms["streaming_requests"],
+            }
+        return result
 
     def reset(self):
         self.__init__()
