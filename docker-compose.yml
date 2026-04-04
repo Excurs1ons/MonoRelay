@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  prisma-relay:
+    build: .
+    container_name: prisma-api-relay
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

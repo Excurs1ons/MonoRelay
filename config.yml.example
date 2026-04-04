@@ -1,0 +1,134 @@
+server:
+  host: "0.0.0.0"
+  port: 8787
+  access_key: "prisma-relay-change-me"
+  log_level: "INFO"
+  cors_origins:
+    - "*"
+
+providers:
+  openrouter:
+    enabled: true
+    base_url: "https://openrouter.ai/api/v1"
+    keys:
+      - key: "sk-or-v1-your-openrouter-key"
+        label: "main"
+        weight: 1
+      - key: "sk-or-v1-your-backup-key"
+        label: "backup"
+        weight: 1
+    headers:
+      HTTP-Referer: "https://github.com/PrismaAPIRelay"
+      X-Title: "PrismaAPIRelay"
+    rate_limit_cooldown: 60
+    timeout: 120
+    models:
+      include: []
+      exclude: []
+
+  nvidia:
+    enabled: true
+    base_url: "https://integrate.api.nvidia.com/v1"
+    keys:
+      - key: "nvapi-your-nvidia-key"
+        label: "main"
+        weight: 1
+    rate_limit_cooldown: 30
+    timeout: 120
+    models:
+      include: []
+      exclude: []
+
+  openai:
+    enabled: false
+    base_url: "https://api.openai.com/v1"
+    keys:
+      - key: "sk-your-openai-key"
+        label: "main"
+        weight: 1
+    rate_limit_cooldown: 60
+    timeout: 120
+
+  anthropic:
+    enabled: false
+    base_url: "https://api.anthropic.com"
+    keys:
+      - key: "sk-ant-your-anthropic-key"
+        label: "main"
+        weight: 1
+    rate_limit_cooldown: 60
+    timeout: 120
+
+  chatgpt_web:
+    enabled: false
+    provider_type: "web_reverse"
+    keys:
+      - key: "your-chatgpt-access-token"
+        label: "main"
+        weight: 1
+    rate_limit_cooldown: 120
+    timeout: 120
+    web_reverse:
+      pow_difficulty: "00003a"
+      conversation_only: false
+      history_disabled: true
+      proxy_url: ""
+      chatgpt_base_url: "https://chatgpt.com"
+      model_mapping:
+        "gpt-3.5-turbo": "text-davinci-002-render-sha"
+        "gpt-4o": "gpt-4o"
+        "gpt-4o-mini": "gpt-4o-mini"
+
+model_routing:
+  enabled: true
+  mode: "passthrough"
+
+  aliases:
+    "fast": "openai/gpt-4o-mini"
+    "balanced": "openai/gpt-4o"
+    "smart": "anthropic/claude-sonnet-4-20250514"
+    "nvidia-fast": "meta/llama-4-maverick-17b-128e-instruct"
+    "nvidia-smart": "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+
+  provider_mapping:
+    "gpt-*": "openrouter"
+    "o1*": "openrouter"
+    "o3*": "openrouter"
+    "claude-*": "openrouter"
+    "gemini-*": "openrouter"
+    "llama-*": "nvidia"
+    "mistral-*": "openrouter"
+    "deepseek-*": "openrouter"
+    "meta/*": "nvidia"
+    "nvidia/*": "nvidia"
+
+  model_overrides: {}
+
+  complexity:
+    enabled: false
+    simple: "openai/gpt-4o-mini"
+    moderate: "openai/gpt-4o"
+    complex: "anthropic/claude-sonnet-4-20250514"
+
+  cascade:
+    enabled: false
+    models:
+      - "openai/gpt-4o-mini"
+      - "openai/gpt-4o"
+      - "anthropic/claude-sonnet-4-20250514"
+    max_retries: 2
+
+key_selection:
+  strategy: "round-robin"
+
+tool_calling:
+  auto_downgrade: true
+  unsupported_models:
+    - "meta/llama-4-maverick-*"
+    - "meta/llama-3.1-*"
+
+logging:
+  enabled: true
+  db_path: "./data/requests.db"
+  max_age_days: 30
+  content_preview_length: 200
