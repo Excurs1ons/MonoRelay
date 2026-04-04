@@ -607,7 +607,6 @@ tbody tr:hover { background: var(--bg-hover); }
       <div class="stat-card"><div class="stat-label"><i data-lucide="arrow-up-right"></i>总请求数</div><div class="stat-value accent" id="statTotal">0</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="alert-triangle"></i>错误率</div><div class="stat-value red" id="statErrorRate">0%</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="coins"></i>总 Token 数</div><div class="stat-value" id="statTokens">0</div></div>
-      <div class="stat-card"><div class="stat-label"><i data-lucide="dollar-sign"></i>预估费用</div><div class="stat-value green" id="statCost">$0</div></div>
       <div class="stat-card"><div class="stat-label"><i data-lucide="shield-check"></i>可用密钥</div><div class="stat-value" id="statKeys">0</div></div>
     </div>
 
@@ -620,8 +619,8 @@ tbody tr:hover { background: var(--bg-hover); }
       <div class="card-title"><i data-lucide="cpu"></i> 各模型详细统计</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>模型</th><th>请求数</th><th>错误</th><th>输入Token</th><th>输出Token</th><th>首字延迟</th><th>输出速度</th><th>流式请求</th></tr></thead>
-          <tbody id="modelStatsTable"><tr><td colspan="8" class="empty">暂无数据</td></tr></tbody>
+          <thead><tr><th>模型</th><th>请求数</th><th>错误</th><th>输入Token</th><th>输出Token</th><th>首字延迟</th><th>输出速度</th></tr></thead>
+          <tbody id="modelStatsTable"><tr><td colspan="7" class="empty">暂无数据</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -630,7 +629,7 @@ tbody tr:hover { background: var(--bg-hover); }
       <div class="card-title"><i data-lucide="activity"></i> 最近活动</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>时间</th><th>模型</th><th>提供商</th><th>状态</th><th>延迟</th></tr></thead>
+          <thead><tr><th>时间</th><th>模型</th><th>提供商</th><th>状态</th><th>首字延迟</th></tr></thead>
           <tbody id="recentTable"><tr><td colspan="5" class="empty">暂无请求</td></tr></tbody>
         </table>
       </div>
@@ -655,7 +654,7 @@ tbody tr:hover { background: var(--bg-hover); }
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>时间</th><th>模型</th><th>提供商</th><th>密钥</th><th>状态</th><th>延迟</th><th>Token</th><th>费用</th><th>错误</th></tr></thead>
+          <thead><tr><th>时间</th><th>模型</th><th>提供商</th><th>状态</th><th>首字延迟</th><th>Token</th><th>错误</th></tr></thead>
           <tbody id="logsTable"></tbody>
         </table>
       </div>
@@ -1553,7 +1552,6 @@ async function refreshAll() {
   document.getElementById('statTotal').textContent = (db.total_requests || s.total_requests || 0).toLocaleString();
   document.getElementById('statErrorRate').textContent = ((s.error_rate || 0) * 100).toFixed(1) + '%';
   document.getElementById('statTokens').textContent = fmtTokens((s.total_tokens_in || 0) + (s.total_tokens_out || 0));
-  document.getElementById('statCost').textContent = '$' + (s.estimated_total_cost || 0).toFixed(4);
 
   let totalKeys = 0, availKeys = 0;
   if (data.keys) {
@@ -1580,7 +1578,7 @@ async function refreshAll() {
   const tbody = document.getElementById('recentTable');
   if (logs && logs.length) {
     tbody.innerHTML = logs.map(l =>
-      '<tr><td class="mono">' + fmtTime(l.timestamp) + '</td><td class="mono">' + (l.model || '-') + '</td><td>' + (l.provider || '-') + '</td><td>' + statusBadge(l.status_code) + '</td><td class="mono">' + (l.latency_ms ? Math.round(l.latency_ms) + 'ms' : '-') + '</td></tr>'
+      '<tr><td class="mono">' + fmtTime(l.timestamp) + '</td><td class="mono">' + (l.model || '-') + '</td><td>' + (l.provider || '-') + '</td><td>' + statusBadge(l.status_code) + '</td><td class="mono">' + (l.first_token_ms ? Math.round(l.first_token_ms) + 'ms' : '-') + '</td></tr>'
     ).join('');
   } else {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无请求</td></tr>';
@@ -1595,10 +1593,10 @@ async function refreshAll() {
       const md = models[m];
       const avgFtt = md.avg_first_token_ms ? Math.round(md.avg_first_token_ms) + 'ms' : '-';
       const avgSpeed = md.avg_speed_tps ? md.avg_speed_tps.toFixed(1) + ' t/s' : '-';
-      return '<tr><td class="mono" style="font-size:12px">' + m + '</td><td class="mono">' + md.requests + '</td><td class="mono">' + md.errors + '</td><td class="mono">' + fmtTokens(md.total_tokens_in) + '</td><td class="mono">' + fmtTokens(md.total_tokens_out) + '</td><td class="mono">' + avgFtt + '</td><td class="mono">' + avgSpeed + '</td><td class="mono">' + md.streaming_requests + '</td></tr>';
+      return '<tr><td class="mono" style="font-size:12px">' + m + '</td><td class="mono">' + md.requests + '</td><td class="mono">' + md.errors + '</td><td class="mono">' + fmtTokens(md.total_tokens_in) + '</td><td class="mono">' + fmtTokens(md.total_tokens_out) + '</td><td class="mono">' + avgFtt + '</td><td class="mono">' + avgSpeed + '</td></tr>';
     }).join('');
   } else {
-    modelTbody.innerHTML = '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+    modelTbody.innerHTML = '<tr><td colspan="7" class="empty">暂无数据</td></tr>';
   }
 
   lucide.createIcons();
@@ -1610,7 +1608,7 @@ async function loadLogs() {
   const tbody = document.getElementById('logsTable');
   if (logs && logs.length) {
     tbody.innerHTML = logs.map(l =>
-      '<tr><td class="mono">' + fmtTime(l.timestamp) + '</td><td class="mono">' + (l.model || '-') + '</td><td>' + (l.provider || '-') + '</td><td class="mono">' + (l.key_label || '-') + '</td><td>' + statusBadge(l.status_code) + '</td><td class="mono">' + (l.latency_ms ? Math.round(l.latency_ms) + 'ms' : '-') + '</td><td class="mono">' + ((l.input_tokens || 0) + (l.output_tokens || 0) || '-') + '</td><td class="mono">' + (l.estimated_cost ? '$' + l.estimated_cost.toFixed(4) : '-') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (l.error_message || '') + '">' + (l.error_message || '-') + '</td></tr>'
+      '<tr><td class="mono">' + fmtTime(l.timestamp) + '</td><td class="mono">' + (l.model || '-') + '</td><td>' + (l.provider || '-') + '</td><td>' + statusBadge(l.status_code) + '</td><td class="mono">' + (l.first_token_ms ? Math.round(l.first_token_ms) + 'ms' : '-') + '</td><td class="mono">' + ((l.input_tokens || 0) + (l.output_tokens || 0) || '-') + '</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis" title="' + (l.error_message || '') + '">' + (l.error_message || '-') + '</td></tr>'
     ).join('');
   } else {
     tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无日志</td></tr>';

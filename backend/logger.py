@@ -31,6 +31,7 @@ class RequestLogger:
                 key_label TEXT,
                 status_code INTEGER,
                 latency_ms REAL,
+                first_token_ms REAL,
                 input_tokens INTEGER,
                 output_tokens INTEGER,
                 estimated_cost REAL,
@@ -56,6 +57,13 @@ class RequestLogger:
             CREATE INDEX IF NOT EXISTS idx_requests_provider ON requests(provider)
             """
         )
+        # 迁移：为已有数据库添加 first_token_ms 字段
+        try:
+            await self._db.execute(
+                "ALTER TABLE requests ADD COLUMN first_token_ms REAL"
+            )
+        except Exception:
+            pass  # 字段已存在或表不存在
         await self._db.commit()
         logger.info(f"Request logger initialized with database at {self.db_path}")
 
@@ -78,6 +86,7 @@ class RequestLogger:
         response_preview: Optional[str] = None,
         error_message: Optional[str] = None,
         streaming: bool = False,
+        first_token_ms: Optional[float] = None,
     ):
         if not self._db:
             await self.init()
@@ -86,9 +95,9 @@ class RequestLogger:
             """
             INSERT INTO requests (
                 timestamp, model, provider, key_label, status_code, latency_ms,
-                input_tokens, output_tokens, estimated_cost, request_preview,
+                first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, error_message, streaming
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
@@ -97,6 +106,7 @@ class RequestLogger:
                 key_label,
                 status_code,
                 latency_ms,
+                first_token_ms,
                 input_tokens,
                 output_tokens,
                 estimated_cost,
