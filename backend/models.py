@@ -87,6 +87,7 @@ class ProviderConfig(BaseModel):
     models: dict[str, list[str]] = Field(default_factory=lambda: {"include": [], "exclude": []})
     headers: dict[str, str] = Field(default_factory=dict)
     web_reverse: Optional[WebReverseConfig] = None
+    test_model: str = ""
 
 
 class ComplexityConfig(BaseModel):

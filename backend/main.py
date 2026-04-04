@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from .config import ConfigManager
 from .key_manager import KeyManager
 from .logger import RequestLogger
-from .models import AppConfig
+from .models import AppConfig, ProviderConfig, ProviderKey
 from .router import ModelRouter
 from .stats import StatsTracker
 from .proxy.openai_format import (
@@ -128,6 +128,29 @@ async def serve_frontend():
     return JSONResponse({"error": "Frontend not found"}, status_code=404)
 
 
+@app.get("/api/info")
+async def api_info():
+    """Return server connection info for dashboard."""
+    import socket
+    try:
+        # Get local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = "127.0.0.1"
+
+    cfg = config_manager.config
+    return {
+        "local_ip": local_ip,
+        "host": cfg.server.host,
+        "port": cfg.server.port,
+        "access_key": cfg.server.access_key,
+        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
+    }
+
+
 @app.get("/health")
 async def health():
     return {
@@ -236,7 +259,12 @@ async def api_providers():
             "enabled": pc.enabled,
             "provider_type": pc.provider_type,
             "base_url": pc.base_url,
-            "keys": [{"label": k.label, "weight": k.weight} for k in pc.keys],
+            "keys": [{"key": k.key, "label": k.label, "weight": k.weight, "enabled": k.enabled} for k in pc.keys],
+            "rate_limit_cooldown": pc.rate_limit_cooldown,
+            "timeout": pc.timeout,
+            "models": pc.models,
+            "headers": pc.headers,
+            "test_model": pc.test_model,
             "web_reverse": pc.web_reverse.model_dump() if pc.web_reverse else None,
         }
     return result
@@ -257,24 +285,371 @@ async def api_test_provider(name: str):
             service = WebReverseService(name, wr_cfg)
             await service.prepare(pc.keys[0].key)
             ok = bool(service.chat_token)
-            return {"status": "ok" if ok else "error", "message": "ChatGPT session valid" if ok else "ChatGPT session invalid"}
+            return {
+                "status": "ok" if ok else "error",
+                "message": "ChatGPT session valid" if ok else "ChatGPT session invalid",
+                "debug": {
+                    "type": "web_reverse",
+                    "chatgpt_base_url": wr_cfg.get("chatgpt_base_url", "https://chatgpt.com"),
+                    "chat_token_obtained": bool(service.chat_token),
+                    "proof_token_obtained": bool(service.proof_token),
+                    "conversation_only": wr_cfg.get("conversation_only", False),
+                }
+            }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
     headers = {
-        "Authorization": f"Bearer {pc.keys[0].key}",
+        "Authorization": f"Bearer {pc.keys[0].key[:8]}..." if len(pc.keys[0].key) > 8 else pc.keys[0].key,
         "Content-Type": "application/json",
     }
+    if pc.headers:
+        headers["Extra-Headers"] = str(list(pc.headers.keys()))
+
+    # Test with a minimal chat request to verify API key validity
+    # /models endpoint is often public (e.g. OpenRouter), so it doesn't prove key works
+    # Use a known working model per provider
+    test_models = {
+        "openrouter": "openai/gpt-4o-mini",
+        "nvidia": "meta/llama-3.1-8b-instruct",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-haiku-20240307",
+        "deepseek": "deepseek-chat",
+    }
+    # Use provider's configured test_model, or fallback to defaults
+    test_model = pc.test_model or test_models.get(name, "gpt-4o-mini")
+
+    test_payload = {
+        "model": test_model,
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 1,
+    }
+
+    url = pc.base_url
+    import time as _time
+    start = _time.monotonic()
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {pc.keys[0].key}",
+                    "Content-Type": "application/json",
+                    **(pc.headers or {}),
+                },
+                json=test_payload,
+                timeout=15.0,
+            )
+        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+
+        # Try to parse response body
+        try:
+            resp_body = resp.json()
+        except Exception:
+            resp_body = resp.text[:500]
+
+        if resp.status_code < 400:
+            # Extract useful info from success response
+            choices = resp_body.get("choices", []) if isinstance(resp_body, dict) else []
+            usage = resp_body.get("usage", {}) if isinstance(resp_body, dict) else {}
+            resp_model = resp_body.get("model", test_model) if isinstance(resp_body, dict) else test_model
+            finish_reason = choices[0].get("finish_reason", "") if choices else ""
+
+            return {
+                "status": "ok",
+                "message": f"测试成功 — API key 有效",
+                "debug": {
+                    "type": "api",
+                    "request": {
+                        "method": "POST",
+                        "url": url,
+                        "model": test_model,
+                        "payload": test_payload,
+                    },
+                    "response": {
+                        "status_code": resp.status_code,
+                        "model": resp_model,
+                        "finish_reason": finish_reason,
+                        "usage": usage,
+                        "body_preview": str(resp_body)[:300] if isinstance(resp_body, str) else resp_body,
+                    },
+                    "timing_ms": elapsed_ms,
+                }
+            }
+        elif resp.status_code == 401:
+            return {
+                "status": "error",
+                "message": f"API key 无效或已过期 (HTTP 401)",
+                "debug": {
+                    "type": "api",
+                    "request": {"method": "POST", "url": url, "model": test_model},
+                    "response": {"status_code": 401, "body": resp_body},
+                    "timing_ms": elapsed_ms,
+                }
+            }
+        elif resp.status_code == 429:
+            return {
+                "status": "error",
+                "message": f"触发限流 (HTTP 429) — key 有效但额度已用完",
+                "debug": {
+                    "type": "api",
+                    "request": {"method": "POST", "url": url, "model": test_model},
+                    "response": {"status_code": 429, "body": resp_body},
+                    "timing_ms": elapsed_ms,
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"HTTP {resp.status_code}: {str(resp_body)[:200]}",
+                "debug": {
+                    "type": "api",
+                    "request": {"method": "POST", "url": url, "model": test_model},
+                    "response": {"status_code": resp.status_code, "body": resp_body},
+                    "timing_ms": elapsed_ms,
+                }
+            }
+    except httpx.TimeoutException:
+        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+        return {
+            "status": "error",
+            "message": f"请求超时 ({elapsed_ms}ms)",
+            "debug": {
+                "type": "api",
+                "request": {"method": "POST", "url": url, "model": test_model},
+                "error": "Timeout",
+                "timing_ms": elapsed_ms,
+            }
+        }
+    except Exception as e:
+        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+        return {
+            "status": "error",
+            "message": str(e),
+            "debug": {
+                "type": "api",
+                "request": {"method": "POST", "url": url, "model": test_model},
+                "error": str(e),
+                "timing_ms": elapsed_ms,
+            }
+        }
+
+
+# Provider CRUD
+@app.post("/api/providers")
+async def api_add_provider(request: Request):
+    """Add a new provider and hot-reload."""
+    try:
+        body = await request.json()
+        name = body.get("name")
+        if not name:
+            raise HTTPException(status_code=400, detail="Provider name is required")
+        if name in config_manager.config.providers:
+            raise HTTPException(status_code=409, detail=f"Provider '{name}' already exists")
+
+        pc = ProviderConfig(**body.get("config", {}))
+        cfg = config_manager.config.model_copy(deep=True)
+        cfg.providers[name] = pc
+        config_manager.save(cfg)
+        init_components(cfg)
+        return {"status": "ok", "message": f"Provider '{name}' added and reloaded"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/providers/{name}")
+async def api_update_provider(name: str, request: Request):
+    """Update an existing provider and hot-reload."""
+    try:
+        body = await request.json()
+        cfg = config_manager.config.model_copy(deep=True)
+        if name not in cfg.providers:
+            raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+        update_data = body.get("config", body)
+        existing = cfg.providers[name].model_dump()
+        existing.update({k: v for k, v in update_data.items() if v is not None})
+        cfg.providers[name] = ProviderConfig(**existing)
+        config_manager.save(cfg)
+        init_components(cfg)
+        return {"status": "ok", "message": f"Provider '{name}' updated and reloaded"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/providers/{name}")
+async def api_delete_provider(name: str):
+    """Delete a provider and hot-reload."""
+    cfg = config_manager.config
+    if name not in cfg.providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+    new_cfg = cfg.model_copy(deep=True)
+    del new_cfg.providers[name]
+    config_manager.save(new_cfg)
+    init_components(new_cfg)
+    return {"status": "ok", "message": f"Provider '{name}' deleted and reloaded"}
+
+
+# Key CRUD
+@app.post("/api/providers/{name}/keys")
+async def api_add_key(name: str, request: Request):
+    """Add a key to a provider and hot-reload."""
+    try:
+        body = await request.json()
+        cfg = config_manager.config.model_copy(deep=True)
+        if name not in cfg.providers:
+            raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+        key_data = ProviderKey(**body)
+        cfg.providers[name].keys.append(key_data)
+        config_manager.save(cfg)
+        init_components(cfg)
+        return {"status": "ok", "message": f"Key '{key_data.label}' added to '{name}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/providers/{name}/keys/{key_index}")
+async def api_update_key(name: str, key_index: int, request: Request):
+    """Update a key in a provider by index and hot-reload."""
+    try:
+        body = await request.json()
+        cfg = config_manager.config.model_copy(deep=True)
+        if name not in cfg.providers:
+            raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+        provider = cfg.providers[name]
+        if key_index < 0 or key_index >= len(provider.keys):
+            raise HTTPException(status_code=404, detail=f"Key index {key_index} out of range")
+
+        update_data = {k: v for k, v in body.items() if v is not None}
+        existing = provider.keys[key_index].model_dump()
+        existing.update(update_data)
+        provider.keys[key_index] = ProviderKey(**existing)
+        config_manager.save(cfg)
+        init_components(cfg)
+        return {"status": "ok", "message": f"Key updated for '{name}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/providers/{name}/keys/{key_index}")
+async def api_delete_key(name: str, key_index: int):
+    """Delete a key from a provider by index and hot-reload."""
+    cfg = config_manager.config
+    if name not in cfg.providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+    provider = cfg.providers[name]
+    if key_index < 0 or key_index >= len(provider.keys):
+        raise HTTPException(status_code=404, detail=f"Key index {key_index} out of range")
+
+    new_cfg = cfg.model_copy(deep=True)
+    removed = new_cfg.providers[name].keys.pop(key_index)
+    if not new_cfg.providers[name].keys:
+        raise HTTPException(status_code=400, detail="Cannot remove last key from provider")
+
+    config_manager.save(new_cfg)
+    init_components(new_cfg)
+    return {"status": "ok", "message": f"Key '{removed.label}' removed from '{name}'"}
+
+
+# Model management
+@app.get("/api/providers/{name}/models/remote")
+async def api_get_remote_models(name: str):
+    """Fetch all available models from a provider's upstream API."""
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+    if pc.provider_type == "web_reverse":
+        # Web reverse: use model_mapping keys
+        models = []
+        if pc.web_reverse and pc.web_reverse.model_mapping:
+            for client_model, upstream_model in pc.web_reverse.model_mapping.items():
+                models.append({
+                    "id": client_model,
+                    "upstream_id": upstream_model,
+                    "provider": name,
+                })
+        return {"object": "list", "data": models}
+
+    if not pc.keys:
+        return {"object": "list", "data": []}
+
+    headers = {"Authorization": f"Bearer {pc.keys[0].key}"}
     if pc.headers:
         headers.update(pc.headers)
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{pc.base_url}/models", headers=headers, timeout=10.0)
-        ok = resp.status_code < 400
-        return {"status": "ok" if ok else "error", "message": "Connection successful" if ok else "Connection failed"}
+            resp = await client.get(f"{pc.base_url}/models", headers=headers, timeout=15.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                upstream_models = data.get("data", data) if isinstance(data, dict) else data
+                models = []
+                for m in upstream_models:
+                    mid = m.get("id", m) if isinstance(m, dict) else m
+                    model_info = {"id": mid, "provider": name}
+                    if isinstance(m, dict):
+                        for field in ("owned_by", "created", "description"):
+                            if field in m:
+                                model_info[field] = m[field]
+                    models.append(model_info)
+                return {"object": "list", "data": models}
+            else:
+                return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except httpx.TimeoutException:
+        return {"status": "error", "message": "请求超时"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/providers/{name}/models/enabled")
+async def api_get_enabled_models(name: str):
+    """Get currently enabled models (include list) for a provider."""
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+    model_filter = pc.models if isinstance(pc.models, dict) else {}
+    return {
+        "provider": name,
+        "include": model_filter.get("include", []),
+        "exclude": model_filter.get("exclude", []),
+    }
+
+
+@app.put("/api/providers/{name}/models")
+async def api_update_models(name: str, request: Request):
+    """Update model include/exclude lists for a provider and hot-reload."""
+    try:
+        body = await request.json()
+        cfg = config_manager.config.model_copy(deep=True)
+        if name not in cfg.providers:
+            raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+        if "include" in body:
+            cfg.providers[name].models["include"] = body["include"]
+        if "exclude" in body:
+            cfg.providers[name].models["exclude"] = body["exclude"]
+
+        config_manager.save(cfg)
+        init_components(cfg)
+        return {"status": "ok", "message": f"Models updated for '{name}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/router")

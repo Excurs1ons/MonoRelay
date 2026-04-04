@@ -41,6 +41,13 @@ body {
 .header h1 { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
 .header h1 span { color: var(--accent); }
 .header-right { display: flex; align-items: center; gap: 12px; }
+.header-ip {
+  font-size: 12px; color: var(--text-dim); font-family: 'SF Mono', 'Fira Code', monospace;
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 4px 8px; border-radius: 4px; transition: all 0.15s;
+}
+.header-ip:hover { background: var(--bg-input); color: var(--text); }
+.header-ip i { width: 12px; height: 12px; }
 .status-dot {
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--green); display: inline-block;
@@ -139,6 +146,10 @@ body {
   border: 1px solid var(--border);
 }
 .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-danger { background: rgba(231,76,60,0.15); color: var(--red); border: 1px solid transparent; }
+.btn-danger:hover { border-color: var(--red); }
+.btn-success { background: rgba(0,184,148,0.15); color: var(--green); border: 1px solid transparent; }
+.btn-success:hover { border-color: var(--green); }
 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -194,10 +205,85 @@ tr:last-child td { border-bottom: none; }
 .toast.error { border-color: var(--red); }
 @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } }
 
+/* Modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999; animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } }
+.modal {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 24px; width: 90%; max-width: 520px;
+  max-height: 85vh; overflow-y: auto;
+  animation: slideUp 0.2s ease;
+}
+.modal h2 { font-size: 16px; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+.modal h2 i { color: var(--accent); }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; font-weight: 600; }
+.form-group input, .form-group select, .form-group textarea {
+  width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+.form-group select { font-family: inherit; }
+.form-group .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+/* Provider expand section */
+.provider-expand {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.provider-expand-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; cursor: pointer;
+}
+.provider-expand-header:hover { background: var(--bg-input); }
+.provider-expand-body { padding: 0 16px 16px; border-top: 1px solid var(--border); }
+.key-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.key-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-input); padding: 8px 12px; border-radius: 6px;
+}
+.key-masked { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: var(--text-dim); }
+.key-label { font-size: 12px; font-weight: 600; color: var(--text); }
+
+/* Copy button */
+.copy-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  font-size: 11px; transition: all 0.15s;
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.copy-btn i { width: 12px; height: 12px; }
+.copy-btn.copied { border-color: var(--green); color: var(--green); }
+
+/* Connection info card */
+.conn-info {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.conn-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-input); padding: 10px 14px; border-radius: 8px;
+}
+.conn-item .label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.conn-item .value {
+  font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text); display: flex; align-items: center; gap: 8px;
+}
+
 @media (max-width: 768px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .alias-grid { grid-template-columns: 1fr; }
   .provider-item { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .form-row { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -206,6 +292,11 @@ tr:last-child td { border-bottom: none; }
   <div class="header">
     <h1><span>Prisma</span>APIRelay</h1>
     <div class="header-right">
+      <span class="header-ip" id="headerIp" onclick="copyToClipboard(this.dataset.ip)" title="点击复制 IP">
+        <i data-lucide="monitor"></i>
+        <span id="ipText">--</span>
+        <i data-lucide="copy" style="width:10px;height:10px"></i>
+      </span>
       <span class="status-dot" id="statusDot"></span>
       <span class="status-text" id="statusText">连接中...</span>
     </div>
@@ -219,11 +310,17 @@ tr:last-child td { border-bottom: none; }
     <span class="hint">存储在浏览器本地</span>
   </div>
 
+  <div class="auth-bar" style="margin-top:-8px">
+    <i data-lucide="shield-check" style="width:16px;height:16px;color:var(--text-dim)"></i>
+    <label>服务器密钥</label>
+    <span class="mono" id="serverAccessKey" style="flex:1;cursor:pointer;font-size:13px" onclick="copyToClipboard(this.dataset.key)" title="点击复制">加载中...</span>
+    <button class="btn btn-ghost btn-sm" onclick="editAccessKey()"><i data-lucide="pencil" style="width:12px;height:12px"></i>修改</button>
+  </div>
+
   <div class="tabs">
     <div class="tab active" data-tab="overview" onclick="switchTab('overview')"><i data-lucide="layout-dashboard"></i>概览</div>
     <div class="tab" data-tab="providers" onclick="switchTab('providers')"><i data-lucide="plug"></i>提供商</div>
     <div class="tab" data-tab="logs" onclick="switchTab('logs')"><i data-lucide="scroll-text"></i>日志</div>
-    <div class="tab" data-tab="router" onclick="switchTab('router')"><i data-lucide="route"></i>路由</div>
     <div class="tab" data-tab="config" onclick="switchTab('config')"><i data-lucide="settings"></i>配置</div>
   </div>
 
@@ -255,17 +352,11 @@ tr:last-child td { border-bottom: none; }
 
   <div id="tab-providers" style="display:none">
     <div class="card">
-      <div class="card-title"><i data-lucide="server"></i> 提供商状态</div>
-      <div class="provider-list" id="providerList"></div>
-    </div>
-    <div class="card">
-      <div class="card-title"><i data-lucide="key-round"></i> 密钥状态</div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>提供商</th><th>标签</th><th>请求数</th><th>失败数</th><th>状态</th></tr></thead>
-          <tbody id="keyTable"></tbody>
-        </table>
+      <div class="card-title">
+        <i data-lucide="server"></i> 提供商管理
+        <div style="margin-left:auto"><button class="btn btn-primary btn-sm" onclick="showAddProvider()"><i data-lucide="plus"></i>添加提供商</button></div>
       </div>
+      <div class="provider-list" id="providerList"></div>
     </div>
   </div>
 
@@ -284,13 +375,6 @@ tr:last-child td { border-bottom: none; }
     </div>
   </div>
 
-  <div id="tab-router" style="display:none">
-    <div class="card">
-      <div class="card-title"><i data-lucide="git-branch"></i> 路由配置</div>
-      <div id="routerInfo"></div>
-    </div>
-  </div>
-
   <div id="tab-config" style="display:none">
     <div class="card">
       <div class="card-title">
@@ -305,10 +389,146 @@ tr:last-child td { border-bottom: none; }
   </div>
 </div>
 
+<!-- Add/Edit Provider Modal -->
+<div class="modal-overlay" id="providerModal" style="display:none">
+  <div class="modal">
+    <h2><i data-lucide="plug"></i> <span id="providerModalTitle">添加提供商</span></h2>
+    <div class="form-group">
+      <label>名称</label>
+      <input type="text" id="provName" placeholder="例如: openai, anthropic">
+      <div class="hint">唯一标识符，只能包含小写字母和下划线</div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>类型</label>
+        <select id="provType" onchange="onProvTypeChange()">
+          <option value="api">API 代理</option>
+          <option value="web_reverse">网页反代</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>状态</label>
+        <select id="provEnabled">
+          <option value="true">启用</option>
+          <option value="false">禁用</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group" id="provUrlGroup">
+      <label>Base URL</label>
+      <input type="text" id="provUrl" placeholder="https://api.example.com/v1">
+    </div>
+    <div class="form-group" id="provKeyGroup">
+      <label id="provKeyLabelTitle">API 密钥</label>
+      <input type="text" id="provKey" placeholder="sk-xxx 或 nvapi-xxx">
+      <div class="hint" id="provKeyHint">用于 API 认证的密钥</div>
+    </div>
+    <div class="form-group">
+      <label>标签</label>
+      <input type="text" id="provKeyLabel" placeholder="main" value="main">
+    </div>
+    <div class="form-group" id="provCooldownGroup">
+      <label>限速冷却时间 (秒)</label>
+      <input type="number" id="provCooldown" value="60" min="0">
+    </div>
+    <div class="form-group" id="provTimeoutGroup">
+      <label>超时时间 (秒)</label>
+      <input type="number" id="provTimeout" value="120" min="1">
+    </div>
+    <div class="form-group" id="provHeadersGroup">
+      <label>额外 Headers (JSON)</label>
+      <textarea id="provHeaders" rows="2" placeholder='{"HTTP-Referer": "https://example.com"}'></textarea>
+      <div class="hint">可选，JSON 格式</div>
+    </div>
+    <div class="form-group" id="provTestModelGroup">
+      <label>测试模型 ID</label>
+      <input type="text" id="provTestModel" placeholder="留空则使用默认模型">
+      <div class="hint">测试连接时使用的模型，留空自动选择</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('providerModal')">取消</button>
+      <button class="btn btn-primary" id="providerModalSave" onclick="saveProvider()"><i data-lucide="check"></i>保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Key Modal -->
+<div class="modal-overlay" id="keyModal" style="display:none">
+  <div class="modal">
+    <h2><i data-lucide="key-round"></i> <span id="keyModalTitle">添加密钥</span></h2>
+    <div class="form-group">
+      <label>API 密钥</label>
+      <input type="text" id="keyValue" placeholder="sk-xxx">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>标签</label>
+        <input type="text" id="keyLabel" placeholder="backup" value="backup">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('keyModal')">取消</button>
+      <button class="btn btn-primary" id="keyModalSave" onclick="saveKeyAction()"><i data-lucide="check"></i>保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Model Modal -->
+<div class="modal-overlay" id="modelModal" style="display:none">
+  <div class="modal">
+    <h2><i data-lucide="box"></i> <span id="modelModalTitle">添加模型</span></h2>
+    <div class="form-group">
+      <label>模式</label>
+      <select id="modelMode">
+        <option value="include">包含（白名单）</option>
+        <option value="exclude">排除（黑名单）</option>
+      </select>
+      <div class="hint">包含模式：仅允许列表中的模型；排除模式：禁止列表中的模型</div>
+    </div>
+    <div class="form-group">
+      <label>模型 ID</label>
+      <input type="text" id="modelId" placeholder="meta/llama-3.1-8b-instruct">
+      <div class="hint">支持通配符 *，如 meta/llama-3.1-*</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modelModal')">取消</button>
+      <button class="btn btn-primary" onclick="saveModel()"><i data-lucide="check"></i>添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- Test Result Modal -->
+<div class="modal-overlay" id="testModal" style="display:none">
+  <div class="modal" style="max-width:640px">
+    <h2><i data-lucide="zap"></i> <span id="testModalTitle">测试连接</span></h2>
+    <div id="testResult" style="font-size:13px;line-height:1.8"></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('testModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Model Library Modal -->
+<div class="modal-overlay" id="modelLibModal" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <h2><i data-lucide="library"></i> <span id="modelLibTitle">模型库</span></h2>
+    <div id="modelLibBody"></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('modelLibModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = window.location.origin;
 let currentTab = 'overview';
 let refreshTimer = null;
+let editingProviderName = null;
+let currentKeyProvider = null;
+let editingKeyIndex = null;
+let currentModelProvider = null;
+let currentModelLibraryProvider = null;
+let _providerCache = {};
 
 function getHeaders() {
   const key = document.getElementById('apiKey').value;
@@ -319,6 +539,28 @@ function saveKey() {
   localStorage.setItem('prisma_key', document.getElementById('apiKey').value);
   toast('访问密钥已保存', 'success');
   refreshAll();
+  loadServerInfo();
+}
+
+async function editAccessKey() {
+  const info = await api('/api/info');
+  if (!info) return;
+
+  const newKey = prompt('请输入新的服务器访问密钥:', info.access_key);
+  if (newKey === null) return;
+  if (!newKey.trim()) { toast('密钥不能为空', 'error'); return; }
+
+  // Update via PUT /api/config
+  const cfg = await api('/api/config');
+  if (!cfg) return;
+  cfg.server.access_key = newKey.trim();
+  const result = await apiPut('/api/config', cfg);
+  if (result && result.status === 'ok') {
+    toast('服务器密钥已更新', 'success');
+    loadServerInfo();
+  } else {
+    toast(result?.detail || '更新失败', 'error');
+  }
 }
 
 function toast(msg, type) {
@@ -329,28 +571,62 @@ function toast(msg, type) {
   setTimeout(() => t.remove(), 3000);
 }
 
+function copyToClipboard(text) {
+  if (!text) { toast('无内容可复制', 'error'); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      toast('已复制到剪贴板', 'success');
+    }).catch(() => {
+      fallbackCopy(text);
+    });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    toast('已复制到剪贴板', 'success');
+  } catch (e) {
+    toast('复制失败，请手动复制', 'error');
+  }
+  document.body.removeChild(ta);
+}
+
 function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  ['overview','providers','logs','router','config'].forEach(t => {
+  ['overview','providers','logs','config'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
   });
   lucide.createIcons();
   if (tab === 'overview') refreshAll();
   if (tab === 'providers') loadProviders();
   if (tab === 'logs') loadLogs();
-  if (tab === 'router') loadRouter();
   if (tab === 'config') loadConfig();
 }
 
 async function api(url) {
-  const r = await fetch(API + url, { headers: getHeaders() });
-  if (r.status === 401) {
+  try {
+    const r = await fetch(API + url, { headers: getHeaders() });
+    if (r.status === 401) {
+      document.getElementById('statusDot').classList.add('offline');
+      document.getElementById('statusText').textContent = '未授权';
+      return null;
+    }
+    return r.json();
+  } catch (e) {
     document.getElementById('statusDot').classList.add('offline');
-    document.getElementById('statusText').textContent = '未授权';
-    return null;
+    document.getElementById('statusText').textContent = '已断开';
+    throw e;
   }
-  return r.json();
 }
 
 async function apiPost(url, body) {
@@ -359,6 +635,7 @@ async function apiPost(url, body) {
     headers: getHeaders(),
     body: JSON.stringify(body),
   });
+  if (r.status === 401) { toast('未授权', 'error'); return null; }
   return r.json();
 }
 
@@ -368,7 +645,26 @@ async function apiPut(url, body) {
     headers: getHeaders(),
     body: JSON.stringify(body),
   });
+  if (r.status === 401) { toast('未授权', 'error'); return null; }
   return r.json();
+}
+
+async function apiDelete(url) {
+  const r = await fetch(API + url, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (r.status === 401) { toast('未授权', 'error'); return null; }
+  return r.json();
+}
+
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+function openModal(id) {
+  document.getElementById(id).style.display = 'flex';
+  lucide.createIcons();
 }
 
 function fmtTime(ts) {
@@ -390,9 +686,524 @@ function statusBadge(code) {
   return '<span class="badge badge-red">' + code + '</span>';
 }
 
+function maskKey(key) {
+  if (!key || key.length < 8) return '****';
+  return key.slice(0, 6) + '...' + key.slice(-4);
+}
+
+// ---- Provider Management ----
+function onProvTypeChange() {
+  const type = document.getElementById('provType').value;
+  const isWeb = type === 'web_reverse';
+  document.getElementById('provUrlGroup').style.display = isWeb ? '' : '';
+  document.getElementById('provHeadersGroup').style.display = isWeb ? 'none' : '';
+  document.getElementById('provTestModelGroup').style.display = isWeb ? 'none' : '';
+  document.getElementById('provKeyLabelTitle').textContent = isWeb ? 'Access Token' : 'API 密钥';
+  document.getElementById('provKey').placeholder = isWeb ? 'ChatGPT Access Token' : 'sk-xxx 或 nvapi-xxx';
+  document.getElementById('provKeyHint').textContent = isWeb ? 'ChatGPT 的 Access Token，可通过 OAuth 登录获取' : '用于 API 认证的密钥';
+  document.getElementById('provUrl').placeholder = isWeb ? 'https://chatgpt.com' : 'https://api.example.com/v1';
+}
+
+function showAddProvider() {
+  editingProviderName = null;
+  document.getElementById('providerModalTitle').textContent = '添加提供商';
+  document.getElementById('provName').value = '';
+  document.getElementById('provName').disabled = false;
+  document.getElementById('provType').value = 'api';
+  document.getElementById('provEnabled').value = 'true';
+  document.getElementById('provUrl').value = '';
+  document.getElementById('provKey').value = '';
+  document.getElementById('provKeyLabel').value = 'main';
+  document.getElementById('provKeyWeight').value = '1';
+  document.getElementById('provCooldown').value = '60';
+  document.getElementById('provTimeout').value = '120';
+  document.getElementById('provHeaders').value = '';
+  document.getElementById('provTestModel').value = '';
+  onProvTypeChange();
+  openModal('providerModal');
+}
+
+function editProvider(name) {
+  const data = _providerCache[name];
+  if (!data) { toast('获取提供商数据失败', 'error'); return; }
+  showEditProvider(name, data);
+}
+
+function showEditProvider(name, data) {
+  editingProviderName = name;
+  document.getElementById('providerModalTitle').textContent = '编辑: ' + name;
+  document.getElementById('provName').value = name;
+  document.getElementById('provName').disabled = true;
+  document.getElementById('provType').value = data.provider_type || 'api';
+  document.getElementById('provEnabled').value = data.enabled ? 'true' : 'false';
+  document.getElementById('provUrl').value = data.base_url || '';
+  document.getElementById('provKey').value = data.keys && data.keys.length ? data.keys[0].key : '';
+  document.getElementById('provKeyLabel').value = 'main';
+  document.getElementById('provCooldown').value = data.rate_limit_cooldown || 60;
+  document.getElementById('provTimeout').value = data.timeout || 120;
+  document.getElementById('provHeaders').value = data.headers ? JSON.stringify(data.headers, null, 2) : '';
+  document.getElementById('provTestModel').value = data.test_model || '';
+  onProvTypeChange();
+  openModal('providerModal');
+}
+
+async function saveProvider() {
+  const name = document.getElementById('provName').value.trim();
+  if (!name) { toast('名称不能为空', 'error'); return; }
+
+  const type = document.getElementById('provType').value;
+  const config = {
+    enabled: document.getElementById('provEnabled').value === 'true',
+    provider_type: type,
+    base_url: type === 'api' ? document.getElementById('provUrl').value.trim() : '',
+    keys: [{
+      key: document.getElementById('provKey').value.trim(),
+      label: document.getElementById('provKeyLabel').value.trim() || 'main',
+    }],
+    rate_limit_cooldown: parseInt(document.getElementById('provCooldown').value) || 60,
+    timeout: parseInt(document.getElementById('provTimeout').value) || 120,
+    test_model: document.getElementById('provTestModel').value.trim() || '',
+  };
+
+  const headersStr = document.getElementById('provHeaders').value.trim();
+  if (headersStr) {
+    try { config.headers = JSON.parse(headersStr); }
+    catch (e) { toast('Headers JSON 格式无效', 'error'); return; }
+  }
+
+  if (type === 'web_reverse') {
+    config.web_reverse = {
+      pow_difficulty: '00003a',
+      conversation_only: false,
+      history_disabled: true,
+      proxy_url: '',
+      chatgpt_base_url: document.getElementById('provUrl').value.trim() || 'https://chatgpt.com',
+    };
+  }
+
+  let result;
+  if (editingProviderName) {
+    result = await apiPut('/api/providers/' + editingProviderName, { config });
+  } else {
+    result = await apiPost('/api/providers', { name, config });
+  }
+
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    closeModal('providerModal');
+    loadProviders();
+  } else {
+    toast(result?.detail || result?.message || '操作失败', 'error');
+  }
+}
+
+async function deleteProvider(name) {
+  if (!confirm('确定删除提供商 "' + name + '" 吗？')) return;
+  const result = await apiDelete('/api/providers/' + name);
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    loadProviders();
+  } else {
+    toast(result?.detail || '删除失败', 'error');
+  }
+}
+
+async function testProvider(name) {
+  document.getElementById('testModalTitle').textContent = '测试: ' + name;
+  document.getElementById('testResult').innerHTML = '<div class="loading"><div class="spinner"></div>正在发送测试请求...</div>';
+  openModal('testModal');
+
+  const r = await apiPost('/api/providers/' + name + '/test', {});
+  if (!r) return;
+
+  const ok = r.status === 'ok';
+  let html = '';
+
+  // Status badge
+  html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">';
+  html += '<span class="badge ' + (ok ? 'badge-green' : 'badge-red') + '" style="font-size:13px;padding:4px 12px">' + (ok ? '✓ 测试通过' : '✗ 测试失败') + '</span>';
+  html += '<span style="font-size:13px">' + (r.message || '') + '</span>';
+  html += '</div>';
+
+  // Debug info
+  const d = r.debug || {};
+  if (d.timing_ms) {
+    html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">耗时: <span style="color:var(--yellow)">' + d.timing_ms + 'ms</span></div>';
+  }
+
+  // Request details
+  if (d.request) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:600;margin-bottom:4px">请求</div>';
+    html += '<pre style="background:var(--bg-input);padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">';
+    html += JSON.stringify(d.request, null, 2);
+    html += '</pre></div>';
+  }
+
+  // Response details
+  if (d.response) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:600;margin-bottom:4px">响应</div>';
+    html += '<pre style="background:var(--bg-input);padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">';
+    html += JSON.stringify(d.response, null, 2);
+    html += '</pre></div>';
+  }
+
+  // Error details
+  if (d.error) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:11px;color:var(--red);text-transform:uppercase;font-weight:600;margin-bottom:4px">错误</div>';
+    html += '<pre style="background:var(--bg-input);padding:10px;border-radius:6px;font-size:12px;color:var(--red);overflow-x:auto;white-space:pre-wrap;word-break:break-all">';
+    html += d.error;
+    html += '</pre></div>';
+  }
+
+  // Web reverse debug
+  if (d.type === 'web_reverse') {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:600;margin-bottom:4px">Web 反代详情</div>';
+    html += '<pre style="background:var(--bg-input);padding:10px;border-radius:6px;font-size:12px;overflow-x:auto">';
+    html += JSON.stringify({
+      chatgpt_base_url: d.chatgpt_base_url,
+      chat_token_obtained: d.chat_token_obtained,
+      proof_token_obtained: d.proof_token_obtained,
+      conversation_only: d.conversation_only,
+    }, null, 2);
+    html += '</pre></div>';
+  }
+
+  document.getElementById('testResult').innerHTML = html;
+}
+
+async function loadProviders() {
+  const [providers, stats] = await Promise.all([
+    api('/api/providers'),
+    api('/api/stats'),
+  ]);
+  if (!providers) return;
+
+  _providerCache = providers;
+
+  const list = document.getElementById('providerList');
+  let html = '';
+
+  Object.entries(providers).forEach(([name, p]) => {
+    const typeLabel = p.provider_type === 'web_reverse' ? '网页反代' : 'API';
+    const typeBadge = p.provider_type === 'web_reverse' ? 'badge-yellow' : 'badge-green';
+    const urlText = p.provider_type === 'web_reverse' ? (p.web_reverse?.chatgpt_base_url || 'chatgpt.com') : p.base_url;
+
+    html += '<div class="provider-expand">';
+    html += '<div class="provider-expand-header" onclick="toggleProviderExpand(this)">';
+    html += '<div class="provider-info">';
+    html += '<span class="badge ' + (p.enabled ? 'badge-green' : 'badge-red') + '">' + (p.enabled ? '已启用' : '已禁用') + '</span>';
+    html += '<span class="badge ' + typeBadge + '">' + typeLabel + '</span>';
+    html += '<div><div class="provider-name">' + name + '</div><div class="provider-url">' + urlText + '</div></div>';
+    html += '</div>';
+    html += '<div style="display:flex;align-items:center;gap:8px">';
+    html += '<span class="provider-keys">' + p.keys.length + ' 个密钥</span>';
+    html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();testProvider(\'' + name + '\')"><i data-lucide="zap"></i>测试</button>';
+    html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();showModelLibrary(\'' + name + '\')" title="模型库"><i data-lucide="library"></i></button>';
+    html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editProvider(\'' + name + '\')" title="编辑"><i data-lucide="pencil"></i></button>';
+    html += '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteProvider(\'' + name + '\')"><i data-lucide="trash-2"></i></button>';
+    html += '<i data-lucide="chevron-down" style="width:16px;height:16px;color:var(--text-dim);transition:transform 0.2s" class="expand-icon"></i>';
+    html += '</div></div>';
+
+    html += '<div class="provider-expand-body" style="display:none">';
+
+    // Keys section
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;margin-bottom:8px">';
+    html += '<div style="font-size:12px;color:var(--text-dim)">密钥列表</div>';
+    html += '<button class="btn btn-success btn-sm" onclick="event.stopPropagation();showAddKey(\'' + name + '\')"><i data-lucide="plus"></i>添加密钥</button>';
+    html += '</div>';
+    html += '<div class="key-list">';
+    (p.keys || []).forEach((k, i) => {
+      const keyEsc = (k.key || '').replace(/'/g, "\\'");
+      html += '<div class="key-item">';
+      html += '<div style="flex:1;min-width:0">';
+      html += '<div style="display:flex;align-items:center;gap:6px">';
+      html += '<span style="font-size:11px;color:var(--text-dim)">' + (k.label || 'default') + '</span>';
+      html += '<span class="key-masked">' + (k.key || '') + '</span>';
+      html += '</div>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:4px">';
+      html += '<button class="copy-btn" data-key="' + i + '" data-provider="' + name + '" title="复制密钥"><i data-lucide="copy"></i></button>';
+      html += '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();showEditKey(\'' + name + '\', ' + i + ', JSON.parse(\'' + JSON.stringify(k).replace(/'/g, "\\'") + '\'))" title="编辑密钥"><i data-lucide="pencil" style="width:12px;height:12px"></i></button>';
+      html += '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteKey(\'' + name + '\', ' + i + ')" ' + (p.keys.length <= 1 ? 'disabled title="不能删除最后一个密钥"' : '') + '><i data-lucide="x" style="width:12px;height:12px"></i></button>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+
+    // Models section
+    const modelInc = p.models?.include || [];
+    const modelExc = p.models?.exclude || [];
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;margin-bottom:8px">';
+    html += '<div style="font-size:12px;color:var(--text-dim)">模型 ID</div>';
+    html += '<button class="btn btn-success btn-sm" onclick="event.stopPropagation();showAddModel(\'' + name + '\')"><i data-lucide="plus"></i>添加模型</button>';
+    html += '</div>';
+
+    if (modelInc.length > 0) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">包含 (' + modelInc.length + ')</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">';
+      modelInc.forEach((m, i) => {
+        html += '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-input);padding:4px 8px;border-radius:4px;font-size:12px;font-family:\'SF Mono\',\'Fira Code\',monospace">';
+        html += m;
+        html += '<button class="btn btn-danger btn-sm" style="padding:1px 4px;font-size:10px" onclick="event.stopPropagation();removeModel(\'' + name + '\', \'include\', ' + i + ')"><i data-lucide="x" style="width:10px;height:10px"></i></button>';
+        html += '</span>';
+      });
+      html += '</div>';
+    }
+    if (modelExc.length > 0) {
+      html += '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">排除 (' + modelExc.length + ')</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+      modelExc.forEach((m, i) => {
+        html += '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-input);padding:4px 8px;border-radius:4px;font-size:12px;font-family:\'SF Mono\',\'Fira Code\',monospace">';
+        html += m;
+        html += '<button class="btn btn-danger btn-sm" style="padding:1px 4px;font-size:10px" onclick="event.stopPropagation();removeModel(\'' + name + '\', \'exclude\', ' + i + ')"><i data-lucide="x" style="width:10px;height:10px"></i></button>';
+        html += '</span>';
+      });
+      html += '</div>';
+    }
+    if (modelInc.length === 0 && modelExc.length === 0) {
+      html += '<div style="font-size:12px;color:var(--text-dim);font-style:italic">未配置模型过滤，使用提供商全部模型</div>';
+    }
+
+    html += '</div></div>';
+  });
+
+  if (!html) html = '<div class="empty">暂无提供商，点击"添加提供商"开始</div>';
+  list.innerHTML = html;
+  lucide.createIcons();
+
+  // Bind copy buttons for keys
+  document.querySelectorAll('.copy-btn[data-key]').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const providerName = this.dataset.provider;
+      const keyIndex = parseInt(this.dataset.key);
+      // Find the key from the providers data
+      api('/api/providers').then(providers => {
+        if (providers && providers[providerName] && providers[providerName].keys[keyIndex]) {
+          copyToClipboard(providers[providerName].keys[keyIndex].key);
+        }
+      });
+    });
+  });
+}
+
+function toggleProviderExpand(header) {
+  const body = header.nextElementSibling;
+  const icon = header.querySelector('.expand-icon');
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? '' : 'none';
+  if (icon) icon.style.transform = isHidden ? 'rotate(180deg)' : '';
+}
+
+// ---- Key Management ----
+function showAddKey(providerName) {
+  currentKeyProvider = providerName;
+  editingKeyIndex = null;
+  document.getElementById('keyModalTitle').textContent = '添加密钥';
+  document.getElementById('keyValue').value = '';
+  document.getElementById('keyLabel').value = 'backup';
+  openModal('keyModal');
+}
+
+function showEditKey(providerName, index, keyData) {
+  currentKeyProvider = providerName;
+  editingKeyIndex = index;
+  document.getElementById('keyModalTitle').textContent = '编辑密钥';
+  document.getElementById('keyValue').value = keyData.key || '';
+  document.getElementById('keyLabel').value = keyData.label || '';
+  openModal('keyModal');
+}
+
+async function saveKeyAction() {
+  const key = document.getElementById('keyValue').value.trim();
+  if (!key) { toast('密钥不能为空', 'error'); return; }
+
+  const body = {
+    key: key,
+    label: document.getElementById('keyLabel').value.trim() || 'main',
+  };
+
+  let result;
+  if (editingKeyIndex !== null) {
+    result = await apiPut('/api/providers/' + currentKeyProvider + '/keys/' + editingKeyIndex, body);
+  } else {
+    result = await apiPost('/api/providers/' + currentKeyProvider + '/keys', body);
+  }
+
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    closeModal('keyModal');
+    loadProviders();
+  } else {
+    toast(result?.detail || '操作失败', 'error');
+  }
+}
+
+async function deleteKey(providerName, keyIndex) {
+  if (!confirm('确定删除此密钥吗？')) return;
+  const result = await apiDelete('/api/providers/' + providerName + '/keys/' + keyIndex);
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    loadProviders();
+  } else {
+    toast(result?.detail || '删除失败', 'error');
+  }
+}
+
+// ---- Model Management ----
+
+async function showModelLibrary(providerName) {
+  currentModelLibraryProvider = providerName;
+  document.getElementById('modelLibTitle').textContent = '模型库: ' + providerName;
+  document.getElementById('modelLibBody').innerHTML = '<div class="loading"><div class="spinner"></div>正在加载模型列表...</div>';
+  openModal('modelLibModal');
+
+  // Fetch remote models and enabled models in parallel
+  const [remote, enabled] = await Promise.all([
+    api('/api/providers/' + providerName + '/models/remote'),
+    api('/api/providers/' + providerName + '/models/enabled'),
+  ]);
+
+  if (!remote || !enabled) {
+    document.getElementById('modelLibBody').innerHTML = '<div class="empty">加载失败</div>';
+    return;
+  }
+
+  const enabledSet = new Set(enabled.include || []);
+  const models = remote.data || [];
+
+  if (!models.length) {
+    document.getElementById('modelLibBody').innerHTML = '<div class="empty">该提供商没有可用模型</div>';
+    return;
+  }
+
+  let html = '';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+  html += '<span style="font-size:12px;color:var(--text-dim)">共 ' + models.length + ' 个模型，已启用 ' + enabledSet.size + ' 个</span>';
+  html += '<div style="display:flex;gap:6px">';
+  html += '<button class="btn btn-ghost btn-sm" onclick="toggleAllModels(true)"><i data-lucide="check-square" style="width:12px;height:12px"></i>全选</button>';
+  html += '<button class="btn btn-ghost btn-sm" onclick="toggleAllModels(false)"><i data-lucide="square" style="width:12px;height:12px"></i>清空</button>';
+  html += '<button class="btn btn-primary btn-sm" onclick="saveModelLibrary()"><i data-lucide="save" style="width:12px;height:12px"></i>保存</button>';
+  html += '</div></div>';
+
+  html += '<div style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px">';
+  models.forEach(m => {
+    const mid = m.id || m;
+    const checked = enabledSet.has(mid);
+    html += '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-input);border-radius:6px;cursor:pointer;font-size:12px;font-family:\'SF Mono\',\'Fira Code\',monospace">';
+    html += '<input type="checkbox" data-model="' + mid + '" ' + (checked ? 'checked' : '') + ' style="accent-color:var(--accent)">';
+    html += mid;
+    html += '</label>';
+  });
+  html += '</div>';
+
+  document.getElementById('modelLibBody').innerHTML = html;
+  lucide.createIcons();
+}
+
+function toggleAllModels(value) {
+  document.querySelectorAll('#modelLibModal input[type="checkbox"]').forEach(cb => {
+    cb.checked = value;
+  });
+}
+
+async function saveModelLibrary() {
+  const checkboxes = document.querySelectorAll('#modelLibModal input[type="checkbox"]');
+  const enabled = [];
+  checkboxes.forEach(cb => {
+    if (cb.checked) {
+      enabled.push(cb.dataset.model);
+    }
+  });
+
+  const result = await apiPut('/api/providers/' + currentModelLibraryProvider + '/models', {
+    include: enabled,
+  });
+
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    closeModal('modelLibModal');
+    loadProviders();
+  } else {
+    toast(result?.detail || '保存失败', 'error');
+  }
+}
+
+function showAddModel(providerName) {
+  currentModelProvider = providerName;
+  document.getElementById('modelId').value = '';
+  document.getElementById('modelMode').value = 'include';
+  openModal('modelModal');
+}
+
+async function saveModel() {
+  const modelId = document.getElementById('modelId').value.trim();
+  if (!modelId) { toast('模型 ID 不能为空', 'error'); return; }
+
+  const mode = document.getElementById('modelMode').value;
+
+  // Get current models first
+  const providers = await api('/api/providers');
+  if (!providers || !providers[currentModelProvider]) { toast('获取提供商信息失败', 'error'); return; }
+
+  const current = providers[currentModelProvider].models || { include: [], exclude: [] };
+  const list = mode === 'include' ? current.include : current.exclude;
+  if (list.includes(modelId)) { toast('该模型已存在', 'error'); return; }
+  list.push(modelId);
+
+  const result = await apiPut('/api/providers/' + currentModelProvider + '/models', {
+    include: current.include,
+    exclude: current.exclude,
+  });
+
+  if (result && result.status === 'ok') {
+    toast(result.message, 'success');
+    closeModal('modelModal');
+    loadProviders();
+  } else {
+    toast(result?.detail || '添加失败', 'error');
+  }
+}
+
+async function removeModel(providerName, mode, index) {
+  const providers = await api('/api/providers');
+  if (!providers || !providers[providerName]) return;
+
+  const current = providers[providerName].models || { include: [], exclude: [] };
+  const list = mode === 'include' ? current.include : current.exclude;
+  list.splice(index, 1);
+
+  const result = await apiPut('/api/providers/' + providerName + '/models', {
+    include: current.include,
+    exclude: current.exclude,
+  });
+
+  if (result && result.status === 'ok') {
+    toast('模型已移除', 'success');
+    loadProviders();
+  } else {
+    toast(result?.detail || '删除失败', 'error');
+  }
+}
+
+// ---- Stats & Overview ----
 async function refreshAll() {
-  const data = await api('/api/stats');
-  if (!data) return;
+  let data;
+  try {
+    data = await api('/api/stats');
+  } catch (e) {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = '已断开';
+    return;
+  }
+  if (!data) {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = '未授权';
+    return;
+  }
 
   document.getElementById('statusDot').classList.remove('offline');
   document.getElementById('statusText').textContent = '已连接';
@@ -440,40 +1251,7 @@ async function refreshAll() {
   lucide.createIcons();
 }
 
-async function loadProviders() {
-  const [providers, stats] = await Promise.all([
-    api('/api/providers'),
-    api('/api/stats'),
-  ]);
-  if (!providers) return;
-
-  const list = document.getElementById('providerList');
-  list.innerHTML = Object.entries(providers).map(([name, p]) => {
-    const typeLabel = p.provider_type === 'web_reverse' ? '网页反代' : 'API';
-    const typeBadge = p.provider_type === 'web_reverse' ? 'badge-yellow' : 'badge-green';
-    const urlText = p.provider_type === 'web_reverse' ? (p.web_reverse?.chatgpt_base_url || 'chatgpt.com') : p.base_url;
-    return '<div class="provider-item"><div class="provider-info"><span class="badge ' + (p.enabled ? 'badge-green' : 'badge-red') + '">' + (p.enabled ? '已启用' : '已禁用') + '</span><span class="badge ' + typeBadge + '">' + typeLabel + '</span><div><div class="provider-name">' + name + '</div><div class="provider-url">' + urlText + '</div></div></div><div style="display:flex;align-items:center;gap:10px"><span class="provider-keys">' + p.keys.length + ' 个密钥</span><button class="btn btn-ghost btn-sm" onclick="testProvider(\'' + name + '\')"><i data-lucide="zap"></i>测试</button></div></div>';
-  }).join('');
-
-  const keyTable = document.getElementById('keyTable');
-  const keys = stats && stats.keys ? stats.keys : {};
-  let rows = [];
-  Object.entries(keys).forEach(([prov, data]) => {
-    (data.keys || []).forEach(k => {
-      rows.push('<tr><td>' + prov + '</td><td class="mono">' + k.label + '</td><td>' + (k.total_requests || 0) + '</td><td>' + (k.total_failures || 0) + '</td><td><span class="badge ' + (k.available ? 'badge-green' : 'badge-red') + '">' + (k.available ? '可用' : '冷却中') + '</span></td></tr>');
-    });
-  });
-  keyTable.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="5" class="empty">暂无密钥数据</td></tr>';
-
-  lucide.createIcons();
-}
-
-async function testProvider(name) {
-  const r = await apiPost('/api/providers/' + name + '/test', {});
-  toast(name + ': ' + (r.message || r.status), r.status === 'ok' ? 'success' : 'error');
-  loadProviders();
-}
-
+// ---- Logs ----
 async function loadLogs() {
   const logs = await api('/api/logs?limit=100');
   const tbody = document.getElementById('logsTable');
@@ -486,6 +1264,7 @@ async function loadLogs() {
   }
 }
 
+// ---- Router ----
 async function loadRouter() {
   const info = await api('/api/router');
   if (!info) return;
@@ -518,6 +1297,7 @@ async function loadRouter() {
   el.innerHTML = html || '<div class="empty">未配置路由规则</div>';
 }
 
+// ---- Config ----
 async function loadConfig() {
   const cfg = await api('/api/config');
   if (cfg) {
@@ -535,8 +1315,60 @@ async function saveConfig() {
   }
 }
 
+async function checkConnection() {
+  try {
+    const r = await fetch(API + '/health', { headers: getHeaders() });
+    if (r.ok) {
+      document.getElementById('statusDot').classList.remove('offline');
+      document.getElementById('statusText').textContent = '已连接';
+    } else if (r.status === 401) {
+      document.getElementById('statusDot').classList.add('offline');
+      document.getElementById('statusText').textContent = '未授权';
+    } else {
+      throw new Error('Server error');
+    }
+  } catch (e) {
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = '已断开';
+  }
+}
+
+async function loadServerInfo() {
+  try {
+    const info = await api('/api/info');
+    if (!info) {
+      document.getElementById('ipText').textContent = '--';
+      const accessKeyEl = document.getElementById('serverAccessKey');
+      if (accessKeyEl) { accessKeyEl.textContent = '--'; accessKeyEl.dataset.key = ''; }
+      return;
+    }
+
+    const ipEl = document.getElementById('headerIp');
+    const ipText = document.getElementById('ipText');
+    ipEl.dataset.ip = info.base_url;
+    ipText.textContent = info.base_url;
+
+    const accessKeyEl = document.getElementById('serverAccessKey');
+    if (accessKeyEl) {
+      accessKeyEl.textContent = info.access_key || '未设置';
+      accessKeyEl.dataset.key = info.access_key || '';
+    }
+  } catch (e) {
+    document.getElementById('ipText').textContent = '--';
+    const accessKeyEl = document.getElementById('serverAccessKey');
+    if (accessKeyEl) { accessKeyEl.textContent = '--'; accessKeyEl.dataset.key = ''; }
+  }
+}
+
+// ---- Init ----
 async function init() {
-  lucide.createIcons();
+  try {
+    if (typeof lucide !== 'undefined') {
+      lucide.createIcons();
+    }
+  } catch (e) {
+    console.error('Lucide init error:', e);
+  }
 
   const savedKey = localStorage.getItem('prisma_key');
   if (savedKey) document.getElementById('apiKey').value = savedKey;
@@ -545,8 +1377,13 @@ async function init() {
     if (e.key === 'Enter') { saveKey(); }
   });
 
+  // Always start heartbeat regardless of saved key
+  checkConnection();
+  setInterval(checkConnection, 3000);
+
   if (savedKey) {
     await refreshAll();
+    await loadServerInfo();
     refreshTimer = setInterval(refreshAll, 10000);
   }
 }

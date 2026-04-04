@@ -50,7 +50,7 @@ async def handle_chat_completions(
     if not key:
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    url = f"{provider_cfg.base_url}/chat/completions"
+    url = provider_cfg.base_url
     headers = {
         "Authorization": f"Bearer {key.key.key}",
         "Content-Type": "application/json",
@@ -334,31 +334,33 @@ async def _non_stream_completion(
 
 
 async def handle_models_list(config: AppConfig) -> dict:
+    """Return only explicitly enabled models from all providers."""
     all_models = []
     for name, pc in config.providers.items():
         if not pc.enabled:
             continue
-        async with httpx.AsyncClient() as client:
-            try:
-                key = pc.keys[0].key if pc.keys else None
-                if not key:
-                    continue
-                headers = {"Authorization": f"Bearer {key}"}
-                if pc.headers:
-                    headers.update(pc.headers)
-                resp = await client.get(f"{pc.base_url}/models", headers=headers, timeout=10.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    models = data.get("data", data) if isinstance(data, dict) else data
-                    for m in models:
-                        mid = m.get("id", m) if isinstance(m, dict) else m
+
+        enabled_models = pc.models.get("include", []) if pc.models else []
+        if not enabled_models:
+            continue
+
+        if pc.provider_type == "web_reverse":
+            if pc.web_reverse and pc.web_reverse.model_mapping:
+                for client_model in pc.web_reverse.model_mapping:
+                    if client_model in enabled_models:
                         all_models.append({
-                            "id": mid,
+                            "id": client_model,
                             "provider": name,
                             "object": "model",
                         })
-            except Exception as e:
-                logger.warning(f"Failed to fetch models from {name}: {e}")
+            continue
+
+        for mid in enabled_models:
+            all_models.append({
+                "id": mid,
+                "provider": name,
+                "object": "model",
+            })
 
     return {"object": "list", "data": all_models}
 

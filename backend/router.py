@@ -31,28 +31,11 @@ class ModelRouter:
         self.config = config
 
     def resolve_model(self, model: str, messages: list[dict] | None = None) -> tuple[str, str]:
-        routing = self.config.model_routing
+        """Resolve model by exact match against enabled providers in config order."""
         original_model = model
-
-        if not routing.enabled:
-            provider = self._guess_provider(model)
-            return model, provider
-
-        resolved = self._resolve_alias(model)
-        if resolved:
-            model = resolved
-
-        model = self._apply_override(model)
-
         provider = self._resolve_provider(model)
-
-        if routing.complexity.enabled and messages:
-            model = self._complexity_route(messages)
-            provider = self._resolve_provider(model)
-
         if model != original_model:
             logger.info(f"Model routing: '{original_model}' -> '{model}' (provider: {provider})")
-
         return model, provider
 
     def _resolve_alias(self, model: str) -> Optional[str]:
@@ -67,34 +50,27 @@ class ModelRouter:
         return model
 
     def _resolve_provider(self, model: str) -> str:
-        if "/" in model:
-            prefix = model.split("/")[0]
-            enabled = self.config.providers
+        """Find the first provider (in config order) that has this model enabled."""
+        # Pass 1: Exact match
+        for name, pc in self.config.providers.items():
+            if not pc.enabled:
+                continue
+            enabled_models = pc.models.get("include", []) if pc.models else []
+            if not enabled_models or model in enabled_models:
+                return name
 
-            if prefix in enabled and enabled[prefix].enabled:
-                return prefix
+        # Pass 2: Substring match (either direction)
+        for name, pc in self.config.providers.items():
+            if not pc.enabled:
+                continue
+            enabled_models = pc.models.get("include", []) if pc.models else []
+            if not enabled_models:
+                return name  # No filter = all models available
+            for em in enabled_models:
+                if em in model or model in em:
+                    return name
 
-            provider_map = {
-                "openai": "openrouter",
-                "anthropic": "openrouter",
-                "google": "openrouter",
-                "meta": "nvidia",
-                "nvidia": "nvidia",
-                "mistral": "openrouter",
-                "deepseek": "openrouter",
-                "cohere": "openrouter",
-                "perplexity": "openrouter",
-            }
-            candidate = provider_map.get(prefix)
-            if candidate and candidate in enabled and enabled[candidate].enabled:
-                return candidate
-
-        mapping = self.config.model_routing.provider_mapping
-        for pattern, provider in mapping.items():
-            if fnmatch.fnmatch(model.lower(), pattern.lower()):
-                if provider in self.config.providers and self.config.providers[provider].enabled:
-                    return provider
-
+        # Fallback: first enabled provider
         for name, pc in self.config.providers.items():
             if pc.enabled:
                 return name
