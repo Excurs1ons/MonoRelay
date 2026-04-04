@@ -13,7 +13,7 @@ from ..key_manager import KeyManager
 from ..logger import RequestLogger
 from ..models import AppConfig
 from ..router import ModelRouter
-from ..stats import estimate_cost, extract_token_usage
+from ..stats import StatsTracker, estimate_cost, extract_token_usage
 from ..web_reverse.chatgpt import WebReverseService
 from .streaming import stream_openai_response
 
@@ -44,6 +44,7 @@ async def handle_chat_completions(
     key_manager: KeyManager,
     router: ModelRouter,
     request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
@@ -56,16 +57,19 @@ async def handle_chat_completions(
 
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     if provider_cfg.provider_type == "web_reverse":
         return await _handle_web_reverse_chat(
             body, provider_cfg, key_manager, provider_name,
             resolved_model, original_model, request_logger, config.key_selection.strategy,
+            stats_tracker,
         )
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/chat/completions")
@@ -83,7 +87,7 @@ async def handle_chat_completions(
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time,
+                resolved_model, original_model, request_logger, start_time, stats_tracker,
             ),
             media_type="text/event-stream",
             headers={
@@ -97,7 +101,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time,
+            resolved_model, original_model, request_logger, start_time, stats_tracker,
         )
 
 
@@ -107,6 +111,7 @@ async def handle_completions(
     key_manager: KeyManager,
     router: ModelRouter,
     request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     resolved_model, provider_name = router.resolve_model(original_model)
@@ -114,10 +119,12 @@ async def handle_completions(
 
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/completions")
@@ -135,7 +142,7 @@ async def handle_completions(
         return StreamingResponse(
             _stream_completion(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time,
+                resolved_model, original_model, request_logger, start_time, stats_tracker,
             ),
             media_type="text/event-stream",
             headers={
@@ -147,7 +154,7 @@ async def handle_completions(
     else:
         return await _non_stream_completion(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time,
+            resolved_model, original_model, request_logger, start_time, stats_tracker,
         )
 
 
@@ -157,6 +164,7 @@ async def handle_embeddings(
     key_manager: KeyManager,
     router: ModelRouter,
     request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
 ) -> dict:
     original_model = body.get("model", "unknown")
     resolved_model, provider_name = router.resolve_model(original_model)
@@ -164,10 +172,12 @@ async def handle_embeddings(
 
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     headers = {
@@ -188,6 +198,7 @@ async def handle_embeddings(
             elapsed = time.time() - start_time
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
             key_manager.report_success(key)
             await request_logger.log_request(
@@ -197,15 +208,17 @@ async def handle_embeddings(
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
             return resp.json()
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -222,6 +235,7 @@ async def _stream_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -234,6 +248,7 @@ async def _stream_chat(
                 streaming=True,
                 error_message=str(e),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
             yield f"data: {err}".encode() + b"\n\n"
             yield b"data: [DONE]\n\n"
@@ -241,7 +256,7 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -258,12 +273,12 @@ async def _non_stream_chat(
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=resp.text,
                 )
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
 
             key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_token_usage(result)
-            cost = estimate_cost(resolved_model, tokens_in or 0, tokens_out or 0) if tokens_in and tokens_out else None
 
             await request_logger.log_request(
                 model=resolved_model,
@@ -273,7 +288,12 @@ async def _non_stream_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
-                estimated_cost=cost,
+            )
+            stats_tracker.record_request(
+                provider_name, resolved_model,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                success=True,
             )
             return result
         except Exception as e:
@@ -287,12 +307,13 @@ async def _non_stream_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 error_message=str(e),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
 
 async def _stream_completion(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -308,6 +329,7 @@ async def _stream_completion(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -320,6 +342,7 @@ async def _stream_completion(
                 streaming=True,
                 error_message=str(e),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
             yield f"data: {err}".encode() + b"\n\n"
             yield b"data: [DONE]\n\n"
@@ -327,7 +350,7 @@ async def _stream_completion(
 
 async def _non_stream_completion(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -335,19 +358,30 @@ async def _non_stream_completion(
             elapsed = time.time() - start_time
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
             key_manager.report_success(key)
             result = resp.json()
+            tokens_in, tokens_out = extract_token_usage(result)
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+            )
+            stats_tracker.record_request(
+                provider_name, resolved_model,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                success=True,
             )
             return result
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
 
@@ -392,14 +426,17 @@ async def _handle_web_reverse_chat(
     original_model: str,
     request_logger: RequestLogger,
     key_strategy: str,
+    stats_tracker: StatsTracker,
 ) -> StreamingResponse | dict:
     key = key_manager.select_key(provider_name, key_strategy)
     if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for web_reverse provider '{provider_name}'", "type": "no_keys"}}
 
     access_token = key.key.key
     wr_config = provider_cfg.web_reverse
     if not wr_config:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"Web reverse config missing for '{provider_name}'", "type": "no_config"}}
 
     service = WebReverseService(provider_name, wr_config.model_dump())
@@ -413,7 +450,7 @@ async def _handle_web_reverse_chat(
             return StreamingResponse(
                 _wrap_web_reverse_stream(
                     result, key, key_manager, provider_name, resolved_model,
-                    original_model, request_logger, start_time,
+                    original_model, request_logger, start_time, stats_tracker,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -426,6 +463,7 @@ async def _handle_web_reverse_chat(
             )
         elif isinstance(result, dict) and "error" in result:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             return result
         else:
             key_manager.report_success(key)
@@ -437,6 +475,7 @@ async def _handle_web_reverse_chat(
                 status_code=200,
                 latency_ms=round(elapsed * 1000, 2),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
             return result
     except Exception as e:
         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
@@ -449,6 +488,7 @@ async def _handle_web_reverse_chat(
             latency_ms=round(elapsed * 1000, 2),
             error_message=str(e),
         )
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": str(e), "type": "web_reverse_error"}}
 
 
@@ -461,6 +501,7 @@ async def _wrap_web_reverse_stream(
     original_model: str,
     request_logger: RequestLogger,
     start_time: float,
+    stats_tracker: StatsTracker,
 ) -> AsyncGenerator[bytes, None]:
     async for chunk in stream_gen:
         yield chunk
@@ -474,3 +515,4 @@ async def _wrap_web_reverse_stream(
         latency_ms=round(elapsed * 1000, 2),
         streaming=True,
     )
+    stats_tracker.record_request(provider_name, resolved_model, success=True)

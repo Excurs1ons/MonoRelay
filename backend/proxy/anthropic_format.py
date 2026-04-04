@@ -13,7 +13,7 @@ from ..key_manager import KeyManager
 from ..logger import RequestLogger
 from ..models import AppConfig
 from ..router import ModelRouter
-from ..stats import estimate_cost, extract_anthropic_token_usage
+from ..stats import StatsTracker, estimate_cost, extract_anthropic_token_usage
 from .streaming import stream_anthropic_response
 
 logger = logging.getLogger("prisma.anthropic_proxy")
@@ -25,6 +25,7 @@ async def handle_messages(
     key_manager: KeyManager,
     router: ModelRouter,
     request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
@@ -38,10 +39,12 @@ async def handle_messages(
 
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = f"{provider_cfg.base_url}/v1/messages"
@@ -60,7 +63,7 @@ async def handle_messages(
         return StreamingResponse(
             _stream_messages(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time,
+                resolved_model, original_model, request_logger, start_time, stats_tracker,
             ),
             media_type="text/event-stream",
             headers={
@@ -74,13 +77,13 @@ async def handle_messages(
     else:
         return await _non_stream_messages(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time,
+            resolved_model, original_model, request_logger, start_time, stats_tracker,
         )
 
 
 async def _stream_messages(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -97,6 +100,7 @@ async def _stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -109,13 +113,14 @@ async def _stream_messages(
                 streaming=True,
                 error_message=str(e),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             event_data = json.dumps({"type": "error", "error": {"message": str(e), "type": "proxy_error"}})
             yield f"event: error\ndata: {event_data}\n\n".encode()
 
 
 async def _non_stream_messages(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -132,12 +137,12 @@ async def _non_stream_messages(
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=resp.text,
                 )
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
 
             key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_anthropic_token_usage(result)
-            cost = estimate_cost(resolved_model, tokens_in or 0, tokens_out or 0) if tokens_in and tokens_out else None
 
             await request_logger.log_request(
                 model=resolved_model,
@@ -147,7 +152,12 @@ async def _non_stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
-                estimated_cost=cost,
+            )
+            stats_tracker.record_request(
+                provider_name, resolved_model,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                success=True,
             )
             return result
         except Exception as e:
@@ -161,4 +171,5 @@ async def _non_stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 error_message=str(e),
             )
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": str(e), "type": "proxy_error"}}

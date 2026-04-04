@@ -1347,14 +1347,30 @@ async function loadSyncStatus() {
   const el = document.getElementById('syncStatus');
   if (!status.enabled || !status.has_token) {
     el.innerHTML = `
+      <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;font-size:13px;line-height:1.8">
+        <div style="font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px"><i data-lucide="info" style="width:16px;height:16px;color:var(--accent)"></i>配置步骤</div>
+        <div style="padding-left:8px">
+          <div style="margin-bottom:8px"><b>1.</b> 打开 <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline">GitHub Personal Access Tokens</a></div>
+          <div style="margin-bottom:8px"><b>2.</b> 点击 <b>Generate new token</b> → 选择 <b>Generate new token (fine-grained)</b></div>
+          <div style="margin-bottom:8px"><b>3.</b> 填写以下信息：</div>
+          <div style="margin-left:16px;margin-bottom:4px">• <b>Token name</b>：随意填写，如 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">PrismaAPIRelay-Sync</code></div>
+          <div style="margin-left:16px;margin-bottom:4px">• <b>Expiration</b>：选择有效期，建议 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">No expiration</code>（永不过期）</div>
+          <div style="margin-left:16px;margin-bottom:4px">• <b>Repository access</b>：选择 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">Only select repositories</code> 或 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">All repositories</code> 均可</div>
+          <div style="margin-bottom:8px"><b>4.</b> 展开 <b>Permissions</b> → <b>Gist permissions</b>：</div>
+          <div style="margin-left:16px;margin-bottom:4px">• <b>Access</b>：选择 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">Read and write</code></div>
+          <div style="margin-left:16px;margin-bottom:12px;color:var(--yellow)">⚠️ 必须选择 <b>Read and write</b>，否则无法上传和下载配置</div>
+          <div style="margin-bottom:8px"><b>5.</b> 点击底部 <b>Generate token</b>，复制生成的 Token（以 <code style="background:var(--bg-card);padding:1px 6px;border-radius:3px">github_pat_</code> 开头）</div>
+          <div style="margin-bottom:8px"><b>6.</b> 将 Token 粘贴到下方输入框</div>
+        </div>
+      </div>
       <div class="form-group">
         <label>GitHub Personal Access Token</label>
-        <input type="text" id="syncToken" placeholder="ghp_xxxxx 或 github_pat_xxxxx">
-        <div class="hint">Settings → Developer settings → Personal access tokens → Fine-grained token (Gists read/write)</div>
+        <input type="text" id="syncToken" placeholder="github_pat_xxxxx 或 ghp_xxxxx">
       </div>
       <div class="form-group">
         <label>Gist ID（留空则自动创建）</label>
-        <input type="text" id="syncGistId" placeholder="留空自动创建新 Gist" value="${status.gist_id || ''}">
+        <input type="text" id="syncGistId" placeholder="首次使用留空即可，会自动创建">
+        <div class="hint">首次配置时留空，系统会自动创建一个 Secret Gist 并保存 ID</div>
       </div>
       <button class="btn btn-primary" onclick="setupSync()"><i data-lucide="link"></i>配置同步</button>
     `;

@@ -176,7 +176,7 @@ async def health():
 async def chat_completions(request: Request):
     body = await request.json()
     result = await handle_chat_completions(
-        body, config_manager.config, key_manager, model_router, request_logger,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -187,7 +187,7 @@ async def chat_completions(request: Request):
 async def completions(request: Request):
     body = await request.json()
     result = await handle_completions(
-        body, config_manager.config, key_manager, model_router, request_logger,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -198,7 +198,7 @@ async def completions(request: Request):
 async def embeddings(request: Request):
     body = await request.json()
     result = await handle_embeddings(
-        body, config_manager.config, key_manager, model_router, request_logger,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -215,7 +215,7 @@ async def models_list():
 async def messages(request: Request):
     body = await request.json()
     result = await handle_messages(
-        body, config_manager.config, key_manager, model_router, request_logger,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
