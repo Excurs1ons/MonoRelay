@@ -62,8 +62,16 @@ def extract_anthropic_token_usage(response_data: dict) -> tuple[Optional[int], O
     return None, None
 
 
+def _get_exe_dir() -> Path:
+    """获取可执行文件所在目录（兼容 PyInstaller 打包）。"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+
 class StatsTracker:
-    DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "stats.json"
+    DEFAULT_PATH = _get_exe_dir() / "data" / "stats.json"
 
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path else self.DEFAULT_PATH
@@ -71,7 +79,6 @@ class StatsTracker:
         self.total_errors: int = 0
         self.total_tokens_in: int = 0
         self.total_tokens_out: int = 0
-        self.total_tokens_estimated: int = 0
         self.total_cost: float = 0.0
         self.requests_by_provider: dict[str, int] = {}
         self.requests_by_model: dict[str, int] = {}
@@ -92,7 +99,6 @@ class StatsTracker:
             self.total_errors = data.get("total_errors", 0)
             self.total_tokens_in = data.get("total_tokens_in", 0)
             self.total_tokens_out = data.get("total_tokens_out", 0)
-            self.total_tokens_estimated = data.get("total_tokens_estimated", 0)
             self.total_cost = data.get("total_cost", 0.0)
             self.requests_by_provider = data.get("requests_by_provider", {})
             self.requests_by_model = data.get("requests_by_model", {})
@@ -111,7 +117,6 @@ class StatsTracker:
                 "total_errors": self.total_errors,
                 "total_tokens_in": self.total_tokens_in,
                 "total_tokens_out": self.total_tokens_out,
-                "total_tokens_estimated": self.total_tokens_estimated,
                 "total_cost": self.total_cost,
                 "requests_by_provider": self.requests_by_provider,
                 "requests_by_model": self.requests_by_model,
@@ -147,8 +152,6 @@ class StatsTracker:
             self.total_tokens_in += in_tokens
         if output_tokens is not None:
             self.total_tokens_out += out_tokens
-        if is_estimated and (input_tokens is not None or output_tokens is not None):
-            self.total_tokens_estimated += in_tokens + out_tokens
 
         # Calculate cost even with partial token data
         cost = estimate_cost(model, in_tokens, out_tokens)
@@ -166,7 +169,6 @@ class StatsTracker:
                 "errors": 0,
                 "total_tokens_in": 0,
                 "total_tokens_out": 0,
-                "total_latency_ms": 0,
                 "total_first_token_ms": 0,
                 "first_token_count": 0,
                 "streaming_requests": 0,
@@ -180,7 +182,6 @@ class StatsTracker:
             ms["errors"] += 1
         ms["total_tokens_in"] += in_tokens
         ms["total_tokens_out"] += out_tokens
-        ms["total_latency_ms"] += latency_ms
         if is_streaming:
             ms["streaming_requests"] += 1
             ms["total_stream_chunks"] += stream_chunks
@@ -201,7 +202,6 @@ class StatsTracker:
             "error_rate": self.total_errors / max(self.total_requests, 1),
             "total_tokens_in": self.total_tokens_in,
             "total_tokens_out": self.total_tokens_out,
-            "total_tokens_estimated": self.total_tokens_estimated,
             "total_tokens": self.total_tokens_in + self.total_tokens_out,
             "estimated_total_cost": round(self.total_cost, 6),
             "requests_by_provider": dict(self.requests_by_provider),
@@ -216,7 +216,6 @@ class StatsTracker:
             req = ms["requests"]
             if req == 0:
                 continue
-            avg_latency = ms["total_latency_ms"] / req if req > 0 else 0
             avg_first_token = ms["total_first_token_ms"] / ms["first_token_count"] if ms["first_token_count"] > 0 else None
             avg_speed = ms["total_output_tokens_for_speed"] / (ms["total_stream_duration_ms"] / 1000) if ms["total_stream_duration_ms"] > 0 else None
 
@@ -225,7 +224,6 @@ class StatsTracker:
                 "errors": ms["errors"],
                 "total_tokens_in": ms["total_tokens_in"],
                 "total_tokens_out": ms["total_tokens_out"],
-                "avg_latency_ms": round(avg_latency, 1),
                 "avg_first_token_ms": round(avg_first_token, 1) if avg_first_token is not None else None,
                 "avg_speed_tps": round(avg_speed, 1) if avg_speed is not None else None,
                 "streaming_requests": ms["streaming_requests"],

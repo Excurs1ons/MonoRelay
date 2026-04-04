@@ -1,9 +1,10 @@
-"""Configuration management with hot-reload support."""
+"""配置管理，支持热重载。"""
 from __future__ import annotations
 
 import copy
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +15,14 @@ from .models import AppConfig
 
 logger = logging.getLogger("prisma.config")
 
-DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yml")
+def _get_exe_dir() -> str:
+    """获取可执行文件所在目录（兼容 PyInstaller 打包）。"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.join(os.path.dirname(__file__), "..")
+
+DEFAULT_CONFIG_PATH = os.path.join(_get_exe_dir(), "config.yml")
 
 
 class ConfigManager:
@@ -22,6 +30,7 @@ class ConfigManager:
         self._config_path = Path(config_path).resolve()
         self._config: Optional[AppConfig] = None
         self._callbacks: list[callable] = []
+        self._saving = False  # 保存期间阻止重载
 
     @property
     def config(self) -> AppConfig:
@@ -35,25 +44,27 @@ class ConfigManager:
 
     def _load(self) -> AppConfig:
         if not self._config_path.exists():
-            logger.warning(f"Config file not found at {self._config_path}, using defaults")
+            logger.warning(f"配置文件不存在: {self._config_path}，使用默认值")
             return AppConfig()
 
         with open(self._config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
         config = AppConfig(**raw)
-        logger.info(f"Configuration loaded from {self._config_path}")
-        logger.info(f"Enabled providers: {[k for k, v in config.providers.items() if v.enabled]}")
+        logger.info(f"配置已加载: {self._config_path}")
+        logger.info(f"已启用的提供商: {[k for k, v in config.providers.items() if v.enabled]}")
         return config
 
     def reload(self) -> AppConfig:
+        if self._saving:
+            return self._config  # 保存期间跳过重载
         old = self._config
         self._config = self._load()
         for cb in self._callbacks:
             try:
                 cb(self._config, old)
             except Exception as e:
-                logger.error(f"Config reload callback error: {e}")
+                logger.error(f"配置重载回调异常: {e}")
         return self._config
 
     def on_reload(self, callback: callable):
@@ -64,7 +75,7 @@ class ConfigManager:
             return
         async for changes in awatch(str(self._config_path), stop_event=None):
             for change_type, path in changes:
-                logger.info(f"Config file changed: {change_type.name} {path}")
+                logger.info(f"配置文件变更: {change_type.name} {path}")
                 self.reload()
                 break
 
@@ -75,7 +86,27 @@ class ConfigManager:
         return {k: v for k, v in self.config.providers.items() if v.enabled}
 
     def save(self, config: AppConfig):
-        with open(self._config_path, "w", encoding="utf-8") as f:
-            yaml.dump(config.model_dump(mode="json"), f, default_flow_style=False, allow_unicode=True)
-        self._config = config
-        logger.info(f"Configuration saved to {self._config_path}")
+        self._saving = True
+        try:
+            data = config.model_dump(mode="json")
+            # 确保 sync 字段被正确序列化（不含 token，token 存储在本地 sync.json）
+            if hasattr(config, 'sync'):
+                data['sync'] = {
+                    'enabled': config.sync.enabled,
+                    'gist_id': config.sync.gist_id,
+                    'gist_id_stats': config.sync.gist_id_stats,
+                }
+            # 原子写入：先写临时文件再重命名，避免 watchfiles 读到不完整的文件
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=self._config_path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+                os.replace(tmp_path, str(self._config_path))
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+            self._config = config
+            logger.info(f"配置已保存: {self._config_path}")
+        finally:
+            self._saving = False

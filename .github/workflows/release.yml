@@ -1,0 +1,159 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 0.0.1）"
+        required: false
+        default: "0.0.1"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: PyInstaller 打包
+        run: |
+          pyinstaller --clean PrismaAPIRelay.spec
+
+      - name: 准备发布包
+        shell: pwsh
+        run: |
+          $OutputDir = "dist/PrismaAPIRelay"
+          New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+
+          # 移动 exe
+          Move-Item -Force "dist/PrismaAPIRelay.exe" "$OutputDir/PrismaAPIRelay.exe"
+
+          # 复制配置
+          if (Test-Path "config.yml.example") {
+            Copy-Item "config.yml.example" "$OutputDir/config.yml.example"
+            Copy-Item "config.yml.example" "$OutputDir/config.yml"
+          }
+
+          # 创建 data 目录
+          New-Item -ItemType Directory -Force "$OutputDir/data" | Out-Null
+
+          # 创建启动脚本
+          @"
+          @echo off
+          chcp 65001 >nul
+          echo ========================================
+          echo   PrismaAPIRelay 启动中...
+          echo ========================================
+          echo.
+          PrismaAPIRelay.exe --host 0.0.0.0 --port 8787
+          pause
+          "@ | Out-File -FilePath "$OutputDir/启动.bat" -Encoding UTF8
+
+      - name: 压缩 Windows 包
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/PrismaAPIRelay" -DestinationPath "dist/PrismaAPIRelay-Windows-x64.zip" -Force
+          $size = (Get-Item "dist/PrismaAPIRelay-Windows-x64.zip").Length
+          Write-Host "压缩包大小: $([math]::Round($size/1MB, 1)) MB"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismaAPIRelay-Windows-x64
+          path: dist/PrismaAPIRelay-Windows-x64.zip
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载 Windows 构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: PrismaAPIRelay-Windows-x64
+          path: dist/
+
+      - name: 获取版本号和更新日志
+        id: release_info
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="v${{ github.event.inputs.version || '0.0.1' }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # 获取从上一个 tag 到现在的 commit 日志
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG..HEAD")
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" -20)
+          fi
+          echo "changelog<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.version }}
+          name: "PrismaAPIRelay ${{ steps.release_info.outputs.version }}"
+          body: |
+            ## 更新日志
+
+            ${{ steps.release_info.outputs.changelog }}
+
+            ## 安装
+
+            ### Windows
+            1. 下载 `PrismaAPIRelay-Windows-x64.zip`
+            2. 解压到任意目录
+            3. 编辑 `config.yml` 填入你的 API 密钥
+            4. 双击 `启动.bat` 或运行 `PrismaAPIRelay.exe`
+            5. 浏览器打开 http://localhost:8787
+
+            ### Docker
+            ```bash
+            docker compose up -d
+            ```
+
+            ### 源码运行
+            ```bash
+            pip install -r requirements.txt
+            python -m backend.main
+            ```
+          files: dist/PrismaAPIRelay-Windows-x64.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

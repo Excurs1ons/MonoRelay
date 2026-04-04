@@ -28,6 +28,7 @@ from .proxy.openai_format import (
 )
 from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
+from .sync_storage import SyncStorage
 
 logger = logging.getLogger("prisma.main")
 
@@ -45,6 +46,7 @@ key_manager = KeyManager()
 request_logger = RequestLogger()
 stats_tracker = StatsTracker()
 model_router = ModelRouter(AppConfig())
+sync_storage = SyncStorage()
 
 
 def init_components(cfg: AppConfig):
@@ -104,7 +106,7 @@ app = FastAPI(
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path.startswith("/v1/") or path.startswith("/api/"):
+    if path.startswith("/v1/") or path.startswith("/api/") or path == "/health":
         access_key = config_manager.config.server.access_key
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
@@ -122,7 +124,14 @@ async def auth_middleware(request: Request, call_next):
     return response
 
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+def _get_resource_path(relative_path: str) -> Path:
+    """获取资源路径，兼容 PyInstaller 打包环境。"""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return Path(getattr(sys, '_MEIPASS')) / relative_path  # type: ignore[arg-type]
+    return Path(__file__).resolve().parent.parent / relative_path
+
+
+FRONTEND_DIR = _get_resource_path("frontend")
 
 
 @app.get("/")
@@ -252,9 +261,41 @@ async def api_update_config(request: Request):
         new_cfg = AppConfig(**body)
         config_manager.save(new_cfg)
         init_components(new_cfg)
+
+        # Auto-push to Gist if sync is enabled
+        sc = new_cfg.sync
+        if sc.enabled and sync_storage.has_token:
+            import asyncio
+            import yaml
+            from .sync import GistSync
+            content = yaml.dump(new_cfg.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
+            stats_content = None
+            if stats_tracker.db_path.exists():
+                try:
+                    stats_content = stats_tracker.db_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+            sync = GistSync(sync_storage.gist_token, sc.gist_id)
+            asyncio.create_task(_push_to_gist(sync, content, stats_content, new_cfg))
+
         return {"status": "ok", "message": "Configuration updated and reloaded"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+async def _push_to_gist(sync, content, stats_content, cfg):
+    """保存配置后自动推送完整内容到 Gist 的后台任务。"""
+    import logging
+    logger = logging.getLogger("prisma.sync")
+    logger.info(f"后台推送: token_len={len(sync._token)}, gist_id={sync.gist_id}")
+    try:
+        ok = await sync.push(content, stats_content)
+        if ok and sync.gist_id and sync.gist_id != cfg.sync.gist_id:
+            new_cfg = cfg.model_copy(deep=True)
+            new_cfg.sync.gist_id = sync.gist_id
+            config_manager.save(new_cfg)
+    except Exception as e:
+        logger.warning(f"自动同步推送失败: {e}")
 
 
 @app.get("/api/providers")
@@ -677,35 +718,128 @@ async def api_router_info():
     }
 
 
-# Config Sync
+# 配置同步
 @app.get("/api/sync")
 async def api_sync_status():
-    """Return current sync configuration and status."""
+    """返回当前同步配置和状态。"""
     sc = config_manager.config.sync
+    token = sync_storage.gist_token
     return {
         "enabled": sc.enabled,
         "gist_id": sc.gist_id,
-        "has_token": bool(sc.gist_token),
+        "has_token": bool(token),
+        "token_full": token,
     }
+
+
+@app.post("/api/sync/find-gist")
+async def api_sync_find_gist(request: Request):
+    """通过 Token 查找 PrismaAPIRelay Configuration Gist。"""
+    try:
+        body = await request.json()
+        token = (body.get("gist_token", "") or "").strip()
+        # 清理 Token
+        token = "".join(token.split())
+        if not token:
+            raise HTTPException(status_code=400, detail="gist_token 不能为空")
+
+        sync = GistSync(token)
+        gist_id = await sync.find_gist_by_description()
+        
+        # find_gist_by_description 返回 None 可能是因为 401 或者真的没找到
+        # 我们需要区分这两种情况
+        if gist_id:
+            return {"gist_id": gist_id, "found": True}
+        
+        # 如果没找到，尝试获取一次列表来验证 Token 是否有效
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/gists?per_page=1",
+                headers=sync._headers,
+                timeout=10.0,
+            )
+            if resp.status_code == 401:
+                return {"gist_id": "", "found": False, "error": "Token 无效 (401)，请检查 Token 是否正确"}
+            elif resp.status_code == 403:
+                return {"gist_id": "", "found": False, "error": "Token 有效但无 Gist 权限 (403)"}
+            else:
+                # 200 但没找到，说明确实没有
+                return {"gist_id": "", "found": False}
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/sync/setup")
 async def api_sync_setup(request: Request):
-    """Configure Gist sync with token and optional gist_id."""
+    """配置 Gist 同步，支持 Token 和可选的 gist_id。"""
     try:
         body = await request.json()
         token = body.get("gist_token", "").strip()
         gist_id = body.get("gist_id", "").strip()
 
         if not token:
-            raise HTTPException(status_code=400, detail="gist_token is required")
+            raise HTTPException(status_code=400, detail="gist_token 不能为空")
 
+        # 清理 Token
+        token = "".join(token.split())
+        
+        # 保存 token 到本地存储
+        sync_storage.gist_token = token
+        
         cfg = config_manager.config.model_copy(deep=True)
         cfg.sync.enabled = True
-        cfg.sync.gist_token = token
-        cfg.sync.gist_id = gist_id
+
+        from .sync import GistSync
+        import logging
+        logger = logging.getLogger("prisma.sync")
+        
+        sync = GistSync(token, gist_id)
+        logger.info(f"同步配置: token_len={len(token)}, gist_id={gist_id or '空'}")
+
+        # 未提供 gist_id 时自动查找已有 Gist
+        if not gist_id:
+            found_id = await sync.find_gist_by_description()
+            if found_id:
+                cfg.sync.gist_id = found_id
+                sync = GistSync(token, found_id)
+                logger.info(f"找到已有 Gist: {found_id}")
+            else:
+                # 找不到已有 Gist，创建新的
+                logger.info("未找到已有 Gist，创建新的...")
+                ok = await sync.push("{}")
+                if not ok:
+                    raise HTTPException(status_code=500, detail="创建 Gist 失败")
+                cfg.sync.gist_id = sync.gist_id
+                logger.info(f"Gist 创建成功: {sync.gist_id}")
+
+        # 保存配置（含 gist_id）
         config_manager.save(cfg)
-        return {"status": "ok", "message": "Gist sync configured"}
+        logger.info(f"配置已保存，准备推送完整内容")
+
+        # 同步推送完整内容（不再使用后台任务，避免竞态）
+        import yaml
+        content = yaml.dump(cfg.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
+        stats_content = None
+        if stats_tracker.db_path.exists():
+            try:
+                stats_content = stats_tracker.db_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        
+        logger.info(f"开始推送: gist_id={sync.gist_id}, content_len={len(content)}")
+        ok = await sync.push(content, stats_content)
+        
+        if not ok:
+            logger.error(f"推送失败，但配置已保存。可稍后手动点击'推送'按钮重试")
+            # 不抛出异常，因为配置已保存成功
+            return {"status": "ok", "message": "Gist 同步已配置，但推送完整内容失败，请稍后手动推送", "gist_id": sync.gist_id}
+        
+        logger.info(f"推送成功: {sync.gist_id}")
+        return {"status": "ok", "message": "Gist 同步已配置", "gist_id": sync.gist_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -714,56 +848,141 @@ async def api_sync_setup(request: Request):
 
 @app.post("/api/sync/push")
 async def api_sync_push():
-    """Push current config to Gist."""
+    """推送当前配置和统计到 Gist。"""
     sc = config_manager.config.sync
-    if not sc.enabled or not sc.gist_token:
-        raise HTTPException(status_code=400, detail="Gist sync not configured")
+    import logging
+    logger = logging.getLogger("prisma.sync")
+    token = sync_storage.gist_token
+    logger.info(f"同步推送: enabled={sc.enabled}, token_len={len(token)}, token_prefix={token[:15]}..., gist_id={sc.gist_id}")
+    if not sc.enabled or not token:
+        raise HTTPException(status_code=400, detail="Gist 同步未配置")
 
-    sync = GistSync(sc.gist_token, sc.gist_id)
+    sync = GistSync(token, sc.gist_id)
     content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
-    ok = await sync.push(content)
+
+    # 附带统计数据
+    stats_content = None
+    stats_path = stats_tracker.db_path
+    if stats_path.exists():
+        try:
+            stats_content = stats_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    ok = await sync.push(content, stats_content)
 
     if ok:
-        # Save updated gist_id if a new gist was created
+        # 如果创建了新 Gist，保存 gist_id
         if sync.gist_id and sync.gist_id != sc.gist_id:
             cfg = config_manager.config.model_copy(deep=True)
             cfg.sync.gist_id = sync.gist_id
             config_manager.save(cfg)
-        return {"status": "ok", "message": "Config pushed to Gist", "gist_id": sync.gist_id}
-    raise HTTPException(status_code=500, detail="Failed to push config to Gist")
+        return {"status": "ok", "message": "配置和统计已推送到 Gist", "gist_id": sync.gist_id}
+    raise HTTPException(status_code=500, detail="推送到 Gist 失败")
 
 
 @app.post("/api/sync/pull")
 async def api_sync_pull():
-    """Pull config from Gist and apply."""
+    """从 Gist 拉取配置和统计并应用。"""
     sc = config_manager.config.sync
-    if not sc.enabled or not sc.gist_token or not sc.gist_id:
-        raise HTTPException(status_code=400, detail="Gist sync not configured")
+    token = sync_storage.gist_token
+    if not sc.enabled or not token or not sc.gist_id:
+        raise HTTPException(status_code=400, detail="Gist 同步未配置")
 
-    sync = GistSync(sc.gist_token, sc.gist_id)
-    content = await sync.pull()
-    if not content:
-        raise HTTPException(status_code=500, detail="Failed to pull config from Gist")
+    sync = GistSync(token, sc.gist_id)
+    data = await sync.pull()
+    if not data:
+        raise HTTPException(status_code=500, detail="从 Gist 拉取失败")
 
+    results = []
     try:
-        import yaml
-        raw = yaml.safe_load(content)
-        new_cfg = AppConfig(**raw)
-        config_manager.save(new_cfg)
-        init_components(new_cfg)
-        return {"status": "ok", "message": "Config pulled and applied from Gist"}
+        if "config" in data:
+            import yaml
+            raw = yaml.safe_load(data["config"])
+            new_cfg = AppConfig(**raw)
+            config_manager.save(new_cfg)
+            init_components(new_cfg)
+            results.append("配置")
+
+        if "stats" in data:
+            stats_path = stats_tracker.db_path
+            stats_path.parent.mkdir(parents=True, exist_ok=True)
+            stats_path.write_text(data["stats"], encoding="utf-8")
+            # 重新加载统计数据
+            stats_tracker._load()
+            results.append("统计数据")
+
+        if results:
+            return {"status": "ok", "message": f"已从 Gist 拉取并应用{'、'.join(results)}"}
+        raise HTTPException(status_code=500, detail="Gist 中无有效数据")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse pulled config: {e}")
+        raise HTTPException(status_code=500, detail=f"应用拉取的数据失败: {e}")
+
+
+@app.post("/api/sync/verify-token")
+async def api_sync_verify_token(request: Request):
+    """验证 GitHub Token 是否有效及权限。"""
+    try:
+        body = await request.json()
+        token = body.get("gist_token", "").strip()
+        
+        # 如果请求体中没有 Token，则使用已配置的 Token
+        if not token:
+            token = sync_storage.gist_token
+            
+        if not token:
+            return {"valid": False, "error": "未提供 Token 且未配置 Token"}
+
+        # 清理 Token
+        token = "".join(token.split())
+        
+        from .sync import GistSync
+        sync = GistSync(token)
+        
+        # 先尝试查找配置 Gist
+        gist_id = await sync.find_gist_by_description()
+        
+        if gist_id:
+            return {"valid": True, "gist_access": True, "message": f"Token 有效，找到配置 Gist: {gist_id}"}
+        
+        # 没找到，验证 Token 本身是否有效
+        import httpx
+        import logging
+        logger = logging.getLogger("prisma.sync")
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/gists?per_page=1",
+                headers=sync._headers,
+                timeout=10.0,
+            )
+            
+            if resp.status_code == 401:
+                logger.warning(f"Token 验证失败 (401): {resp.text[:200]}")
+                return {"valid": False, "error": f"Token 无效 (401)。请检查：\n1. Token 是否完整复制（无多余空格/换行）\n2. 是否已过期或被撤销\n3. 权限是否包含 Gist Read/Write"}
+            elif resp.status_code == 403:
+                return {"valid": True, "gist_access": False, "error": "Token 有效但无 Gist 访问权限 (403)，请确保勾选 Gist → Read and write"}
+            elif resp.status_code == 200:
+                return {"valid": True, "gist_access": True, "message": "Token 有效，但未找到配置 Gist（首次配置时会自动创建）"}
+            else:
+                return {"valid": False, "error": f"验证失败 ({resp.status_code}): {resp.text[:200]}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"valid": False, "error": f"验证失败: {str(e)}"}
 
 
 @app.get("/api/sync/history")
 async def api_sync_history():
-    """Get Gist commit history."""
+    """获取 Gist 提交历史。"""
     sc = config_manager.config.sync
-    if not sc.enabled or not sc.gist_token or not sc.gist_id:
+    token = sync_storage.gist_token
+    if not sc.enabled or not token or not sc.gist_id:
         return []
 
-    sync = GistSync(sc.gist_token, sc.gist_id)
+    sync = GistSync(token, sc.gist_id)
     return await sync.get_history()
 
 

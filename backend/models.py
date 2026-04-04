@@ -89,6 +89,8 @@ class ProviderConfig(BaseModel):
     web_reverse: Optional[WebReverseConfig] = None
     test_model: str = ""
     console_url: str = ""
+    cost_per_m_input: float = 0.0  # 每百万输入 Token 费用（USD）
+    cost_per_m_output: float = 0.0  # 每百万输出 Token 费用（USD）
 
 
 class ComplexityConfig(BaseModel):
@@ -140,8 +142,8 @@ class KeySelectionConfig(BaseModel):
 
 class SyncConfig(BaseModel):
     enabled: bool = False
-    gist_token: str = ""
     gist_id: str = ""
+    gist_id_stats: str = ""
 
 
 class AppConfig(BaseModel):

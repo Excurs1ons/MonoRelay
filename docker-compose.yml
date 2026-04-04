@@ -9,12 +9,16 @@ services:
       - "8787:8787"
     volumes:
       - ./config.yml:/app/config.yml:ro
-      - ./data:/app/data
+      - prisma-data:/app/data
     environment:
-      - TZ=UTC
+      - TZ=Asia/Shanghai
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8787/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+volumes:
+  prisma-data:
+    driver: local
