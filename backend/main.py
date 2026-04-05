@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-import yaml
-import uvicorn
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -25,10 +25,15 @@ from .proxy.openai_format import (
     handle_completions,
     handle_embeddings,
     handle_models_list,
+    handle_audio_transcriptions,
+    handle_image_generations,
 )
 from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
+from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
+from .cache import response_cache
+from .usage_tracker import usage_tracker
 
 logger = logging.getLogger("monorelay.main")
 
@@ -85,6 +90,9 @@ async def lifespan(app: FastAPI):
     import asyncio
     asyncio.create_task(config_manager.watch())
 
+    global _app_start_time
+    _app_start_time = time.monotonic()
+
     # Register hot-reload callback
     config_manager.on_reload(lambda new, old: init_components(new))
 
@@ -99,6 +107,14 @@ app = FastAPI(
     description="Configurable LLM API Relay Server supporting OpenRouter, NVIDIA NIM, OpenAI, and Anthropic",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config_manager.config.server.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -119,6 +135,8 @@ async def auth_middleware(request: Request, call_next):
                 status_code=401,
                 content={"error": {"message": "Unauthorized", "type": "auth_error"}},
             )
+
+        request.state.client_id = token[:16] if len(token) >= 16 else token
 
     response = await call_next(request)
     return response
@@ -191,6 +209,43 @@ async def health():
     }
 
 
+# Per-client usage tracking
+@app.get("/api/usage/stats")
+async def api_usage_stats(client_id: str | None = None):
+    """Get API usage statistics per client or overall."""
+    return usage_tracker.get_stats(client_id)
+
+
+@app.post("/api/usage/clear")
+async def api_usage_clear(client_id: str | None = None):
+    """Clear usage stats, optionally for a specific client."""
+    usage_tracker.clear(client_id)
+    return {"status": "ok", "message": f"Usage stats cleared{' for: ' + client_id if client_id else ''}"}
+
+
+# Response cache management
+@app.get("/api/cache/stats")
+async def api_cache_stats():
+    """Get response cache statistics."""
+    return response_cache.stats()
+
+
+@app.post("/api/cache/clear")
+async def api_cache_clear(model: str | None = None):
+    """Clear response cache, optionally for a specific model only."""
+    response_cache.invalidate(model)
+    return {"status": "ok", "message": f"Cache cleared{' for model: ' + model if model else ''}"}
+
+
+@app.post("/api/cache/enable")
+async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_size: int = 1000):
+    """Enable/disable response cache and configure parameters."""
+    if enabled:
+        response_cache._max_size = max_size
+        response_cache._ttl_seconds = ttl_seconds
+    return {"status": "ok", "enabled": enabled, "ttl_seconds": response_cache._ttl_seconds, "max_size": response_cache._max_size}
+
+
 # OpenAI-compatible endpoints
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -228,6 +283,43 @@ async def embeddings(request: Request):
 @app.get("/v1/models")
 async def models_list():
     return await handle_models_list(config_manager.config)
+
+
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile,
+    model: str = Form(...),
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    response_format: str | None = Form(None),
+    temperature: float | None = Form(None),
+):
+    form_data = {"model": model}
+    if language:
+        form_data["language"] = language
+    if prompt:
+        form_data["prompt"] = prompt
+    if response_format:
+        form_data["response_format"] = response_format
+    if temperature is not None:
+        form_data["temperature"] = temperature
+    result = await handle_audio_transcriptions(
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/images/generations")
+async def images_generations(request: Request):
+    body = await request.json()
+    result = await handle_image_generations(
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
 
 
 # Anthropic-compatible endpoints
@@ -418,8 +510,7 @@ async def api_test_provider(name: str):
     url = pc.base_url
     if pc.provider_type != "web_reverse" and not url.endswith("/chat/completions"):
         url = f"{url}/chat/completions"
-    import time as _time
-    start = _time.monotonic()
+    start = time.monotonic()
 
     try:
         async with httpx.AsyncClient() as client:
@@ -433,7 +524,7 @@ async def api_test_provider(name: str):
                 json=test_payload,
                 timeout=15.0,
             )
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
 
         # Try to parse response body
         try:
@@ -503,7 +594,7 @@ async def api_test_provider(name: str):
                 }
             }
     except httpx.TimeoutException:
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         return {
             "status": "error",
             "message": f"请求超时 ({elapsed_ms}ms)",
@@ -515,7 +606,7 @@ async def api_test_provider(name: str):
             }
         }
     except Exception as e:
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         return {
             "status": "error",
             "message": str(e),
@@ -526,6 +617,363 @@ async def api_test_provider(name: str):
                 "timing_ms": elapsed_ms,
             }
         }
+
+
+# Batch health check - inspired by all-api-hub
+@app.post("/api/health-check")
+async def api_health_check():
+    """Test all providers and all keys in parallel, return comprehensive health report."""
+    import asyncio as _asyncio
+
+    results = {}
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled or not pc.keys:
+            results[name] = {"enabled": pc.enabled, "status": "skipped", "message": "Provider disabled or no keys"}
+            continue
+
+        key_results = []
+        for idx, pk in enumerate(pc.keys):
+            if not pk.enabled:
+                key_results.append({"index": idx, "label": pk.label, "status": "disabled"})
+                continue
+
+            if pc.provider_type == "web_reverse":
+                try:
+                    from .web_reverse.chatgpt import WebReverseService
+                    wr_cfg = pc.web_reverse.model_dump() if pc.web_reverse else {}
+                    service = WebReverseService(name, wr_cfg)
+                    await service.prepare(pk.key)
+                    ok = bool(service.chat_token)
+                    key_results.append({
+                        "index": idx, "label": pk.label,
+                        "status": "ok" if ok else "error",
+                        "message": "ChatGPT session valid" if ok else "ChatGPT session invalid",
+                    })
+                except Exception as e:
+                    key_results.append({"index": idx, "label": pk.label, "status": "error", "message": str(e)})
+            else:
+                test_models = {
+                    "openrouter": "openai/gpt-4o-mini",
+                    "nvidia": "meta/llama-3.1-8b-instruct",
+                    "openai": "gpt-4o-mini",
+                    "anthropic": "claude-3-haiku-20240307",
+                    "deepseek": "deepseek-chat",
+                    "groq": "llama-3.1-8b-instant",
+                }
+                test_model = pc.test_model or test_models.get(name, "gpt-4o-mini")
+                test_url = pc.base_url
+                if not test_url.endswith("/chat/completions"):
+                    test_url = f"{test_url}/chat/completions"
+                test_headers = {
+                    "Authorization": f"Bearer {pk.key}",
+                    "Content-Type": "application/json",
+                    **(pc.headers or {}),
+                }
+                try:
+                    start = time.monotonic()
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            test_url,
+                            headers=test_headers,
+                            json={"model": test_model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1},
+                            timeout=15.0,
+                        )
+                    elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+                    status = "ok" if resp.status_code < 400 else ("rate_limited" if resp.status_code == 429 else "error")
+                    key_results.append({
+                        "index": idx, "label": pk.label, "status": status,
+                        "latency_ms": elapsed_ms, "http_status": resp.status_code,
+                    })
+                except httpx.TimeoutException:
+                    key_results.append({"index": idx, "label": pk.label, "status": "timeout"})
+                except Exception as e:
+                    key_results.append({"index": idx, "label": pk.label, "status": "error", "message": str(e)})
+
+        ok_count = sum(1 for k in key_results if k["status"] == "ok")
+        results[name] = {
+            "enabled": pc.enabled, "total_keys": len(pc.keys),
+            "healthy_keys": ok_count, "status": "healthy" if ok_count > 0 else "degraded",
+            "keys": key_results,
+        }
+
+    total_healthy = sum(1 for r in results.values() if r.get("status") == "healthy")
+    return {"providers": results, "summary": {"total": len(results), "healthy": total_healthy}}
+
+
+# API Key export - inspired by all-api-hub one-click export
+@app.get("/api/export/keys/{provider_name}")
+async def api_export_keys(provider_name: str, format: str = "openai"):
+    """Export provider keys in various client formats."""
+    pc = config_manager.config.providers.get(provider_name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+
+    enabled_keys = [k for k in pc.keys if k.enabled]
+    if not enabled_keys:
+        return {"format": format, "provider": provider_name, "content": "", "message": "No enabled keys"}
+
+    base_url = pc.base_url
+    if pc.provider_type != "web_reverse" and not base_url.endswith("/v1"):
+        base_url = base_url.rstrip("/")
+
+    exports = []
+    for pk in enabled_keys:
+        if format == "openai":
+            exports.append(f"OPENAI_API_KEY={pk.key}\nOPENAI_BASE_URL={base_url}")
+        elif format == "anthropic":
+            exports.append(f"ANTHROPIC_API_KEY={pk.key}\nANTHROPIC_BASE_URL={base_url}")
+        elif format == "claude-code":
+            exports.append(f"# {pk.label}\nexport ANTHROPIC_BASE_URL='{base_url}'\nexport ANTHROPIC_API_KEY='{pk.key}'")
+        elif format == "cherrystudio":
+            exports.append(f"# {provider_name} - {pk.label}\nAPI: {base_url}\nKey: {pk.key}")
+        elif format == "curl":
+            exports.append(f"curl {base_url}/v1/chat/completions -H 'Authorization: Bearer {pk.key}' -H 'Content-Type: application/json' -d '{{\"model\":\"gpt-4o-mini\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hi\"}}]}}'")
+        elif format == "env":
+            exports.append(f"MONORELAY_{provider_name.upper()}_KEY={pk.key}")
+        else:
+            exports.append(f"{pk.label}: {pk.key[:8]}...")
+
+    return {
+        "format": format, "provider": provider_name,
+        "content": "\n\n".join(exports),
+        "key_count": len(enabled_keys),
+    }
+
+
+# Enhanced stats API with per-provider analytics
+@app.get("/api/stats/enhanced")
+async def api_enhanced_stats():
+    """Enhanced stats with per-provider breakdown, cost analysis, and key-level metrics."""
+    summary = stats_tracker.get_summary()
+    model_details = stats_tracker.get_model_details()
+
+    provider_breakdown = {}
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled:
+            continue
+        prov_stats = summary.get("by_provider", {}).get(name, {})
+        key_stats = key_manager.get_stats().get(name, {})
+        provider_breakdown[name] = {
+            "enabled": pc.enabled,
+            "total_requests": prov_stats.get("requests", 0),
+            "total_errors": prov_stats.get("errors", 0),
+            "keys": {
+                "total": len(pc.keys),
+                "enabled": sum(1 for k in pc.keys if k.enabled),
+                "details": key_stats.get("keys", []),
+            },
+            "cost_per_m_input": pc.cost_per_m_input,
+            "cost_per_m_output": pc.cost_per_m_output,
+        }
+
+    key_health = []
+    for name, pc in config_manager.config.providers.items():
+        for idx, pk in enumerate(pc.keys):
+            key_stats = key_manager.get_stats().get(name, {}).get("keys", [])
+            ks = key_stats[idx] if idx < len(key_stats) else {}
+            key_health.append({
+                "provider": name, "label": pk.label, "enabled": pk.enabled,
+                "total_requests": ks.get("total_requests", 0),
+                "total_failures": ks.get("total_failures", 0),
+                "is_available": ks.get("is_available", pk.enabled),
+                "cooldown_until": ks.get("cooldown_until"),
+                "quota_limit": pk.quota_limit,
+                "quota_used": pk.quota_used,
+                "rate_limit_rps": pk.rate_limit_rps,
+                "expires_at": pk.expires_at,
+            })
+
+    return {
+        "summary": summary,
+        "provider_breakdown": provider_breakdown,
+        "model_details": model_details,
+        "key_health": key_health,
+    }
+
+
+# Model pricing comparison endpoint
+@app.get("/api/models/pricing")
+async def api_model_pricing():
+    """Return model pricing information across all providers for comparison."""
+    from .stats import MODEL_COSTS
+    pricing = []
+    for model_name, (input_cost, output_cost) in MODEL_COSTS.items():
+        providers_for_model = []
+        for name, pc in config_manager.config.providers.items():
+            if not pc.enabled:
+                continue
+            include_list = pc.models.get("include", []) if pc.models else []
+            if not include_list or any(model_name.lower() in m.lower() or m.lower() in model_name.lower() for m in include_list):
+                providers_for_model.append(name)
+
+        pricing.append({
+            "model": model_name,
+            "input_per_1m": input_cost,
+            "output_per_1m": output_cost,
+            "available_on": providers_for_model,
+        })
+
+    pricing.sort(key=lambda x: x["input_per_1m"] + x["output_per_1m"])
+    return {"models": pricing, "currency": "USD"}
+
+
+# Key import endpoint - inspired by all-api-hub one-click import
+@app.post("/api/providers/{name}/keys/import")
+async def api_import_keys(name: str, request: Request):
+    """Import keys from various formats: raw text (one per line), JSON array, or CSV."""
+    body = await request.json()
+    content = body.get("content", "")
+    fmt = body.get("format", "raw")
+
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+    new_keys = []
+    if fmt == "json":
+        import json as _json
+        try:
+            items = _json.loads(content)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, str):
+                        new_keys.append({"key": item.strip(), "label": f"imported-{len(new_keys)+1}"})
+                    elif isinstance(item, dict):
+                        new_keys.append({
+                            "key": item.get("key", item.get("api_key", "")),
+                            "label": item.get("label", item.get("name", f"imported-{len(new_keys)+1}")),
+                            "weight": int(item.get("weight", 1)),
+                        })
+            elif isinstance(items, dict):
+                for k, v in items.items():
+                    new_keys.append({"key": str(v), "label": k})
+        except _json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
+    elif fmt == "csv":
+        for line in content.strip().split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2:
+                new_keys.append({"key": parts[0], "label": parts[1]})
+            elif len(parts) == 1 and parts[0]:
+                new_keys.append({"key": parts[0], "label": f"imported-{len(new_keys)+1}"})
+    else:
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#"):
+                if "=" in line:
+                    parts = line.split("=", 1)
+                    new_keys.append({"key": parts[1].strip().strip("'\""), "label": parts[0].strip()})
+                else:
+                    new_keys.append({"key": line, "label": f"imported-{len(new_keys)+1}"})
+
+    existing_labels = {k.label for k in pc.keys}
+    added = 0
+    for nk in new_keys:
+        if nk["key"] not in [k.key for k in pc.keys]:
+            label = nk["label"]
+            if label in existing_labels:
+                label = f"{label}-{len(pc.keys)+1}"
+            from .models import ProviderKey
+            pc.keys.append(ProviderKey(key=nk["key"], label=label, weight=nk.get("weight", 1)))
+            existing_labels.add(label)
+            added += 1
+
+    if added > 0:
+        cfg = config_manager.config.model_copy(deep=True)
+        cfg.providers[name] = pc
+        config_manager.save(cfg)
+        init_components(cfg)
+
+    return {"status": "ok", "added": added, "total": len(pc.keys), "skipped": len(new_keys) - added}
+
+
+# Request log filtering - inspired by all-api-hub usage analysis
+@app.get("/api/logs/filtered")
+async def api_logs_filtered(
+    provider: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 100,
+):
+    """Filter request logs by provider, model, status, and date range."""
+    filters = {}
+    if provider:
+        filters["provider"] = provider
+    if model:
+        filters["model"] = model
+    if status:
+        filters["status"] = status
+    if date_from:
+        filters["date_from"] = date_from
+    if date_to:
+        filters["date_to"] = date_to
+
+    logs = await request_logger.get_recent_requests(limit * 5)
+    entries = logs.get("entries", [])
+
+    filtered = []
+    for entry in entries:
+        if provider and entry.get("provider") != provider:
+            continue
+        if model and model.lower() not in entry.get("model", "").lower():
+            continue
+        if status:
+            entry_status = "success" if entry.get("status_code", 500) < 400 else "error"
+            if entry_status != status:
+                continue
+        if date_from:
+            entry_time = entry.get("timestamp", "")
+            if entry_time and entry_time < date_from:
+                continue
+        if date_to:
+            entry_time = entry.get("timestamp", "")
+            if entry_time and entry_time > date_to:
+                continue
+        filtered.append(entry)
+        if len(filtered) >= limit:
+            break
+
+    return {
+        "entries": filtered,
+        "total_matched": len(filtered),
+        "filters_applied": {k: v for k, v in {"provider": provider, "model": model, "status": status}.items() if v},
+    }
+
+
+# System info endpoint
+@app.get("/api/system/info")
+async def api_system_info():
+    """Return system information: version, uptime, memory usage, Python version."""
+    import os as _os
+    import platform
+
+    try:
+        import psutil
+        process = psutil.Process(_os.getpid())
+        memory = process.memory_info()
+        mem_info = {
+            "rss_mb": round(memory.rss / 1024 / 1024, 1),
+            "vms_mb": round(memory.vms / 1024 / 1024, 1),
+            "percent": round(process.memory_percent(), 1),
+        }
+    except ImportError:
+        mem_info = {"note": "psutil not installed, install with: pip install psutil"}
+
+    uptime = time.time() - _app_start_time
+    return {
+        "version": "1.0.0",
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "uptime_seconds": round(uptime, 1),
+        "uptime_human": f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m {int(uptime % 60)}s",
+        "pid": _os.getpid(),
+        "memory": mem_info,
+        "providers_loaded": len(config_manager.config.providers),
+        "providers_enabled": sum(1 for p in config_manager.config.providers.values() if p.enabled),
+        "total_keys": sum(len(p.keys) for p in config_manager.config.providers.values()),
+    }
 
 
 # Provider CRUD
@@ -1029,6 +1477,89 @@ async def api_sync_history():
 
     sync = GistSync(token, sc.gist_id)
     return await sync.get_history()
+
+
+# WebDAV backup endpoints - inspired by all-api-hub WebDAV backup
+@app.post("/api/backup/webdav/test")
+async def api_webdav_test(request: Request):
+    """Test WebDAV connection."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    return await wd.test_connection()
+
+
+@app.post("/api/backup/webdav/push")
+async def api_webdav_push(request: Request):
+    """Push config and stats to WebDAV."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    path = body.get("path", "monorelay")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    config_path = config_manager.config_path
+    results = []
+    try:
+        content = config_path.read_text(encoding="utf-8") if config_path and config_path.exists() else ""
+        if content:
+            ok = await wd.push(f"{path}/config.yml", content)
+            results.append({"file": f"{path}/config.yml", "ok": ok})
+        stats_path = stats_tracker.db_path
+        if stats_path.exists():
+            content = stats_path.read_text(encoding="utf-8")
+            ok = await wd.push(f"{path}/stats.json", content)
+            results.append({"file": f"{path}/stats.json", "ok": ok})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WebDAV push failed: {e}")
+
+    return {"status": "ok", "results": results}
+
+
+@app.post("/api/backup/webdav/pull")
+async def api_webdav_pull(request: Request):
+    """Pull config and stats from WebDAV."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    path = body.get("path", "monorelay")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    results = {}
+    try:
+        config_content = await wd.pull(f"{path}/config.yml")
+        if config_content:
+            import yaml
+            raw = yaml.safe_load(config_content)
+            new_cfg = AppConfig(**raw)
+            config_manager.save(new_cfg)
+            init_components(new_cfg)
+            results["config"] = {"ok": True, "applied": True}
+
+        stats_content = await wd.pull(f"{path}/stats.json")
+        if stats_content:
+            stats_path = stats_tracker.db_path
+            stats_path.parent.mkdir(parents=True, exist_ok=True)
+            stats_path.write_text(stats_content, encoding="utf-8")
+            stats_tracker._load()
+            results["stats"] = {"ok": True, "applied": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WebDAV pull failed: {e}")
+
+    return {"status": "ok", "results": results}
 
 
 @app.get("/{full_path:path}")

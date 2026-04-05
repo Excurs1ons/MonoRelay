@@ -55,6 +55,11 @@ class ProviderKey(BaseModel):
     label: str = "default"
     weight: int = 1
     enabled: bool = True
+    quota_limit: int = 0  # 0 = unlimited, max requests/keys
+    quota_used: int = 0
+    rate_limit_rps: float = 0.0  # 0 = unlimited, requests per second
+    expires_at: str = ""  # ISO 8601 datetime, empty = no expiry
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class WebReverseConfig(BaseModel):

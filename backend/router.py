@@ -31,8 +31,27 @@ class ModelRouter:
         self.config = config
 
     def resolve_model(self, model: str, messages: list[dict] | None = None) -> tuple[str, str]:
-        """Resolve model by exact match against enabled providers in config order."""
+        """Resolve model by alias, provider_mapping, override, then provider matching."""
         original_model = model
+
+        # Step 1: Resolve alias
+        aliased = self._resolve_alias(model)
+        if aliased:
+            model = aliased
+            logger.info(f"Model alias: '{original_model}' -> '{model}'")
+
+        # Step 2: Apply provider_mapping (fnmatch patterns -> target provider)
+        mapped_provider = self._resolve_provider_mapping(model)
+        if mapped_provider:
+            return model, mapped_provider
+
+        # Step 3: Apply model_overrides
+        model = self._apply_override(model)
+
+        # Step 4: Complexity routing (if enabled and messages provided)
+        if self.config.model_routing.complexity.enabled and messages:
+            model = self._complexity_route(messages)
+
         provider = self._resolve_provider(model)
         if model != original_model:
             logger.info(f"Model routing: '{original_model}' -> '{model}' (provider: {provider})")
@@ -41,6 +60,22 @@ class ModelRouter:
     def _resolve_alias(self, model: str) -> Optional[str]:
         aliases = self.config.model_routing.aliases
         return aliases.get(model)
+
+    def _resolve_provider_mapping(self, model: str) -> Optional[str]:
+        """Match model against provider_mapping fnmatch patterns.
+
+        Returns the provider name if a pattern matches, None otherwise.
+        Only considers enabled providers.
+        """
+        mapping = self.config.model_routing.provider_mapping
+        for pattern, target_provider in mapping.items():
+            if fnmatch.fnmatch(model.lower(), pattern.lower()):
+                # Verify target provider is enabled
+                pc = self.config.providers.get(target_provider)
+                if pc and pc.enabled:
+                    logger.info(f"Provider mapping: '{model}' -> provider '{target_provider}' (pattern: '{pattern}')")
+                    return target_provider
+        return None
 
     def _apply_override(self, model: str) -> str:
         overrides = self.config.model_routing.model_overrides
@@ -79,6 +114,32 @@ class ModelRouter:
 
     def _guess_provider(self, model: str) -> str:
         return self._resolve_provider(model)
+
+    def resolve_cascade(self, body: dict, messages: list[dict] | None = None) -> list[tuple[str, str]]:
+        """Resolve cascade model sequence for fallback.
+
+        Returns list of (model, provider) tuples in cascade order.
+        """
+        cascade = self.config.model_routing.cascade
+        if not cascade.enabled or not cascade.models:
+            return []
+
+        results = []
+        for model in cascade.models:
+            # Apply alias and provider_mapping for each cascade model
+            aliased = self._resolve_alias(model)
+            if aliased:
+                model = aliased
+
+            mapped_provider = self._resolve_provider_mapping(model)
+            if mapped_provider:
+                results.append((model, mapped_provider))
+                continue
+
+            provider = self._resolve_provider(model)
+            results.append((model, provider))
+
+        return results
 
     def _complexity_route(self, messages: list[dict]) -> str:
         score = self._score_complexity(messages)

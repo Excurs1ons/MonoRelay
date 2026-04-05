@@ -19,6 +19,7 @@ class KeyEntry:
         self.last_used: float = 0
         self.total_requests: int = 0
         self.total_failures: int = 0
+        self._request_timestamps: list[float] = []
 
     @property
     def is_cooled_down(self) -> bool:
@@ -26,7 +27,31 @@ class KeyEntry:
 
     @property
     def is_available(self) -> bool:
-        return self.key.enabled and self.is_cooled_down
+        return self.key.enabled and self.is_cooled_down and not self.is_quota_exceeded and not self.is_rate_limited
+
+    @property
+    def is_quota_exceeded(self) -> bool:
+        if self.key.quota_limit <= 0:
+            return False
+        return self.key.quota_used >= self.key.quota_limit
+
+    @property
+    def is_rate_limited(self) -> bool:
+        if self.key.rate_limit_rps <= 0:
+            return False
+        now = time.time()
+        self._request_timestamps = [t for t in self._request_timestamps if now - t < 1.0]
+        return len(self._request_timestamps) >= self.key.rate_limit_rps
+
+    def check_rate_limit(self) -> bool:
+        if self.key.rate_limit_rps <= 0:
+            return True
+        now = time.time()
+        self._request_timestamps = [t for t in self._request_timestamps if now - t < 1.0]
+        if len(self._request_timestamps) >= self.key.rate_limit_rps:
+            return False
+        self._request_timestamps.append(now)
+        return True
 
     def mark_failure(self, cooldown_seconds: int = 60):
         self.fail_count += 1
@@ -66,10 +91,23 @@ class KeyManager:
 
         available = [e for e in entries if e.is_available]
         if not available:
-            all_entries = entries
-            if all_entries:
-                logger.warning(f"No available keys for '{provider_name}', using first key regardless of cooldown")
-                entry = all_entries[0]
+            cooled_down = [e for e in entries if e.key.enabled and e.is_cooled_down and not e.is_quota_exceeded and not e.is_rate_limited]
+            if cooled_down:
+                logger.warning(f"No fully-available keys for '{provider_name}', using cooled-down key")
+                entry = cooled_down[0]
+                entry.use()
+                return entry
+            quota_exceeded = [e for e in entries if e.key.enabled and e.is_quota_exceeded]
+            if quota_exceeded:
+                logger.warning(f"All keys quota-exceeded for '{provider_name}'")
+                return None
+            rate_limited = [e for e in entries if e.key.enabled and e.is_rate_limited]
+            if rate_limited:
+                logger.warning(f"All keys rate-limited for '{provider_name}'")
+                return None
+            if entries:
+                logger.warning(f"No available keys for '{provider_name}', using first key")
+                entry = entries[0]
                 entry.use()
                 return entry
             return None
@@ -92,6 +130,8 @@ class KeyManager:
 
     def report_success(self, key: KeyEntry):
         key.mark_success()
+        if key.key.quota_limit > 0:
+            key.key.quota_used += 1
 
     def get_stats(self) -> dict:
         stats = {}
@@ -106,6 +146,10 @@ class KeyManager:
                         "total_requests": e.total_requests,
                         "total_failures": e.total_failures,
                         "cooldown_until": e.cooldown_until if not e.is_cooled_down else None,
+                        "quota_limit": e.key.quota_limit,
+                        "quota_used": e.key.quota_used,
+                        "rate_limit_rps": e.key.rate_limit_rps,
+                        "expires_at": e.key.expires_at,
                     }
                     for e in entries
                 ],
