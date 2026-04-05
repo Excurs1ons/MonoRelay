@@ -1,0 +1,432 @@
+<template>
+  <div>
+    <!-- Provider list -->
+    <div class="card mb-4">
+      <div class="card-title">{{ $t('providers.title') }}</div>
+      <div v-if="loading" class="loading"><div class="spinner"></div></div>
+      <div v-else class="provider-list">
+        <div v-for="(pc, name) in providers" :key="name" class="provider-item">
+          <div class="provider-header" @click="toggleExpand(name)">
+            <div class="provider-info">
+              <ChevronRight class="provider-arrow" :class="{ expanded: expanded[name] }" :size="16" />
+              <span class="badge" :class="getTypeBadgeClass(pc)">
+                {{ pc.provider_type === 'web_reverse' ? '网页反代' : 'API' }}
+              </span>
+              <div class="provider-text">
+                <div class="provider-name">{{ name }}</div>
+                <div class="provider-url">{{ pc.provider_type === 'web_reverse' ? (pc.web_reverse?.chatgpt_base_url || 'chatgpt.com') : pc.base_url }}</div>
+              </div>
+            </div>
+            <span class="provider-keys desktop-only">{{ pc.keys?.length || 0 }} 个密钥</span>
+          </div>
+          <div v-show="expanded[name]" class="provider-details">
+            <div class="detail-section mobile-only">
+              <div class="detail-label">密钥</div>
+              <div class="detail-value">{{ pc.keys?.length || 0 }} 个</div>
+            </div>
+            <div class="detail-section">
+              <div class="detail-label">模型库</div>
+              <div class="detail-value mono">{{ getModelCount(name) }} 个模型</div>
+            </div>
+            <div class="detail-section">
+              <div class="detail-label">外部链接</div>
+              <div class="detail-value mono">{{ pc.provider_type === 'web_reverse' ? (pc.web_reverse?.chatgpt_base_url || 'chatgpt.com') : pc.base_url }}</div>
+            </div>
+            <div class="provider-actions">
+              <button class="btn btn-ghost btn-sm" :disabled="testing[name]" @click.stop="testProvider(name)">
+                <Zap :size="14" :class="{ 'animate-pulse': testing[name] }" />
+                {{ testing[name] ? '测试中...' : '测试' }}
+              </button>
+              <button class="btn btn-ghost btn-sm" @click.stop="openModelsModal(name)">
+                <BookOpen :size="14" />
+                模型
+              </button>
+              <button class="btn btn-ghost btn-sm" @click.stop="openEditModal(name, pc)">
+                <Pencil :size="14" />
+                编辑
+              </button>
+              <button class="btn btn-sm danger-btn" @click.stop="deleteProvider(name)">
+                <Trash2 :size="14" />
+                删除
+              </button>
+            </div>
+            <div v-if="testResults[name]" class="test-result" :class="testResults[name].ok ? 'test-ok' : 'test-error'">
+              {{ testResults[name].message }}
+            </div>
+          </div>
+        </div>
+        <div v-if="!Object.keys(providers).length" class="empty">{{ $t('dashboard.noData') }}</div>
+      </div>
+    </div>
+
+    <!-- Key status table -->
+    <div class="card">
+      <div class="card-title">{{ $t('keys.title') }}</div>
+      <div v-if="loading" class="loading"><div class="spinner"></div></div>
+      <div v-else class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>提供商</th>
+              <th>标签</th>
+              <th>请求数</th>
+              <th>失败数</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="k in keyList" :key="k.key">
+              <td>{{ k.provider }}</td>
+              <td class="mono">{{ k.label }}</td>
+              <td>{{ k.total_requests || 0 }}</td>
+              <td>{{ k.total_failures || 0 }}</td>
+              <td>
+                <span class="badge" :class="k.available ? 'badge-green' : 'badge-red'">
+                  {{ k.available ? '可用' : '冷却中' }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="!keyList.length">
+              <td colspan="5" class="empty">暂无密钥数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
+      <div class="modal">
+        <div class="modal-header">{{ $t('providers.editProvider') }}</div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>{{ $t('providers.name') }}</label>
+            <input v-model="editForm.name" type="text" class="form-input" disabled />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.baseUrl') }}</label>
+            <input v-model="editForm.base_url" type="text" class="form-input mono" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.type') }}</label>
+            <select v-model="editForm.provider_type" class="form-input">
+              <option value="api">API</option>
+              <option value="web_reverse">Web Reverse</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.testModel') }}</label>
+            <input v-model="editForm.test_model" type="text" class="form-input mono" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.timeout') }}</label>
+            <input v-model.number="editForm.timeout" type="number" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.rateLimitCooldown') }}</label>
+            <input v-model.number="editForm.rate_limit_cooldown" type="number" class="form-input" />
+          </div>
+          <label class="checkbox-label">
+            <input v-model="editForm.enabled" type="checkbox" />
+            {{ $t('common.enabled') }}
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="showEditModal = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveProvider">{{ $t('common.save') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Models Modal -->
+    <div v-if="showModelsModal" class="modal-overlay" @click.self="showModelsModal = false">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          {{ modelsProvider }} - 模型库
+          <span class="model-count" v-if="remoteModels.length">({{ selectedModels.length }}/{{ remoteModels.length }})</span>
+        </div>
+        <div class="modal-body">
+          <div class="models-toolbar">
+            <button class="btn btn-ghost btn-sm" @click="fetchRemoteModels" :disabled="fetchingRemote">
+              {{ fetchingRemote ? '获取中...' : '获取模型列表' }}
+            </button>
+            <div class="models-search">
+              <Search :size="14" class="search-icon" />
+              <input v-model="modelSearch" type="text" class="form-input form-input-sm" placeholder="搜索模型..." />
+            </div>
+            <div class="models-select">
+              <button class="btn btn-ghost btn-xs" @click="selectAll">全选</button>
+              <button class="btn btn-ghost btn-xs" @click="deselectAll">取消全选</button>
+            </div>
+          </div>
+          <div v-if="fetchingRemote" class="loading-sm"><div class="spinner"></div></div>
+          <div v-else-if="remoteModels.length" class="models-grid">
+            <label v-for="m in filteredModels" :key="m.id" class="model-item" :class="{ selected: selectedModels.includes(m.id) }">
+              <input type="checkbox" :checked="selectedModels.includes(m.id)" @change="toggleModel(m.id)" />
+              <Check v-if="selectedModels.includes(m.id)" :size="14" class="model-check" />
+              <span class="model-id">{{ m.id }}</span>
+            </label>
+          </div>
+          <div v-else class="empty">点击"获取模型列表"加载上游模型</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="showModelsModal = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveModels">{{ $t('common.save') }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { api } from '@/api'
+import { ChevronRight, Zap, BookOpen, Pencil, Trash2, Search, Check, X } from 'lucide-vue-next'
+
+const loading = ref(true)
+const providers = ref({})
+const expanded = ref({})
+const testing = ref({})
+const testResults = ref({})
+const stats = ref(null)
+
+// Edit modal
+const showEditModal = ref(false)
+const editingName = ref('')
+const editForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60 })
+
+// Models modal
+const showModelsModal = ref(false)
+const modelsProvider = ref('')
+const remoteModels = ref([])
+const selectedModels = ref([])
+const fetchingRemote = ref(false)
+const modelSearch = ref('')
+
+const keyList = computed(() => {
+  const keys = stats.value?.keys || {}
+  const result = []
+  Object.entries(keys).forEach(([prov, data]) => {
+    (data.keys || []).forEach(k => {
+      result.push({ provider: prov, ...k })
+    })
+  })
+  return result
+})
+
+const filteredModels = computed(() => {
+  if (!modelSearch.value) return remoteModels.value
+  const q = modelSearch.value.toLowerCase()
+  return remoteModels.value.filter(m => m.id.toLowerCase().includes(q))
+})
+
+function getTypeBadgeClass(pc) {
+  if (!pc.enabled) return 'badge-red'
+  return pc.provider_type === 'web_reverse' ? 'badge-yellow' : 'badge-green'
+}
+
+function getModelCount(name) {
+  const pc = providers.value[name]
+  if (!pc || !pc.models) return 0
+  return pc.models.include?.length || Object.keys(pc.models).length || 0
+}
+
+async function fetchData() {
+  try {
+    const [p, s] = await Promise.all([api.getProviders(), api.getStats()])
+    providers.value = p
+    stats.value = s
+    Object.keys(p).forEach((name) => { if (!(name in expanded.value)) expanded.value[name] = false })
+  } catch (e) { console.error(e) }
+  finally { loading.value = false }
+}
+
+function toggleExpand(name) {
+  expanded.value[name] = !expanded.value[name]
+}
+
+// Edit
+function openEditModal(name, pc) {
+  editingName.value = name
+  editForm.value = { ...pc, name }
+  showEditModal.value = true
+}
+
+async function saveProvider() {
+  const { name, ...config } = editForm.value
+  try {
+    await api.updateProvider(editingName.value, config)
+    showEditModal.value = false
+    await fetchData()
+  } catch (e) { alert(e.message) }
+}
+
+async function deleteProvider(name) {
+  if (!confirm(`确定要删除提供商 "${name}" 吗？`)) return
+  await api.deleteProvider(name)
+  await fetchData()
+}
+
+// Test
+async function testProvider(name) {
+  testing.value[name] = true
+  try {
+    const result = await api.testProvider(name)
+    testResults.value[name] = { ok: result.status === 'ok', message: result.message }
+  } catch (e) {
+    testResults.value[name] = { ok: false, message: e.message }
+  } finally {
+    testing.value[name] = false
+  }
+}
+
+// Models
+function openModelsModal(name) {
+  modelsProvider.value = name
+  remoteModels.value = []
+  selectedModels.value = []
+  modelSearch.value = ''
+  showModelsModal.value = true
+  // Load enabled models
+  api.getEnabledModels(name).then(data => {
+    selectedModels.value = data.include || []
+  }).catch(() => {})
+}
+
+async function fetchRemoteModels() {
+  fetchingRemote.value = true
+  try {
+    const data = await api.getRemoteModels(modelsProvider.value)
+    remoteModels.value = data.data || []
+  } catch (e) { console.error(e) }
+  finally { fetchingRemote.value = false }
+}
+
+function toggleModel(id) {
+  const idx = selectedModels.value.indexOf(id)
+  if (idx >= 0) selectedModels.value.splice(idx, 1)
+  else selectedModels.value.push(id)
+}
+
+function selectAll() {
+  filteredModels.value.forEach(m => {
+    if (!selectedModels.value.includes(m.id)) selectedModels.value.push(m.id)
+  })
+}
+
+function deselectAll() {
+  selectedModels.value = []
+}
+
+async function saveModels() {
+  try {
+    await api.updateModels(modelsProvider.value, { include: selectedModels.value })
+    showModelsModal.value = false
+    await fetchData()
+  } catch (e) { alert(e.message) }
+}
+
+onMounted(fetchData)
+</script>
+
+<style scoped>
+.mb-4 { margin-bottom: 16px; }
+.card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+.provider-list { display: flex; flex-direction: column; gap: 10px; }
+.provider-item {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 10px);
+  overflow: hidden;
+}
+.provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.provider-header:hover { background: var(--color-bg-input); }
+.provider-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.provider-text { min-width: 0; }
+.provider-arrow {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--color-text-dim);
+  flex-shrink: 0;
+}
+.provider-arrow.expanded { transform: rotate(90deg); }
+.provider-name { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.provider-url { font-size: 12px; color: var(--color-text-dim); font-family: 'SF Mono', 'Fira Code', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+.provider-keys { font-size: 12px; color: var(--color-text-dim); flex-shrink: 0; white-space: nowrap; }
+.provider-details { padding: 0 16px 16px; }
+.detail-section { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--color-border); }
+.detail-section:last-of-type { border-bottom: none; }
+.detail-label { font-size: 12px; color: var(--color-text-dim); min-width: 80px; }
+.detail-value { font-size: 12px; color: var(--color-text); }
+.provider-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.danger-btn { color: var(--color-red); }
+.danger-btn:hover { background: rgba(231,76,60,0.1); border-color: var(--color-red); color: var(--color-red); }
+.test-result { margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+.test-ok { background: rgba(0,184,148,0.1); border: 1px solid rgba(0,184,148,0.2); color: var(--color-green); }
+.test-error { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.2); color: var(--color-red); }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-green { background: rgba(0,184,148,0.15); color: var(--color-green); }
+.badge-red { background: rgba(231,76,60,0.15); color: var(--color-red); }
+.badge-yellow { background: rgba(253,203,110,0.15); color: var(--color-yellow); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--color-border); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 14px; border-radius: 6px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.btn-primary { background: var(--color-accent); color: #fff; }
+.btn-primary:hover { background: var(--color-accent-hover); }
+.btn-ghost { background: transparent; color: var(--color-text-dim); border: 1px solid var(--color-border); }
+.btn-ghost:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.btn-sm { padding: 5px 10px; font-size: 11px; }
+.btn-xs { padding: 3px 8px; font-size: 10px; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); width: 100%; max-width: 440px; max-height: 90vh; display: flex; flex-direction: column; }
+.modal-lg { max-width: 700px; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+.modal-footer { padding: 16px 20px; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: 8px; }
+.form-group { margin-bottom: 14px; }
+.form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
+.form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
+.form-input:focus { outline: none; border-color: var(--color-accent); }
+.form-input.mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+.form-input-sm { padding: 5px 10px; font-size: 12px; }
+.checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.empty { text-align: center; padding: 30px; color: var(--color-text-dim); font-size: 13px; }
+.loading { text-align: center; padding: 40px; color: var(--color-text-dim); }
+.loading-sm { text-align: center; padding: 20px; }
+.spinner { width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.model-count { font-size: 12px; color: var(--color-text-dim); font-weight: 400; }
+.models-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.models-search { flex: 1; min-width: 120px; position: relative; }
+.models-search .search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--color-text-dim); pointer-events: none; }
+.models-search .form-input-sm { padding-left: 28px; }
+.models-select { display: flex; gap: 4px; }
+.models-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px; max-height: 400px; overflow-y: auto; }
+.model-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.model-item:hover { background: var(--color-bg-input); transform: translateX(2px); }
+.model-item.selected { background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.2); }
+.model-check { color: var(--color-green); flex-shrink: 0; }
+.model-id { font-family: 'SF Mono', 'Fira Code', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 768px) {
+  .provider-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .provider-keys { align-self: flex-start; }
+  .desktop-only { display: none; }
+  .mobile-only { display: flex; }
+}
+@media (min-width: 769px) {
+  .mobile-only { display: none; }
+}
+</style>

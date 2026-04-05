@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-bg: #0f1117;
+  --color-bg-card: #1a1d27;
+  --color-bg-input: #252836;
+  --color-border: #2e3244;
+  --color-text: #e4e6f0;
+  --color-text-dim: #8b8fa3;
+  --color-accent: #6c5ce7;
+  --color-accent-hover: #7c6ff7;
+  --color-green: #00b894;
+  --color-red: #e74c3c;
+  --color-yellow: #fdcb6e;
+  --color-orange: #e17055;
+  --color-primary: #6c5ce7;
+  --color-primary-hover: #7c6ff7;
+  --color-surface-50: #f8fafc;
+  --color-surface-100: #f1f5f9;
+  --color-surface-200: #e2e8f0;
+  --color-surface-300: #cbd5e1;
+  --color-surface-400: #94a3b8;
+  --color-surface-500: #64748b;
+  --color-surface-600: #475569;
+  --color-surface-700: #334155;
+  --color-surface-800: #1e293b;
+  --color-surface-900: #0f172a;
+  --color-surface-950: #020617;
+  --color-success: #00b894;
+  --color-warning: #fdcb6e;
+  --color-danger: #e74c3c;
+  --color-info: #3b82f6;
+}
+
+@layer base {
+  body {
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+}
+
+:root {
+  color-scheme: dark;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
