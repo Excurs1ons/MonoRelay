@@ -11,8 +11,8 @@ import httpx
 import yaml
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import ConfigManager
 from .key_manager import KeyManager
@@ -132,14 +132,25 @@ def _get_resource_path(relative_path: str) -> Path:
 
 
 FRONTEND_DIR = _get_resource_path("frontend")
+FRONTEND_DIST = FRONTEND_DIR / "dist"
 
 
 @app.get("/")
 async def serve_frontend():
-    index = FRONTEND_DIR / "index.html"
+    index = FRONTEND_DIST / "index.html"
+    if not index.exists():
+        index = FRONTEND_DIR / "index.html"
     if index.exists():
         return FileResponse(index)
-    return JSONResponse({"error": "Frontend not found"}, status_code=404)
+    return JSONResponse({"error": "Frontend not found. Run `cd frontend && npm run build` first."}, status_code=404)
+
+
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+    if (FRONTEND_DIST / "favicon.svg").exists():
+        @app.get("/favicon.svg")
+        async def serve_favicon():
+            return FileResponse(FRONTEND_DIST / "favicon.svg")
 
 
 @app.get("/api/info")
@@ -249,16 +260,47 @@ async def api_logs(limit: int = 50):
     return await request_logger.get_recent_requests(limit)
 
 
+@app.get("/api/stats/file")
+async def api_stats_file():
+    """返回 stats.json 原始内容。"""
+    path = stats_tracker.db_path
+    if not path.exists():
+        return {"content": "{}"}
+    return {"content": path.read_text(encoding="utf-8")}
+
+
+@app.put("/api/stats/file")
+async def api_update_stats_file(request: Request):
+    """更新 stats.json 内容。"""
+    body = await request.json()
+    content = body.get("content", "{}")
+    path = stats_tracker.db_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    stats_tracker._load()
+    return {"status": "ok", "message": "统计数据已更新"}
+
+
 @app.get("/api/config")
 async def api_get_config():
-    return config_manager.config.model_dump(mode="json")
+    import yaml
+    raw = config_manager.config.model_dump(mode="json")
+    # 清理 sync 字段（token 不暴露）
+    if 'sync' in raw:
+        raw['sync'] = {
+            'enabled': raw['sync'].get('enabled', False),
+            'gist_id': raw['sync'].get('gist_id', ''),
+        }
+    return {"content": yaml.dump(raw, default_flow_style=False, allow_unicode=True)}
 
 
 @app.put("/api/config")
 async def api_update_config(request: Request):
     try:
         body = await request.json()
-        new_cfg = AppConfig(**body)
+        import yaml
+        raw = yaml.safe_load(body.get("content", "{}"))
+        new_cfg = AppConfig(**raw)
         config_manager.save(new_cfg)
         init_components(new_cfg)
 
@@ -882,13 +924,17 @@ async def api_sync_push():
 
 
 @app.post("/api/sync/pull")
-async def api_sync_pull():
+async def api_sync_pull(request: Request):
     """从 Gist 拉取配置和统计并应用。"""
     sc = config_manager.config.sync
-    token = sync_storage.gist_token
-    if not sc.enabled or not token or not sc.gist_id:
-        raise HTTPException(status_code=400, detail="Gist 同步未配置")
+    body = await request.json()
+    token = body.get("gist_token", "").strip() or sync_storage.gist_token
+    if not token:
+        raise HTTPException(status_code=400, detail="未配置 Gist Token")
+    if not sc.gist_id:
+        raise HTTPException(status_code=400, detail="未配置 Gist ID")
 
+    sync_storage.gist_token = token
     sync = GistSync(token, sc.gist_id)
     data = await sync.pull()
     if not data:
@@ -908,7 +954,6 @@ async def api_sync_pull():
             stats_path = stats_tracker.db_path
             stats_path.parent.mkdir(parents=True, exist_ok=True)
             stats_path.write_text(data["stats"], encoding="utf-8")
-            # 重新加载统计数据
             stats_tracker._load()
             results.append("统计数据")
 
@@ -984,6 +1029,18 @@ async def api_sync_history():
 
     sync = GistSync(token, sc.gist_id)
     return await sync.get_history()
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    if full_path.startswith("v1/") or full_path.startswith("api/") or full_path == "health":
+        raise HTTPException(status_code=404)
+    index = FRONTEND_DIST / "index.html"
+    if not index.exists():
+        index = FRONTEND_DIR / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    raise HTTPException(status_code=404)
 
 
 def run():

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
+# Exponential decay weighted average config
+MAX_HISTORY = 100       # Max history entries per model
+DECAY_RATE = 0.85       # Each older entry's weight = DECAY_RATE ^ distance_from_newest
+
 logger = logging.getLogger("prisma.stats")
 
 # Approximate per-token costs in USD (input / output per 1M tokens)
@@ -104,6 +108,7 @@ class StatsTracker:
             self.requests_by_model = data.get("requests_by_model", {})
             self.errors_by_provider = data.get("errors_by_provider", {})
             self.model_stats = data.get("model_stats", {})
+            self._migrate_model_stats()
             logger.info(f"Stats loaded from {self.db_path} ({self.total_requests} requests)")
         except Exception as e:
             logger.warning(f"Failed to load stats: {e}")
@@ -169,12 +174,9 @@ class StatsTracker:
                 "errors": 0,
                 "total_tokens_in": 0,
                 "total_tokens_out": 0,
-                "total_first_token_ms": 0,
-                "first_token_count": 0,
                 "streaming_requests": 0,
-                "total_stream_chunks": 0,
-                "total_output_tokens_for_speed": 0,
-                "total_stream_duration_ms": 0,
+                "_first_token_history": [],
+                "_speed_history": [],
             }
         ms = self.model_stats[model]
         ms["requests"] += 1
@@ -184,13 +186,15 @@ class StatsTracker:
         ms["total_tokens_out"] += out_tokens
         if is_streaming:
             ms["streaming_requests"] += 1
-            ms["total_stream_chunks"] += stream_chunks
+            if first_token_ms is not None:
+                ms["_first_token_history"].append(first_token_ms)
+                if len(ms["_first_token_history"]) > MAX_HISTORY:
+                    ms["_first_token_history"] = ms["_first_token_history"][-MAX_HISTORY:]
             if output_tokens is not None and latency_ms > 0:
-                ms["total_output_tokens_for_speed"] += out_tokens
-                ms["total_stream_duration_ms"] += latency_ms
-        if first_token_ms is not None:
-            ms["total_first_token_ms"] += first_token_ms
-            ms["first_token_count"] += 1
+                speed = out_tokens / (latency_ms / 1000)
+                ms["_speed_history"].append(speed)
+                if len(ms["_speed_history"]) > MAX_HISTORY:
+                    ms["_speed_history"] = ms["_speed_history"][-MAX_HISTORY:]
 
         # Auto-save after each request
         self.save()
@@ -209,15 +213,54 @@ class StatsTracker:
             "errors_by_provider": dict(self.errors_by_provider),
         }
 
+    def _migrate_model_stats(self):
+        for model, ms in self.model_stats.items():
+            if "total_first_token_ms" in ms:
+                count = ms.get("first_token_count", 0)
+                if count > 0:
+                    avg = ms["total_first_token_ms"] / count
+                    ms["_first_token_history"] = [avg] * min(count, MAX_HISTORY)
+                else:
+                    ms["_first_token_history"] = []
+                del ms["total_first_token_ms"]
+                del ms["first_token_count"]
+            if "total_output_tokens_for_speed" in ms and "total_stream_duration_ms" in ms:
+                duration_s = ms["total_stream_duration_ms"] / 1000
+                if duration_s > 0:
+                    avg_speed = ms["total_output_tokens_for_speed"] / duration_s
+                    stream_count = ms.get("streaming_requests", 1)
+                    ms["_speed_history"] = [avg_speed] * min(stream_count, MAX_HISTORY)
+                else:
+                    ms["_speed_history"] = []
+                del ms["total_output_tokens_for_speed"]
+                del ms["total_stream_duration_ms"]
+            if "total_stream_chunks" in ms:
+                del ms["total_stream_chunks"]
+            if "total_latency_ms" in ms:
+                del ms["total_latency_ms"]
+
+    @staticmethod
+    def _weighted_avg(values: list[float]) -> float | None:
+        if not values:
+            return None
+        n = len(values)
+        total_weight = sum(DECAY_RATE ** (n - 1 - i) for i in range(n))
+        if total_weight == 0:
+            return None
+        return sum(values[i] * (DECAY_RATE ** (n - 1 - i)) for i in range(n)) / total_weight
+
     def get_model_details(self) -> dict:
-        """Get detailed per-model statistics."""
         result = {}
         for model, ms in self.model_stats.items():
             req = ms["requests"]
             if req == 0:
                 continue
-            avg_first_token = ms["total_first_token_ms"] / ms["first_token_count"] if ms["first_token_count"] > 0 else None
-            avg_speed = ms["total_output_tokens_for_speed"] / (ms["total_stream_duration_ms"] / 1000) if ms["total_stream_duration_ms"] > 0 else None
+
+            first_token_history = ms.get("_first_token_history", [])
+            speed_history = ms.get("_speed_history", [])
+
+            avg_first_token = self._weighted_avg(first_token_history)
+            avg_speed = self._weighted_avg(speed_history)
 
             result[model] = {
                 "requests": req,
