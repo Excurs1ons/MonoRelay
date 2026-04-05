@@ -73,6 +73,87 @@ def _build_url(base_url: str, path: str) -> str:
     return f"{base_url}{path}"
 
 
+async def _handle_cascade_chat(
+    body: dict,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+    original_model: str,
+    messages: list,
+) -> StreamingResponse | dict:
+    cascade = config.model_routing.cascade
+    max_retries = cascade.max_retries
+    cascade_models = router.resolve_cascade(body, messages)
+
+    if not cascade_models:
+        return {"error": {"message": "Cascade enabled but no models configured", "type": "cascade_error"}}
+
+    last_error = None
+    for attempt, (model, provider_name) in enumerate(cascade_models):
+        if attempt >= max_retries:
+            break
+
+        provider_cfg = config.providers.get(provider_name)
+        if not provider_cfg or not provider_cfg.enabled:
+            last_error = f"Provider '{provider_name}' not enabled"
+            continue
+
+        request_body = body.copy()
+        request_body["model"] = model
+        if not router.supports_tools(model):
+            request_body = router.strip_tools(request_body)
+
+        key = key_manager.select_key(provider_name, config.key_selection.strategy)
+        if not key:
+            last_error = f"No available keys for '{provider_name}'"
+            continue
+
+        url = _build_url(provider_cfg.base_url, "/chat/completions")
+        headers = {
+            "Authorization": f"Bearer {key.key.key}",
+            "Content-Type": "application/json",
+        }
+        if provider_cfg.headers:
+            headers.update(provider_cfg.headers)
+
+        is_stream = request_body.get("stream", False)
+        start_time = time.time()
+
+        logger.info(f"Cascade尝试 {attempt+1}/{len(cascade_models)} | 模型={model} | 提供商={provider_name}")
+
+        if is_stream:
+            return StreamingResponse(
+                _stream_chat(
+                    provider_cfg, url, headers, request_body, key, key_manager, provider_name,
+                    model, original_model, request_logger, start_time, stats_tracker,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "X-Prisma-Model": model,
+                    "X-Prisma-Provider": provider_name,
+                    "X-Prisma-Cascade": f"{attempt+1}/{len(cascade_models)}",
+                },
+            )
+        else:
+            result = await _non_stream_chat(
+                provider_cfg, url, headers, request_body, key, key_manager, provider_name,
+                model, original_model, request_logger, start_time, stats_tracker,
+            )
+            if isinstance(result, dict) and "error" in result:
+                last_error = result["error"].get("message", "unknown")
+                logger.warning(f"Cascade {attempt+1} 失败: {last_error}")
+                continue
+            return result
+
+    stats_tracker.record_request(cascade_models[0][1], original_model, success=False)
+    return {"error": {"message": f"Cascade failed after {len(cascade_models)} attempts: {last_error}", "type": "cascade_error"}}
+
+
 async def handle_chat_completions(
     body: dict,
     config: AppConfig,
@@ -83,6 +164,13 @@ async def handle_chat_completions(
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
+
+    cascade = config.model_routing.cascade
+    if cascade.enabled and cascade.models:
+        return await _handle_cascade_chat(
+            body, config, key_manager, router, request_logger, stats_tracker,
+            original_model, messages,
+        )
 
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
@@ -426,6 +514,13 @@ async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
+    from ..cache import response_cache
+    cached = response_cache.get(body, resolved_model)
+    if cached is not None:
+        logger.info(f"Cache hit | 模型={resolved_model}")
+        stats_tracker.record_request(provider_name, resolved_model, success=True)
+        return cached
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
             resp = await client.post(url, headers=headers, json=body)
@@ -488,6 +583,9 @@ async def _non_stream_chat(
                 output_tokens=tokens_out,
                 success=True,
             )
+            from ..usage_tracker import usage_tracker
+            usage_tracker.record(None, success=True, tokens_in=tokens_in or 0, tokens_out=tokens_out or 0)
+            response_cache.set(body, resolved_model, result)
             return result
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
@@ -784,3 +882,134 @@ async def _wrap_web_reverse_stream(
         streaming=True,
     )
     stats_tracker.record_request(provider_name, resolved_model, success=True)
+
+
+async def handle_audio_transcriptions(
+    body: dict,
+    file,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+) -> dict:
+    original_model = body.get("model", "unknown")
+    resolved_model, provider_name = router.resolve_model(original_model)
+    body["model"] = resolved_model
+
+    provider_cfg = config.providers.get(provider_name)
+    if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+
+    key = key_manager.select_key(provider_name, config.key_selection.strategy)
+    if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+
+    headers = {
+        "Authorization": f"Bearer {key.key.key}",
+    }
+    if provider_cfg.headers:
+        headers.update(provider_cfg.headers)
+
+    start_time = time.time()
+    logger.info(f"Audio Transcription请求 | 模型={resolved_model} | 提供商={provider_name}")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+        try:
+            file_content = await file.read()
+            files = {
+                "file": (file.filename or "audio", file_content, file.content_type or "application/octet-stream"),
+            }
+            resp = await client.post(
+                _build_url(provider_cfg.base_url, "/audio/transcriptions"),
+                headers=headers,
+                data=body,
+                files=files,
+            )
+            elapsed = time.time() - start_time
+            if resp.status_code >= 400:
+                key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
+                logger.error(f"Audio Transcription错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                return resp.json()
+            key_manager.report_success(key)
+            logger.info(f"Audio Transcription | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            await request_logger.log_request(
+                model=resolved_model,
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=resp.status_code,
+                latency_ms=round(elapsed * 1000, 2),
+            )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
+            return resp.json()
+        except Exception as e:
+            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
+            logger.error(f"Audio Transcription失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            return {"error": {"message": str(e), "type": "proxy_error"}}
+
+
+async def handle_image_generations(
+    body: dict,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+) -> dict:
+    original_model = body.get("model", "unknown")
+    resolved_model, provider_name = router.resolve_model(original_model)
+    body["model"] = resolved_model
+
+    provider_cfg = config.providers.get(provider_name)
+    if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+
+    key = key_manager.select_key(provider_name, config.key_selection.strategy)
+    if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+
+    headers = {
+        "Authorization": f"Bearer {key.key.key}",
+        "Content-Type": "application/json",
+    }
+    if provider_cfg.headers:
+        headers.update(provider_cfg.headers)
+
+    start_time = time.time()
+    logger.info(f"Image Generation请求 | 模型={resolved_model} | 提供商={provider_name}")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+        try:
+            resp = await client.post(
+                _build_url(provider_cfg.base_url, "/images/generations"),
+                headers=headers,
+                json=body,
+            )
+            elapsed = time.time() - start_time
+            if resp.status_code >= 400:
+                key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                stats_tracker.record_request(provider_name, resolved_model, success=False)
+                logger.error(f"Image Generation错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                return resp.json()
+            key_manager.report_success(key)
+            logger.info(f"Image Generation | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            await request_logger.log_request(
+                model=resolved_model,
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=resp.status_code,
+                latency_ms=round(elapsed * 1000, 2),
+            )
+            stats_tracker.record_request(provider_name, resolved_model, success=True)
+            return resp.json()
+        except Exception as e:
+            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
+            logger.error(f"Image Generation失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            return {"error": {"message": str(e), "type": "proxy_error"}}
