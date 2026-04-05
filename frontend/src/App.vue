@@ -10,7 +10,7 @@
             <path d="M2 12l10 5 10-5"/>
           </svg>
         </div>
-        <h1 class="auth-title">PrismaAPIRelay</h1>
+        <h1 class="auth-title">MonoRelay</h1>
         <p class="auth-subtitle">{{ $t('auth.title') }}</p>
         <form @submit.prevent="handleLogin">
           <input
@@ -48,7 +48,7 @@
             <path d="M2 17l10 5 10-5"/>
             <path d="M2 12l10 5 10-5"/>
           </svg>
-          PrismaAPIRelay
+          MonoRelay
         </h1>
         <div class="header-right">
           <span class="status-dot"></span>

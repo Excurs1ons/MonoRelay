@@ -1,4 +1,4 @@
-"""PrismaAPIRelay 跨平台统一启动脚本。
+"""MonoRelay 跨平台统一启动脚本。
 
 功能：
   - 自动创建虚拟环境、安装依赖
@@ -169,12 +169,12 @@ def read_pid() -> int | None:
 def print_status() -> None:
     pid = read_pid()
     if pid:
-        banner("PrismaAPIRelay 运行中")
+        banner("MonoRelay 运行中")
         print(f"  PID:  {pid}")
         print(f"  日志: {LOG_FILE}")
         print(f"  PID文件: {PID_FILE}")
     else:
-        banner("PrismaAPIRelay 未运行")
+        banner("MonoRelay 未运行")
 
 
 def stop_server() -> bool:
@@ -214,7 +214,7 @@ def stop_server() -> bool:
 
 
 def start_foreground(args: argparse.Namespace) -> None:
-    banner("PrismaAPIRelay 启动脚本")
+    banner("MonoRelay 启动脚本")
 
     ensure_config()
     ensure_venv()
@@ -222,7 +222,7 @@ def start_foreground(args: argparse.Namespace) -> None:
     kill_port(args.port)
 
     print()
-    banner(f"启动 PrismaAPIRelay — http://localhost:{args.port}")
+    banner(f"启动 MonoRelay — http://localhost:{args.port}")
     print("  按 Ctrl+C 停止服务\n")
 
     py = venv_python()
@@ -240,7 +240,7 @@ def start_foreground(args: argparse.Namespace) -> None:
 
 
 def start_background(args: argparse.Namespace) -> None:
-    banner("PrismaAPIRelay 后台启动")
+    banner("MonoRelay 后台启动")
 
     # 检查是否已在运行
     pid = read_pid()
@@ -288,7 +288,7 @@ def start_background(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="PrismaAPIRelay 跨平台统一启动脚本",
+        description="MonoRelay 跨平台统一启动脚本",
     )
     parser.add_argument("--bg", action="store_true", help="后台运行")
     parser.add_argument("--stop", action="store_true", help="停止后台运行")

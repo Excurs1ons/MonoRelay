@@ -12,7 +12,7 @@ logger = logging.getLogger("prisma.sync")
 
 GIST_FILENAME = "config.yml"
 GIST_STATS_FILENAME = "stats.json"
-GIST_DESCRIPTION = "PrismaAPIRelay Configuration"
+GIST_DESCRIPTION = "MonoRelay Configuration"
 
 
 class GistSync:
@@ -77,7 +77,7 @@ class GistSync:
             return False
 
     async def find_gist_by_description(self) -> Optional[str]:
-        """通过描述查找 PrismaAPIRelay Configuration 的 Gist。"""
+        """通过描述查找 MonoRelay Configuration 的 Gist。"""
         try:
             async with httpx.AsyncClient() as client:
                 page = 1

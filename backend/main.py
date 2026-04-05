@@ -1,4 +1,4 @@
-"""PrismaAPIRelay - LLM API Relay Server."""
+"""MonoRelay - LLM API Relay Server."""
 from __future__ import annotations
 
 import logging
@@ -66,7 +66,7 @@ def init_components(cfg: AppConfig):
 async def lifespan(app: FastAPI):
     setup_logging(config_manager.config.server.log_level)
     logger.info("=" * 60)
-    logger.info("PrismaAPIRelay starting...")
+    logger.info("MonoRelay starting...")
     logger.info("=" * 60)
 
     cfg = config_manager.config
@@ -91,11 +91,11 @@ async def lifespan(app: FastAPI):
     yield
 
     await request_logger.close()
-    logger.info("PrismaAPIRelay shut down.")
+    logger.info("MonoRelay shut down.")
 
 
 app = FastAPI(
-    title="PrismaAPIRelay",
+    title="MonoRelay",
     description="Configurable LLM API Relay Server supporting OpenRouter, NVIDIA NIM, OpenAI, and Anthropic",
     version="1.0.0",
     lifespan=lifespan,
@@ -776,7 +776,7 @@ async def api_sync_status():
 
 @app.post("/api/sync/find-gist")
 async def api_sync_find_gist(request: Request):
-    """通过 Token 查找 PrismaAPIRelay Configuration Gist。"""
+    """通过 Token 查找 MonoRelay Configuration Gist。"""
     try:
         body = await request.json()
         token = (body.get("gist_token", "") or "").strip()
@@ -1045,7 +1045,7 @@ async def spa_fallback(full_path: str):
 
 def run():
     import argparse
-    parser = argparse.ArgumentParser(description="PrismaAPIRelay - LLM API Relay Server")
+    parser = argparse.ArgumentParser(description="MonoRelay - LLM API Relay Server")
     parser.add_argument("--config", type=str, default=None, help="Path to config.yml")
     parser.add_argument("--host", type=str, default=None, help="Host to bind")
     parser.add_argument("--port", type=int, default=None, help="Port to bind")
@@ -1062,7 +1062,7 @@ def run():
     log_level = args.log_level or cfg.server.log_level
 
     setup_logging(log_level)
-    logger.info(f"Starting PrismaAPIRelay on {host}:{port}")
+    logger.info(f"Starting MonoRelay on {host}:{port}")
 
     uvicorn.run(
         "backend.main:app",

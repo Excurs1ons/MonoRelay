@@ -1,4 +1,4 @@
-# PrismaAPIRelay
+# MonoRelay
 
 可配置的大语言模型 API 中继服务器，支持 **OpenRouter**、**NVIDIA NIM**、**OpenAI**、**Anthropic**、**DeepSeek**、**Groq** 等多家提供商。完美兼容 OpenAI 和 Anthropic API 接口，支持智能模型路由、密钥轮换、流式输出和管理面板。
 
@@ -24,10 +24,10 @@
 
 ### 方式一：Windows 可执行文件（推荐）
 
-1. 前往 [Releases](https://github.com/Excurs1ons/PrismaAPIRelay/releases) 下载最新版本 `PrismaAPIRelay-Windows-x64.zip`
+1. 前往 [Releases](https://github.com/Excurs1ons/MonoRelay/releases) 下载最新版本 `MonoRelay-Windows-x64.zip`
 2. 解压到任意目录
 3. 编辑 `config.yml`，填入你的 API 密钥
-4. 双击 `启动.bat` 或直接运行 `PrismaAPIRelay.exe`
+4. 双击 `启动.bat` 或直接运行 `MonoRelay.exe`
 5. 浏览器打开 **http://localhost:8787**
 
 ### 方式二：Docker 部署
@@ -47,8 +47,8 @@ docker compose logs -f
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Excurs1ons/PrismaAPIRelay.git
-cd PrismaAPIRelay
+git clone https://github.com/Excurs1ons/MonoRelay.git
+cd MonoRelay
 
 # 安装依赖
 pip install -r requirements.txt
@@ -264,7 +264,7 @@ Authorization: Bearer your-access-key
 ## 项目结构
 
 ```
-PrismaAPIRelay/
+MonoRelay/
 ├── backend/
 │   ├── main.py                 # FastAPI 入口
 │   ├── config.py               # 配置管理（热重载）
@@ -290,7 +290,7 @@ PrismaAPIRelay/
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── PrismaAPIRelay.spec         # PyInstaller 打包配置
+├── MonoRelay.spec         # PyInstaller 打包配置
 ├── scripts/
 │   ├── build.ps1               # Windows 打包脚本
 │   ├── build.sh                # Linux 打包脚本

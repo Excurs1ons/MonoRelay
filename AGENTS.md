@@ -1,4 +1,4 @@
-# AGENTS.md - PrismaAPIRelay
+# AGENTS.md - MonoRelay
 
 ## Project Overview
 

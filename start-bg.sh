@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PrismaAPIRelay 后台运行 (Bash)
+# MonoRelay 后台运行 (Bash)
 # 用法: ./start-bg.sh [start|stop|restart|status]
 
 set -e

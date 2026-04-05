@@ -1,4 +1,4 @@
-# PrismaAPIRelay 前台一键启动脚本 (PowerShell)
+# MonoRelay 前台一键启动脚本 (PowerShell)
 # 用法: 右键 "使用 PowerShell 运行" 或在终端执行 .\start.ps1
 # 已委托给 start.py 统一处理
 

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for PrismaAPIRelay 单文件打包
+PyInstaller spec for MonoRelay 单文件打包
 
 打包策略：
 - 将所有 Python 代码打包为单个 .exe
@@ -77,7 +77,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PrismaAPIRelay',
+    name='MonoRelay',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

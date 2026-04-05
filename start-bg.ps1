@@ -1,4 +1,4 @@
-# PrismaAPIRelay 后台运行 (PowerShell)
+# MonoRelay 后台运行 (PowerShell)
 # 用法: .\start-bg.ps1 [start|stop|restart|status]
 
 $ErrorActionPreference = "Continue"
@@ -7,7 +7,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  PrismaAPIRelay 后台运行" -ForegroundColor Cyan
+Write-Host "  MonoRelay 后台运行" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # 检查虚拟环境

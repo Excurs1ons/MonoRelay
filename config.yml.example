@@ -18,8 +18,8 @@ providers:
         label: "backup"
         weight: 1
     headers:
-      HTTP-Referer: "https://github.com/PrismaAPIRelay"
-      X-Title: "PrismaAPIRelay"
+      HTTP-Referer: "https://github.com/Excurs1ons/MonoRelay"
+      X-Title: "MonoRelay"
     rate_limit_cooldown: 60
     timeout: 120
     models:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PrismaAPIRelay 前台一键启动脚本 (Bash)
+# MonoRelay 前台一键启动脚本 (Bash)
 # 用法: ./start.sh
 # 已委托给 start.py 统一处理
 

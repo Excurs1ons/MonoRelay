@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SERVICE_NAME="prisma-api-relay"
+SERVICE_NAME="mono-api-relay"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 echo "Installing ${SERVICE_NAME} as a systemd service..."
@@ -19,7 +19,7 @@ GROUP=$(id -gn)
 
 cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=PrismaAPIRelay - LLM API Relay Server
+Description=MonoRelay - LLM API Relay Server
 After=network.target
 
 [Service]

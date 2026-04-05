@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SERVICE_NAME="prisma-api-relay"
+SERVICE_NAME="mono-api-relay"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 echo "Uninstalling ${SERVICE_NAME}..."

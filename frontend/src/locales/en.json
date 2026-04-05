@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "PrismaAPIRelay",
+    "appName": "MonoRelay",
     "dashboard": "Dashboard",
     "providers": "Providers",
     "keys": "API Keys",

@@ -36,16 +36,16 @@ jobs:
 
       - name: PyInstaller 打包
         run: |
-          pyinstaller --clean PrismaAPIRelay.spec
+          pyinstaller --clean MonoRelay.spec
 
       - name: 准备发布包
         shell: pwsh
         run: |
-          $OutputDir = "dist/PrismaAPIRelay"
+          $OutputDir = "dist/MonoRelay"
           New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
           # 移动 exe
-          Move-Item -Force "dist/PrismaAPIRelay.exe" "$OutputDir/PrismaAPIRelay.exe"
+          Move-Item -Force "dist/MonoRelay.exe" "$OutputDir/MonoRelay.exe"
 
           # 复制配置
           if (Test-Path "config.yml.example") {
@@ -61,25 +61,25 @@ jobs:
           @echo off
           chcp 65001 >nul
           echo ========================================
-          echo   PrismaAPIRelay 启动中...
+          echo   MonoRelay 启动中...
           echo ========================================
           echo.
-          PrismaAPIRelay.exe --host 0.0.0.0 --port 8787
+          MonoRelay.exe --host 0.0.0.0 --port 8787
           pause
           "@ | Out-File -FilePath "$OutputDir/启动.bat" -Encoding UTF8
 
       - name: 压缩 Windows 包
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/PrismaAPIRelay" -DestinationPath "dist/PrismaAPIRelay-Windows-x64.zip" -Force
-          $size = (Get-Item "dist/PrismaAPIRelay-Windows-x64.zip").Length
+          Compress-Archive -Path "dist/MonoRelay" -DestinationPath "dist/MonoRelay-Windows-x64.zip" -Force
+          $size = (Get-Item "dist/MonoRelay-Windows-x64.zip").Length
           Write-Host "压缩包大小: $([math]::Round($size/1MB, 1)) MB"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: PrismaAPIRelay-Windows-x64
-          path: dist/PrismaAPIRelay-Windows-x64.zip
+          name: MonoRelay-Windows-x64
+          path: dist/MonoRelay-Windows-x64.zip
           retention-days: 30
 
   release:
@@ -97,7 +97,7 @@ jobs:
       - name: 下载 Windows 构建产物
         uses: actions/download-artifact@v4
         with:
-          name: PrismaAPIRelay-Windows-x64
+          name: MonoRelay-Windows-x64
           path: dist/
 
       - name: 获取版本号和更新日志
@@ -126,7 +126,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.version }}
-          name: "PrismaAPIRelay ${{ steps.release_info.outputs.version }}"
+          name: "MonoRelay ${{ steps.release_info.outputs.version }}"
           body: |
             ## 更新日志
 
@@ -135,10 +135,10 @@ jobs:
             ## 安装
 
             ### Windows
-            1. 下载 `PrismaAPIRelay-Windows-x64.zip`
+            1. 下载 `MonoRelay-Windows-x64.zip`
             2. 解压到任意目录
             3. 编辑 `config.yml` 填入你的 API 密钥
-            4. 双击 `启动.bat` 或运行 `PrismaAPIRelay.exe`
+            4. 双击 `启动.bat` 或运行 `MonoRelay.exe`
             5. 浏览器打开 http://localhost:8787
 
             ### Docker
@@ -151,7 +151,7 @@ jobs:
             pip install -r requirements.txt
             python -m backend.main
             ```
-          files: dist/PrismaAPIRelay-Windows-x64.zip
+          files: dist/MonoRelay-Windows-x64.zip
           draft: false
           prerelease: false
           generate_release_notes: false

@@ -1,15 +1,15 @@
 version: "3.8"
 
 services:
-  prisma-relay:
+  mono-relay:
     build: .
-    container_name: prisma-api-relay
+    container_name: mono-api-relay
     restart: unless-stopped
     ports:
       - "8787:8787"
     volumes:
       - ./config.yml:/app/config.yml:ro
-      - prisma-data:/app/data
+      - mono-data:/app/data
     environment:
       - TZ=Asia/Shanghai
     healthcheck:
@@ -20,5 +20,5 @@ services:
       start_period: 10s
 
 volumes:
-  prisma-data:
+  mono-data:
     driver: local

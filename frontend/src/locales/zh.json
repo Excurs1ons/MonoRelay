@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "PrismaAPIRelay",
+    "appName": "MonoRelay",
     "dashboard": "仪表盘",
     "providers": "提供商",
     "keys": "密钥管理",
