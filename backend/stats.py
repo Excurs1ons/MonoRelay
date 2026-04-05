@@ -11,7 +11,7 @@ from typing import Optional
 MAX_HISTORY = 100       # Max history entries per model
 DECAY_RATE = 0.85       # Each older entry's weight = DECAY_RATE ^ distance_from_newest
 
-logger = logging.getLogger("prisma.stats")
+logger = logging.getLogger("monorelay.stats")
 
 # Approximate per-token costs in USD (input / output per 1M tokens)
 MODEL_COSTS: dict[str, tuple[float, float]] = {

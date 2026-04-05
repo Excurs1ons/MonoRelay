@@ -7,7 +7,7 @@ from typing import AsyncGenerator, Optional
 
 import httpx
 
-logger = logging.getLogger("prisma.streaming")
+logger = logging.getLogger("monorelay.streaming")
 
 
 async def stream_openai_response(

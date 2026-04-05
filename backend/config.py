@@ -13,7 +13,7 @@ from watchfiles import awatch
 
 from .models import AppConfig
 
-logger = logging.getLogger("prisma.config")
+logger = logging.getLogger("monorelay.config")
 
 def _get_exe_dir() -> str:
     """获取可执行文件所在目录（兼容 PyInstaller 打包）。"""

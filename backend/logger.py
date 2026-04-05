@@ -8,7 +8,7 @@ from typing import Optional
 
 import aiosqlite
 
-logger = logging.getLogger("prisma.logger")
+logger = logging.getLogger("monorelay.logger")
 
 
 class RequestLogger:

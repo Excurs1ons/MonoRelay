@@ -8,7 +8,7 @@ from typing import Optional
 
 from .models import ProviderConfig, ProviderKey
 
-logger = logging.getLogger("prisma.key_manager")
+logger = logging.getLogger("monorelay.key_manager")
 
 
 class KeyEntry:

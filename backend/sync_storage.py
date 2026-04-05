@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("prisma.sync_storage")
+logger = logging.getLogger("monorelay.sync_storage")
 
 def _get_exe_dir() -> Path:
     """获取可执行文件所在目录（兼容 PyInstaller 打包）。"""

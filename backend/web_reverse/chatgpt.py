@@ -11,7 +11,7 @@ import httpx
 
 from .pow import get_config, get_answer_token, get_requirements_token, fetch_dpl
 
-logger = logging.getLogger("prisma.web_reverse")
+logger = logging.getLogger("monorelay.web_reverse")
 
 MODEL_MAP = {
     "gpt-3.5-turbo": "text-davinci-002-render-sha",

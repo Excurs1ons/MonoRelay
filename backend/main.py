@@ -30,7 +30,7 @@ from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
 from .sync_storage import SyncStorage
 
-logger = logging.getLogger("prisma.main")
+logger = logging.getLogger("monorelay.main")
 
 
 def setup_logging(level: str = "INFO"):
@@ -328,7 +328,7 @@ async def api_update_config(request: Request):
 async def _push_to_gist(sync, content, stats_content, cfg):
     """保存配置后自动推送完整内容到 Gist 的后台任务。"""
     import logging
-    logger = logging.getLogger("prisma.sync")
+    logger = logging.getLogger("monorelay.sync")
     logger.info(f"后台推送: token_len={len(sync._token)}, gist_id={sync.gist_id}")
     try:
         ok = await sync.push(content, stats_content)
@@ -837,7 +837,7 @@ async def api_sync_setup(request: Request):
 
         from .sync import GistSync
         import logging
-        logger = logging.getLogger("prisma.sync")
+        logger = logging.getLogger("monorelay.sync")
         
         sync = GistSync(token, gist_id)
         logger.info(f"同步配置: token_len={len(token)}, gist_id={gist_id or '空'}")
@@ -893,7 +893,7 @@ async def api_sync_push():
     """推送当前配置和统计到 Gist。"""
     sc = config_manager.config.sync
     import logging
-    logger = logging.getLogger("prisma.sync")
+    logger = logging.getLogger("monorelay.sync")
     token = sync_storage.gist_token
     logger.info(f"同步推送: enabled={sc.enabled}, token_len={len(token)}, token_prefix={token[:15]}..., gist_id={sc.gist_id}")
     if not sc.enabled or not token:
@@ -995,7 +995,7 @@ async def api_sync_verify_token(request: Request):
         # 没找到，验证 Token 本身是否有效
         import httpx
         import logging
-        logger = logging.getLogger("prisma.sync")
+        logger = logging.getLogger("monorelay.sync")
         
         async with httpx.AsyncClient() as client:
             resp = await client.get(

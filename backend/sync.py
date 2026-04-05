@@ -8,7 +8,7 @@ from typing import Optional
 
 import httpx
 
-logger = logging.getLogger("prisma.sync")
+logger = logging.getLogger("monorelay.sync")
 
 GIST_FILENAME = "config.yml"
 GIST_STATS_FILENAME = "stats.json"

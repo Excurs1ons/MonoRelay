@@ -17,7 +17,7 @@ from ..stats import StatsTracker, estimate_cost, extract_anthropic_token_usage
 from .streaming import extract_stream_usage
 from .streaming import stream_anthropic_response
 
-logger = logging.getLogger("prisma.anthropic_proxy")
+logger = logging.getLogger("monorelay.anthropic_proxy")
 
 
 async def handle_messages(

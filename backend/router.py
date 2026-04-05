@@ -8,7 +8,7 @@ from typing import Optional
 
 from .models import AppConfig, ModelRoutingConfig
 
-logger = logging.getLogger("prisma.router")
+logger = logging.getLogger("monorelay.router")
 
 REASONING_KEYWORDS = [
     "analyze", "compare", "evaluate", "synthesize", "reason", "prove",

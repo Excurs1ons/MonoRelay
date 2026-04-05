@@ -17,7 +17,7 @@ from ..stats import StatsTracker, estimate_cost, extract_token_usage
 from ..web_reverse.chatgpt import WebReverseService
 from .streaming import stream_openai_response, extract_stream_usage
 
-logger = logging.getLogger("prisma.openai_proxy")
+logger = logging.getLogger("monorelay.openai_proxy")
 
 
 def _estimate_tokens(text: str) -> int:

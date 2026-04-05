@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import AsyncGenerator
 
-logger = logging.getLogger("prisma.utils")
+logger = logging.getLogger("monorelay.utils")
 
 
 def get_exe_dir() -> Path:
