@@ -84,8 +84,8 @@ bash scripts/build.sh       # Linux/macOS
 - Never expose raw stack traces to clients
 
 ### Logging
-- Logger naming convention: `prisma.<module_name>` (e.g., `prisma.openai_proxy`, `prisma.key_manager`)
-- Get logger via `logging.getLogger("prisma.xxx")` at module level
+- Logger naming convention: `monorelay.<module_name>` (e.g., `monorelay.openai_proxy`, `monorelay.key_manager`)
+- Get logger via `logging.getLogger("monorelay.xxx")` at module level
 - Use Chinese in log messages for user-facing output (e.g., `f"模型={resolved_model} | 提供商={provider_name}"`)
 - Key info logged: model, provider, URL, latency, token counts, error messages
 
@@ -116,3 +116,53 @@ backend/
 - Module-level: triple-quoted single-line description (e.g., `"""API Key manager with round-robin..."""`)
 - Function docstrings: optional, but use Google-style if present
 - Chinese comments are acceptable and common throughout the codebase
+
+## Collaboration Workflow
+
+This project is developed by **multiple AI agents** collaborating on a shared codebase. The branching model ensures stability and parallel development.
+
+### Branch Strategy
+
+```
+main (stable / release-ready)
+  ↑
+  └── dev (integration / testing)
+        ↑
+        ├── feat/xxx (Agent A workspace)
+        ├── feat/yyy (Agent B workspace)
+        └── fix/zzz  (Agent C workspace)
+```
+
+| Branch | Purpose | Protection |
+|--------|---------|------------|
+| `main` | Always deployable, tagged releases | Only merged from `dev` |
+| `dev` | Integration branch, feature staging | Features merge here first |
+| `feat/*` | Individual agent workspaces | Isolated, disposable |
+
+### Task Lifecycle
+
+1. **Create feature branch**: `git checkout -b feat/task-name dev`
+2. **Develop**: Make changes, commit atomically
+3. **Merge to dev**: `git checkout dev && git merge --no-ff feat/task-name`
+4. **Verify**: Test functionality on `dev`
+5. **Release**: `dev → main`, tag version, push
+
+### Agent Rules
+
+- **NEVER push directly to `main` or `dev`** without merging from a feature branch
+- **ALWAYS branch from `dev`**, not `main`
+- **One task = one branch**: Keep scope atomic
+- **Clean commits**: Use semantic commit messages (`feat:`, `fix:`, `chore:`, `docs:`)
+- **No Co-authored-by**: Do not add AI attribution footers to commits
+
+### Release Process
+
+```bash
+# When dev is verified and ready:
+git checkout main
+git merge dev --no-ff -m "release: v0.x.x"
+git tag -a v0.x.x -m "Release v0.x.x"
+git push origin main --tags
+```
+
+Pushing a `v*.*.*` tag triggers the GitHub Workflow to build and publish a release automatically.
