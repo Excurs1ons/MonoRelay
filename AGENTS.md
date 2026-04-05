@@ -149,9 +149,10 @@ main (stable / release-ready)
 
 ### Agent Rules
 
-- **NEVER push directly to `main` or `dev`** without merging from a feature branch
+- **NEVER push directly to `main`** without merging from `dev`
 - **ALWAYS branch from `dev`**, not `main`
-- **One task = one branch**: Keep scope atomic
+- **Small changes (docs, config, minor fixes)**: commit directly to `dev`
+- **Feature-level changes**: create `feat/xxx` branch, PR to `dev`
 - **Clean commits**: Use semantic commit messages (`feat:`, `fix:`, `chore:`, `docs:`)
 - **No Co-authored-by**: Do not add AI attribution footers to commits
 
