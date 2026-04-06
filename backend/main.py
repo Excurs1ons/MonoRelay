@@ -1,18 +1,23 @@
 """MonoRelay - LLM API Relay Server."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
+import uvicorn
 from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
@@ -35,7 +40,35 @@ from .sync_storage import SyncStorage
 from .cache import response_cache
 from .usage_tracker import usage_tracker
 
+
+class VerifyRequest(BaseModel):
+    probe_types: list[str] = ["text-gen", "tool-call", "streaming"]
+    model: str | None = None
+
+
 logger = logging.getLogger("monorelay.main")
+
+HEALTH_CHECK_HISTORY: dict[str, list[int]] = {}
+HEALTH_CHECK_MAX_HISTORY = 5
+
+
+def api_response(data: Any = None, message: str = "OK", page: int = 1, page_size: int = 20, total: int = 0) -> dict:
+    """Wrap admin API responses in standard envelope."""
+    return {
+        "success": True,
+        "message": message,
+        "data": data,
+        "metadata": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "timestamp": datetime.now().isoformat()
+        }
+    }
+
+
+def error_response(message: str, code: int = 400) -> dict:
+    return {"success": False, "message": message, "data": None, "metadata": None}
 
 
 def setup_logging(level: str = "INFO"):
@@ -122,7 +155,7 @@ app.add_middleware(
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path.startswith("/v1/") or path.startswith("/api/") or path == "/health":
+    if path.startswith("/v1/") or path.startswith("/api/"):
         access_key = config_manager.config.server.access_key
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
@@ -212,8 +245,7 @@ async def health():
 # Per-client usage tracking
 @app.get("/api/usage/stats")
 async def api_usage_stats(client_id: str | None = None):
-    """Get API usage statistics per client or overall."""
-    return usage_tracker.get_stats(client_id)
+    return api_response(data=usage_tracker.get_stats(client_id))
 
 
 @app.post("/api/usage/clear")
@@ -339,17 +371,24 @@ async def messages(request: Request):
 async def api_stats():
     summary = stats_tracker.get_summary()
     db_stats = await request_logger.get_stats_summary()
-    return {
+    return api_response(data={
         "in_memory": summary,
         "persistent": db_stats,
         "keys": key_manager.get_stats(),
         "models": stats_tracker.get_model_details(),
-    }
+    })
 
 
 @app.get("/api/logs")
-async def api_logs(limit: int = 50):
-    return await request_logger.get_recent_requests(limit)
+async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
+    if limit < page_size:
+        page_size = limit
+    logs = await request_logger.get_recent_requests(limit)
+    total = len(logs)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = logs[start:end]
+    return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
 @app.get("/api/stats/file")
@@ -359,6 +398,221 @@ async def api_stats_file():
     if not path.exists():
         return {"content": "{}"}
     return {"content": path.read_text(encoding="utf-8")}
+
+
+# ========== Analytics Endpoints ==========
+
+@app.get("/api/analytics/overview")
+async def api_analytics_overview(
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """返回成本和用量摘要，支持日期范围过滤。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    # Convert to timestamps for DB query
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400  # End of day
+    
+    # Query request logger for date-filtered stats
+    db_stats = {}
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT
+                COUNT(*) as total_requests,
+                COALESCE(SUM(estimated_cost), 0) as total_cost,
+                COALESCE(SUM(input_tokens), 0) as total_input,
+                COALESCE(SUM(output_tokens), 0) as total_output,
+                provider,
+                model
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ?
+            GROUP BY provider, model
+            """,
+            (start_ts, end_ts)
+        )
+        rows = await cursor.fetchall()
+        db_stats = [dict(row) for row in rows]
+    
+    # Aggregate by provider
+    by_provider: dict[str, dict] = {}
+    # Aggregate by model
+    by_model: dict[str, dict] = {}
+    total_requests = 0
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    
+    for row in db_stats:
+        prov = row.get("provider", "unknown")
+        model = row.get("model", "unknown")
+        req_count = row.get("total_requests", 0) or 0
+        cost = float(row.get("total_cost", 0) or 0)
+        inp = int(row.get("total_input", 0) or 0)
+        out = int(row.get("total_output", 0) or 0)
+        
+        total_requests += req_count
+        total_cost += cost
+        total_input += inp
+        total_output += out
+        
+        if prov not in by_provider:
+            by_provider[prov] = {"requests": 0, "cost": 0.0}
+        by_provider[prov]["requests"] += req_count
+        by_provider[prov]["cost"] += cost
+        
+        if model not in by_model:
+            by_model[model] = {"requests": 0, "cost": 0.0, "tokens": 0}
+        by_model[model]["requests"] += req_count
+        by_model[model]["cost"] += cost
+        by_model[model]["tokens"] += inp + out
+    
+    return api_response(data={
+        "period": {"start": start, "end": end},
+        "total_requests": total_requests,
+        "total_cost": round(total_cost, 2),
+        "total_tokens": {"input": total_input, "output": total_output},
+        "by_provider": by_provider,
+        "by_model": by_model,
+    })
+
+
+@app.get("/api/analytics/slow-queries")
+async def api_analytics_slow_queries(
+    threshold_ms: int = 5000,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 100,
+):
+    """返回超过延迟阈值的慢查询。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400
+    
+    slow_queries = []
+    total = 0
+    
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT 
+                timestamp, model, provider, latency_ms, 
+                COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?
+            ORDER BY latency_ms DESC
+            LIMIT ?
+            """,
+            (start_ts, end_ts, threshold_ms, limit)
+        )
+        rows = await cursor.fetchall()
+        
+        for row in rows:
+            ts = datetime.fromtimestamp(row[0])
+            slow_queries.append({
+                "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+                "model": row[1],
+                "provider": row[2],
+                "latency_ms": round(row[3], 1) if row[3] else 0,
+                "tokens": row[4] or 0,
+            })
+        
+        # Get total count
+        cursor = await request_logger._db.execute(
+            "SELECT COUNT(*) FROM requests WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?",
+            (start_ts, end_ts, threshold_ms)
+        )
+        total = (await cursor.fetchone())[0] or 0
+    
+    return api_response(data={
+        "threshold_ms": threshold_ms,
+        "slow_queries": slow_queries,
+        "total": total,
+    })
+
+
+@app.get("/api/analytics/cost-distribution")
+async def api_analytics_cost_distribution(
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """返回成本分布：按提供商和按模型。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400
+    
+    provider_costs: dict[str, float] = {}
+    model_costs: dict[str, float] = {}
+    total_cost = 0.0
+    
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT provider, model, COALESCE(SUM(estimated_cost), 0) as cost
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ?
+            GROUP BY provider, model
+            """,
+            (start_ts, end_ts)
+        )
+        rows = await cursor.fetchall()
+        
+        for row in rows:
+            prov = row[0] or "unknown"
+            model = row[1] or "unknown"
+            cost = float(row[2] or 0)
+            
+            total_cost += cost
+            provider_costs[prov] = provider_costs.get(prov, 0) + cost
+            model_costs[model] = model_costs.get(model, 0) + cost
+    
+    # Build provider breakdown
+    by_provider = []
+    for prov, cost in sorted(provider_costs.items(), key=lambda x: x[1], reverse=True):
+        pct = round((cost / total_cost * 100), 1) if total_cost > 0 else 0
+        by_provider.append({"provider": prov, "cost": round(cost, 2), "percentage": pct})
+    
+    # Build model breakdown
+    by_model = []
+    for model, cost in sorted(model_costs.items(), key=lambda x: x[1], reverse=True):
+        pct = round((cost / total_cost * 100), 1) if total_cost > 0 else 0
+        by_model.append({"model": model, "cost": round(cost, 2), "percentage": pct})
+    
+    return api_response(data={
+        "total_cost": round(total_cost, 2),
+        "by_provider": by_provider,
+        "by_model": by_model,
+    })
+
+
+# ========== End Analytics ==========
 
 
 @app.put("/api/stats/file")
@@ -433,7 +687,7 @@ async def _push_to_gist(sync, content, stats_content, cfg):
 
 
 @app.get("/api/providers")
-async def api_providers():
+async def api_providers(page: int = 1, page_size: int = 20):
     result = {}
     for name, pc in config_manager.config.providers.items():
         result[name] = {
@@ -449,7 +703,14 @@ async def api_providers():
             "console_url": pc.console_url,
             "web_reverse": pc.web_reverse.model_dump() if pc.web_reverse else None,
         }
-    return result
+    
+    providers_list = list(result.items())
+    total = len(providers_list)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = dict(providers_list[start:end])
+    
+    return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
 @app.post("/api/providers/{name}/test")
@@ -476,21 +737,24 @@ async def api_test_provider(name: str):
                     "chat_token_obtained": bool(service.chat_token),
                     "proof_token_obtained": bool(service.proof_token),
                     "conversation_only": wr_cfg.get("conversation_only", False),
-                }
+                },
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    headers = {
-        "Authorization": f"Bearer {pc.keys[0].key[:8]}..." if len(pc.keys[0].key) > 8 else pc.keys[0].key,
-        "Content-Type": "application/json",
-    }
-    if pc.headers:
-        headers["Extra-Headers"] = str(list(pc.headers.keys()))
 
-    # Test with a minimal chat request to verify API key validity
-    # /models endpoint is often public (e.g. OpenRouter), so it doesn't prove key works
-    # Use a known working model per provider
+@app.post("/api/providers/{name}/verify")
+async def api_verify_provider(name: str, request: VerifyRequest):
+
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+    if not pc.keys:
+        raise HTTPException(status_code=400, detail="No keys configured")
+
+    if pc.provider_type == "web_reverse":
+        raise HTTPException(status_code=400, detail="web_reverse provider type not supported for verify")
+
     test_models = {
         "openrouter": "openai/gpt-4o-mini",
         "nvidia": "meta/llama-3.1-8b-instruct",
@@ -498,140 +762,328 @@ async def api_test_provider(name: str):
         "anthropic": "claude-3-haiku-20240307",
         "deepseek": "deepseek-chat",
     }
-    # Use provider's configured test_model, or fallback to defaults
-    test_model = pc.test_model or test_models.get(name, "gpt-4o-mini")
-
-    test_payload = {
-        "model": test_model,
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 1,
-    }
+    test_model = request.model or pc.test_model or test_models.get(name, "gpt-4o-mini")
 
     url = pc.base_url
-    if pc.provider_type != "web_reverse" and not url.endswith("/chat/completions"):
+    if not url.endswith("/chat/completions"):
         url = f"{url}/chat/completions"
-    start = time.monotonic()
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {pc.keys[0].key}",
-                    "Content-Type": "application/json",
-                    **(pc.headers or {}),
-                },
-                json=test_payload,
-                timeout=15.0,
-            )
-        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+    headers = {
+        "Authorization": f"Bearer {pc.keys[0].key}",
+        "Content-Type": "application/json",
+    }
+    if pc.headers:
+        headers.update(pc.headers)
 
-        # Try to parse response body
+    async def probe_text_gen() -> dict[str, Any]:
+        start = time.monotonic()
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 10,
+        }
         try:
-            resp_body = resp.json()
-        except Exception:
-            resp_body = resp.text[:500]
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
 
-        if resp.status_code < 400:
-            # Extract useful info from success response
-            choices = resp_body.get("choices", []) if isinstance(resp_body, dict) else []
-            usage = resp_body.get("usage", {}) if isinstance(resp_body, dict) else {}
-            resp_model = resp_body.get("model", test_model) if isinstance(resp_body, dict) else test_model
-            finish_reason = choices[0].get("finish_reason", "") if choices else ""
+            if resp.status_code >= 400:
+                return {
+                    "status": "fail",
+                    "latency_ms": latency_ms,
+                    "error": f"HTTP {resp.status_code}",
+                    "summary": f"Request failed with HTTP {resp.status_code}",
+                }
 
-            return {
-                "status": "ok",
-                "message": f"测试成功 — API key 有效",
-                "debug": {
-                    "type": "api",
-                    "request": {
-                        "method": "POST",
-                        "url": url,
-                        "model": test_model,
-                        "payload": test_payload,
-                    },
-                    "response": {
-                        "status_code": resp.status_code,
-                        "model": resp_model,
-                        "finish_reason": finish_reason,
-                        "usage": usage,
-                        "body_preview": str(resp_body)[:300] if isinstance(resp_body, str) else resp_body,
-                    },
-                    "timing_ms": elapsed_ms,
+            body = resp.json()
+            choices = body.get("choices", [])
+            if choices and choices[0].get("message", {}).get("content"):
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Text generation works",
                 }
-            }
-        elif resp.status_code == 401:
             return {
-                "status": "error",
-                "message": f"API key 无效或已过期 (HTTP 401)",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": 401, "body": resp_body},
-                    "timing_ms": elapsed_ms,
-                }
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": "No content in response",
+                "summary": "Empty response content",
             }
-        elif resp.status_code == 429:
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
             return {
-                "status": "error",
-                "message": f"触发限流 (HTTP 429) — key 有效但额度已用完",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": 429, "body": resp_body},
-                    "timing_ms": elapsed_ms,
-                }
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"HTTP {resp.status_code}: {str(resp_body)[:200]}",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": resp.status_code, "body": resp_body},
-                    "timing_ms": elapsed_ms,
-                }
-            }
-    except httpx.TimeoutException:
-        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
-        return {
-            "status": "error",
-            "message": f"请求超时 ({elapsed_ms}ms)",
-            "debug": {
-                "type": "api",
-                "request": {"method": "POST", "url": url, "model": test_model},
+                "status": "fail",
+                "latency_ms": latency_ms,
                 "error": "Timeout",
-                "timing_ms": elapsed_ms,
+                "summary": "Request timed out",
             }
-        }
-    except Exception as e:
-        elapsed_ms = round((time.monotonic() - start) * 1000, 1)
-        return {
-            "status": "error",
-            "message": str(e),
-            "debug": {
-                "type": "api",
-                "request": {"method": "POST", "url": url, "model": test_model},
-                "error": str(e),
-                "timing_ms": elapsed_ms,
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
             }
+
+    async def probe_tool_call() -> dict[str, Any]:
+        start = time.monotonic()
+
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "What is 2 + 2?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "description": "A simple calculator",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "expression": {"type": "string", "description": "Math expression"}
+                            },
+                            "required": ["expression"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "calculator"}},
+            "max_tokens": 50,
         }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+
+            if resp.status_code >= 400:
+                if resp.status_code in (400, 403):
+                    error_msg = body.get("error", {}).get("message", "")
+                    if "tool" in error_msg.lower() or "function" in error_msg.lower():
+                        return {
+                            "status": "unsupported",
+                            "latency_ms": latency_ms,
+                            "error": "tools_not_supported",
+                            "summary": "Tool calling not supported by this provider",
+                        }
+                return {
+                    "status": "fail",
+                    "latency_ms": latency_ms,
+                    "error": f"HTTP {resp.status_code}",
+                    "summary": f"Request failed with HTTP {resp.status_code}",
+                }
+
+            choices = body.get("choices", [])
+            first_choice = choices[0] if choices else {}
+            message = first_choice.get("message", {})
+            tool_calls = message.get("tool_calls", [])
+            if tool_calls:
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Tool calling works",
+                }
+            if first_choice.get("finish_reason") == "tool_calls":
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Tool calling works",
+                }
+            return {
+                "status": "unsupported",
+                "latency_ms": latency_ms,
+                "error": "no_tool_calls",
+                "summary": "Tool calling returned no tool calls",
+            }
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": "Timeout",
+                "summary": "Request timed out",
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
+            }
+
+    async def probe_streaming() -> dict[str, Any]:
+        start = time.monotonic()
+        first_token_ms = None
+
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "Count from 1 to 5"}],
+            "max_tokens": 30,
+            "stream": True,
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=15.0) as resp:
+                    if resp.status_code >= 400:
+                        latency_ms = round((time.monotonic() - start) * 1000, 1)
+                        return {
+                            "status": "fail",
+                            "latency_ms": latency_ms,
+                            "first_token_ms": None,
+                            "error": f"HTTP {resp.status_code}",
+                            "summary": f"Request failed with HTTP {resp.status_code}",
+                        }
+
+                    async for chunk in resp.aiter_bytes():
+                        if first_token_ms is None and chunk:
+                            first_token_ms = round((time.monotonic() - start) * 1000, 1)
+                        if b"[DONE]" in chunk or b"data: [DONE]" in chunk:
+                            break
+
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+
+            if first_token_ms is not None:
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "first_token_ms": first_token_ms,
+                    "error": None,
+                    "summary": "Streaming works",
+                }
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": "No tokens received",
+                "summary": "No streaming data received",
+            }
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": "Timeout",
+                "summary": "Request timed out",
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
+            }
+
+    probe_map = {
+        "text-gen": probe_text_gen,
+        "tool-call": probe_tool_call,
+        "streaming": probe_streaming,
+    }
+
+    results = {}
+    tasks = []
+    probe_names = []
+
+    for probe_type in request.probe_types:
+        if probe_type in probe_map:
+            tasks.append(probe_map[probe_type]())
+            probe_names.append(probe_type)
+        else:
+            results[probe_type] = {
+                "status": "fail",
+                "latency_ms": 0,
+                "error": "unknown_probe_type",
+                "summary": f"Unknown probe type: {probe_type}",
+            }
+
+    if tasks:
+        probe_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for name, result in zip(probe_names, probe_results):
+            if isinstance(result, Exception):
+                results[name] = {
+                    "status": "fail",
+                    "latency_ms": 0,
+                    "error": type(result).__name__,
+                    "summary": f"Error: {type(result).__name__}",
+                }
+            else:
+                results[name] = result
+
+    overall_status = "pass"
+    for result in results.values():
+        if result.get("status") == "fail":
+            overall_status = "fail"
+            break
+        elif result.get("status") == "unsupported" and overall_status != "fail":
+            overall_status = "partial"
+
+    return {
+        "provider": name,
+        "model": test_model,
+        "probes": results,
+        "overall_status": overall_status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # Batch health check - inspired by all-api-hub
 @app.post("/api/health-check")
 async def api_health_check():
-    """Test all providers and all keys in parallel, return comprehensive health report."""
-    import asyncio as _asyncio
+    results: dict[str, Any] = {}
 
-    results = {}
+    def calculate_latency_trend(history: list[int]) -> str:
+        if len(history) < 2:
+            return "stable"
+        recent = history[-2:]
+        diff = recent[1] - recent[0]
+        if diff > 100:
+            return "up"
+        elif diff < -100:
+            return "down"
+        return "stable"
+
+    def detect_issues(key_results: list[dict[str, Any]], avg_latency: float | None) -> list[str]:
+        issues = []
+        statuses = [k.get("status") for k in key_results]
+        enabled_statuses = [s for s in statuses if s != "disabled"]
+
+        if not enabled_statuses:
+            return issues
+
+        all_rate_limited = all(s == "rate_limited" for s in enabled_statuses)
+        all_error = all(s == "error" for s in enabled_statuses)
+        all_timeout = all(s == "timeout" for s in enabled_statuses)
+
+        if all_rate_limited:
+            issues.append("rate_limited_issue")
+        if all_error:
+            issues.append("provider_error")
+        if all_timeout:
+            issues.append("timeout_issue")
+        if avg_latency is not None and avg_latency > 5000:
+            issues.append("latency_issue")
+
+        return issues
+
     for name, pc in config_manager.config.providers.items():
         if not pc.enabled or not pc.keys:
             results[name] = {"enabled": pc.enabled, "status": "skipped", "message": "Provider disabled or no keys"}
             continue
 
         key_results = []
+        provider_latencies = []
+
         for idx, pk in enumerate(pc.keys):
             if not pk.enabled:
                 key_results.append({"index": idx, "label": pk.label, "status": "disabled"})
@@ -679,6 +1131,7 @@ async def api_health_check():
                             timeout=15.0,
                         )
                     elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+                    provider_latencies.append(elapsed_ms)
                     status = "ok" if resp.status_code < 400 else ("rate_limited" if resp.status_code == 429 else "error")
                     key_results.append({
                         "index": idx, "label": pk.label, "status": status,
@@ -690,14 +1143,52 @@ async def api_health_check():
                     key_results.append({"index": idx, "label": pk.label, "status": "error", "message": str(e)})
 
         ok_count = sum(1 for k in key_results if k["status"] == "ok")
+        current_latency = provider_latencies[0] if provider_latencies else None
+
+        if current_latency is not None:
+            history = HEALTH_CHECK_HISTORY.get(name, [])
+            history.append(int(current_latency))
+            if len(history) > HEALTH_CHECK_MAX_HISTORY:
+                history = history[-HEALTH_CHECK_MAX_HISTORY:]
+            HEALTH_CHECK_HISTORY[name] = history
+
+        history = HEALTH_CHECK_HISTORY.get(name, [])
+        avg_latency = round(sum(history) / len(history), 1) if history else None
+        trend = calculate_latency_trend(history) if history else "stable"
+        issues = detect_issues(key_results, avg_latency)
+
         results[name] = {
-            "enabled": pc.enabled, "total_keys": len(pc.keys),
-            "healthy_keys": ok_count, "status": "healthy" if ok_count > 0 else "degraded",
+            "enabled": pc.enabled,
+            "total_keys": len(pc.keys),
+            "healthy_keys": ok_count,
+            "status": "healthy" if ok_count > 0 else "degraded",
+            "issues": issues,
+            "latency": {
+                "current_ms": current_latency,
+                "avg_ms": avg_latency,
+                "trend": trend,
+                "history": history,
+            },
             "keys": key_results,
         }
 
     total_healthy = sum(1 for r in results.values() if r.get("status") == "healthy")
-    return {"providers": results, "summary": {"total": len(results), "healthy": total_healthy}}
+    total_degraded = sum(1 for r in results.values() if r.get("status") == "degraded")
+    issues_detected = []
+    for name, r in results.items():
+        if r.get("issues"):
+            for issue in r["issues"]:
+                issues_detected.append(f"{name}: {issue}")
+
+    return {
+        "providers": results,
+        "summary": {
+            "total": len(results),
+            "healthy": total_healthy,
+            "degraded": total_degraded,
+            "issues_detected": issues_detected,
+        },
+    }
 
 
 # API Key export - inspired by all-api-hub one-click export
@@ -716,6 +1207,17 @@ async def api_export_keys(provider_name: str, format: str = "openai"):
     if pc.provider_type != "web_reverse" and not base_url.endswith("/v1"):
         base_url = base_url.rstrip("/")
 
+    # Get server base URL for SDK formats
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = "127.0.0.1"
+    server_base_url = f"http://{local_ip}:{config_manager.config.server.port}/v1"
+
     exports = []
     for pk in enabled_keys:
         if format == "openai":
@@ -724,8 +1226,42 @@ async def api_export_keys(provider_name: str, format: str = "openai"):
             exports.append(f"ANTHROPIC_API_KEY={pk.key}\nANTHROPIC_BASE_URL={base_url}")
         elif format == "claude-code":
             exports.append(f"# {pk.label}\nexport ANTHROPIC_BASE_URL='{base_url}'\nexport ANTHROPIC_API_KEY='{pk.key}'")
+        elif format == "claude-code-router":
+            exports.append(f"# Claude Code Router config\nexport ANTHROPIC_BASE_URL='{server_base_url}'\nexport ANTHROPIC_API_KEY='{pk.key}'")
         elif format == "cherrystudio":
             exports.append(f"# {provider_name} - {pk.label}\nAPI: {base_url}\nKey: {pk.key}")
+        elif format == "cherrystudio-deep-link":
+            import base64
+            deep_link_data = {
+                "provider": provider_name,
+                "name": "MonoRelay",
+                "api_key": pk.key,
+                "base_url": server_base_url,
+            }
+            encoded = base64.b64encode(json.dumps(deep_link_data).encode()).decode()
+            exports.append(f"cherrystudio://providers/api-keys?v=1&data={encoded}")
+        elif format == "vercel-ai-sdk":
+            import json as json_module
+            sdk_config = {
+                "providers": [{
+                    "provider": provider_name,
+                    "baseURL": server_base_url,
+                    "apiKey": pk.key,
+                    "models": {
+                        "default": ["gpt-4o-mini", "gpt-4o"],
+                        "fetchWith": ["gpt-4o-mini", "gpt-4o"],
+                    },
+                }]
+            }
+            exports.append(json_module.dumps(sdk_config, indent=2))
+        elif format == "llama.cpp":
+            import json as json_module
+            llama_config = {
+                "model_alias": "monorelay",
+                "api_key": pk.key,
+                "base_url": server_base_url,
+            }
+            exports.append(json_module.dumps(llama_config, indent=2))
         elif format == "curl":
             exports.append(f"curl {base_url}/v1/chat/completions -H 'Authorization: Bearer {pk.key}' -H 'Content-Type: application/json' -d '{{\"model\":\"gpt-4o-mini\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hi\"}}]}}'")
         elif format == "env":
@@ -743,7 +1279,6 @@ async def api_export_keys(provider_name: str, format: str = "openai"):
 # Enhanced stats API with per-provider analytics
 @app.get("/api/stats/enhanced")
 async def api_enhanced_stats():
-    """Enhanced stats with per-provider breakdown, cost analysis, and key-level metrics."""
     summary = stats_tracker.get_summary()
     model_details = stats_tracker.get_model_details()
 
@@ -783,36 +1318,40 @@ async def api_enhanced_stats():
                 "expires_at": pk.expires_at,
             })
 
-    return {
+    return api_response(data={
         "summary": summary,
         "provider_breakdown": provider_breakdown,
         "model_details": model_details,
         "key_health": key_health,
-    }
+    })
 
 
 # Model pricing comparison endpoint
 @app.get("/api/models/pricing")
 async def api_model_pricing():
-    """Return model pricing information across all providers for comparison."""
-    from .stats import MODEL_COSTS
+    """Return model pricing information from provider configurations."""
     pricing = []
-    for model_name, (input_cost, output_cost) in MODEL_COSTS.items():
-        providers_for_model = []
-        for name, pc in config_manager.config.providers.items():
-            if not pc.enabled:
-                continue
-            include_list = pc.models.get("include", []) if pc.models else []
-            if not include_list or any(model_name.lower() in m.lower() or m.lower() in model_name.lower() for m in include_list):
-                providers_for_model.append(name)
+    seen_models: dict[str, dict] = {}
 
-        pricing.append({
-            "model": model_name,
-            "input_per_1m": input_cost,
-            "output_per_1m": output_cost,
-            "available_on": providers_for_model,
-        })
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled:
+            continue
+        include_list = pc.models.get("include", []) if pc.models else []
+        if not include_list:
+            continue
 
+        for model_id in include_list:
+            if model_id not in seen_models:
+                seen_models[model_id] = {
+                    "model": model_id,
+                    "input_per_1m": pc.cost_per_m_input,
+                    "output_per_1m": pc.cost_per_m_output,
+                    "available_on": [name],
+                }
+            else:
+                seen_models[model_id]["available_on"].append(name)
+
+    pricing = list(seen_models.values())
     pricing.sort(key=lambda x: x["input_per_1m"] + x["output_per_1m"])
     return {"models": pricing, "currency": "USD"}
 
@@ -896,8 +1435,9 @@ async def api_logs_filtered(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 100,
+    page: int = 1,
+    page_size: int = 20,
 ):
-    """Filter request logs by provider, model, status, and date range."""
     filters = {}
     if provider:
         filters["provider"] = provider
@@ -911,7 +1451,7 @@ async def api_logs_filtered(
         filters["date_to"] = date_to
 
     logs = await request_logger.get_recent_requests(limit * 5)
-    entries = logs.get("entries", [])
+    entries = logs if isinstance(logs, list) else logs.get("entries", [])
 
     filtered = []
     for entry in entries:
@@ -935,11 +1475,20 @@ async def api_logs_filtered(
         if len(filtered) >= limit:
             break
 
-    return {
-        "entries": filtered,
-        "total_matched": len(filtered),
-        "filters_applied": {k: v for k, v in {"provider": provider, "model": model, "status": status}.items() if v},
-    }
+    total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = filtered[start:end]
+
+    return api_response(
+        data={
+            "entries": paginated,
+            "filters_applied": {k: v for k, v in {"provider": provider, "model": model, "status": status}.items() if v},
+        },
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 # System info endpoint

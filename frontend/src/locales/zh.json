@@ -3,6 +3,7 @@
     "appName": "MonoRelay",
     "dashboard": "仪表盘",
     "providers": "提供商",
+    "analytics": "使用分析",
     "keys": "密钥管理",
     "models": "模型库",
     "logs": "请求日志",

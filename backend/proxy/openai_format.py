@@ -73,6 +73,41 @@ def _build_url(base_url: str, path: str) -> str:
     return f"{base_url}{path}"
 
 
+def _build_headers(provider_cfg, api_key: str) -> dict[str, str]:
+    """Build base headers dict for upstream requests with cloaking support."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if provider_cfg.headers:
+        headers.update(provider_cfg.headers)
+
+    cloaking = provider_cfg.cloaking
+    if cloaking:
+        cloaking_applied = []
+        if cloaking.user_agent:
+            headers["User-Agent"] = cloaking.user_agent
+            cloaking_applied.append("User-Agent")
+        if cloaking.referer:
+            headers["Referer"] = cloaking.referer
+            cloaking_applied.append("Referer")
+        if cloaking.origin:
+            headers["Origin"] = cloaking.origin
+            cloaking_applied.append("Origin")
+        if cloaking.accept:
+            headers["Accept"] = cloaking.accept
+            cloaking_applied.append("Accept")
+        if cloaking.accept_language:
+            headers["Accept-Language"] = cloaking.accept_language
+            cloaking_applied.append("Accept-Language")
+        if cloaking_applied:
+            logger.info(f"Cloaking已启用 | 应用头部: {', '.join(cloaking_applied)}")
+            if cloaking.tls_fingerprint_profile:
+                logger.info(f"TLS指纹配置: {cloaking.tls_fingerprint_profile}")
+
+    return headers
+
+
 async def _handle_cascade_chat(
     body: dict,
     config: AppConfig,
@@ -111,12 +146,7 @@ async def _handle_cascade_chat(
             continue
 
         url = _build_url(provider_cfg.base_url, "/chat/completions")
-        headers = {
-            "Authorization": f"Bearer {key.key.key}",
-            "Content-Type": "application/json",
-        }
-        if provider_cfg.headers:
-            headers.update(provider_cfg.headers)
+        headers = _build_headers(provider_cfg, key.key.key)
 
         is_stream = request_body.get("stream", False)
         start_time = time.time()
@@ -175,6 +205,8 @@ async def handle_chat_completions(
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
 
+    body = router.apply_transformation(body, resolved_model)
+
     if not router.supports_tools(resolved_model):
         body = router.strip_tools(body)
 
@@ -196,12 +228,7 @@ async def handle_chat_completions(
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/chat/completions")
-    headers = {
-        "Authorization": f"Bearer {key.key.key}",
-        "Content-Type": "application/json",
-    }
-    if provider_cfg.headers:
-        headers.update(provider_cfg.headers)
+    headers = _build_headers(provider_cfg, key.key.key)
 
     is_stream = body.get("stream", False)
     start_time = time.time()
@@ -254,12 +281,7 @@ async def handle_completions(
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/completions")
-    headers = {
-        "Authorization": f"Bearer {key.key.key}",
-        "Content-Type": "application/json",
-    }
-    if provider_cfg.headers:
-        headers.update(provider_cfg.headers)
+    headers = _build_headers(provider_cfg, key.key.key)
 
     is_stream = body.get("stream", False)
     start_time = time.time()
@@ -308,12 +330,7 @@ async def handle_embeddings(
         stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    headers = {
-        "Authorization": f"Bearer {key.key.key}",
-        "Content-Type": "application/json",
-    }
-    if provider_cfg.headers:
-        headers.update(provider_cfg.headers)
+    headers = _build_headers(provider_cfg, key.key.key)
 
     start_time = time.time()
     logger.info(f"Embeddings请求发送 | 模型={resolved_model} | 提供商={provider_name}")
@@ -330,7 +347,7 @@ async def handle_embeddings(
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 logger.error(f"Embeddings错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 return resp.json()
-            key_manager.report_success(key)
+            key_manager.report_success(key, 0)
             logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
@@ -442,11 +459,15 @@ async def _stream_chat(
 
             is_estimated = is_estimated_in or is_estimated_out
 
-            key_manager.report_success(key)
+            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+            thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
+            total_tokens = tokens_in_calc + tokens_out_calc
+
+            key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
-            thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
 
             # Detailed logging
             log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
@@ -490,6 +511,8 @@ async def _stream_chat(
                 is_streaming=True,
                 first_token_ms=first_token_ms,
                 stream_chunks=stream_chunks,
+                cost_per_m_input=provider_cfg.cost_per_m_input,
+                cost_per_m_output=provider_cfg.cost_per_m_output,
             )
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
@@ -539,7 +562,6 @@ async def _non_stream_chat(
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
 
-            key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_token_usage(result)
 
@@ -550,9 +572,12 @@ async def _non_stream_chat(
                 details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
                 thinking_tokens = details.get("reasoning_tokens")
 
-            tokens_in = int(tokens_in) if tokens_in is not None else None
-            tokens_out = int(tokens_out) if tokens_out is not None else None
+            tokens_in = int(tokens_in) if tokens_in is not None else 0
+            tokens_out = int(tokens_out) if tokens_out is not None else 0
             thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
+            total_tokens = tokens_in + tokens_out
+
+            key_manager.report_success(key, total_tokens)
 
             # Detailed logging
             log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
@@ -582,6 +607,8 @@ async def _non_stream_chat(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
                 success=True,
+                cost_per_m_input=provider_cfg.cost_per_m_input,
+                cost_per_m_output=provider_cfg.cost_per_m_output,
             )
             from ..usage_tracker import usage_tracker
             usage_tracker.record(None, success=True, tokens_in=tokens_in or 0, tokens_out=tokens_out or 0)
@@ -659,7 +686,11 @@ async def _stream_completion(
                                     except Exception:
                                         pass
 
-            key_manager.report_success(key)
+            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+            total_tokens = tokens_in_calc + tokens_out_calc
+
+            key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
@@ -684,6 +715,8 @@ async def _stream_completion(
             stats_tracker.record_request(
                 provider_name, resolved_model,
                 input_tokens=tokens_in, output_tokens=tokens_out, success=True,
+                cost_per_m_input=provider_cfg.cost_per_m_input,
+                cost_per_m_output=provider_cfg.cost_per_m_output,
             )
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
@@ -717,9 +750,13 @@ async def _non_stream_completion(
                 logger.error(f"Completion错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
-            key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_token_usage(result)
+            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+            total_tokens = tokens_in_calc + tokens_out_calc
+
+            key_manager.report_success(key, total_tokens)
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
 
@@ -832,7 +869,7 @@ async def _handle_web_reverse_chat(
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return result
         else:
-            key_manager.report_success(key)
+            key_manager.report_success(key, 0)
             elapsed = time.time() - start_time
             await request_logger.log_request(
                 model=resolved_model,
@@ -871,7 +908,7 @@ async def _wrap_web_reverse_stream(
 ) -> AsyncGenerator[bytes, None]:
     async for chunk in stream_gen:
         yield chunk
-    key_manager.report_success(key)
+    key_manager.report_success(key, 0)
     elapsed = time.time() - start_time
     await request_logger.log_request(
         model=resolved_model,
@@ -907,11 +944,8 @@ async def handle_audio_transcriptions(
         stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    headers = {
-        "Authorization": f"Bearer {key.key.key}",
-    }
-    if provider_cfg.headers:
-        headers.update(provider_cfg.headers)
+    headers = _build_headers(provider_cfg, key.key.key)
+    headers.pop("Content-Type", None)
 
     start_time = time.time()
     logger.info(f"Audio Transcription请求 | 模型={resolved_model} | 提供商={provider_name}")
@@ -934,7 +968,7 @@ async def handle_audio_transcriptions(
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 logger.error(f"Audio Transcription错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 return resp.json()
-            key_manager.report_success(key)
+            key_manager.report_success(key, 0)
             logger.info(f"Audio Transcription | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
@@ -974,12 +1008,7 @@ async def handle_image_generations(
         stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
-    headers = {
-        "Authorization": f"Bearer {key.key.key}",
-        "Content-Type": "application/json",
-    }
-    if provider_cfg.headers:
-        headers.update(provider_cfg.headers)
+    headers = _build_headers(provider_cfg, key.key.key)
 
     start_time = time.time()
     logger.info(f"Image Generation请求 | 模型={resolved_model} | 提供商={provider_name}")
@@ -997,7 +1026,7 @@ async def handle_image_generations(
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 logger.error(f"Image Generation错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 return resp.json()
-            key_manager.report_success(key)
+            key_manager.report_success(key, 0)
             logger.info(f"Image Generation | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,

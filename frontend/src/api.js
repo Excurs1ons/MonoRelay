@@ -19,7 +19,12 @@ async function request(url, options = {}) {
     throw new Error('Unauthorized')
   }
 
-  return resp.json()
+  const json = await resp.json()
+  // 自动解包 api_response 包装格式
+  if (json && json.success === true && json.data !== undefined) {
+    return json.data
+  }
+  return json
 }
 
 export const api = {
@@ -67,4 +72,25 @@ export const api = {
   pullSync: (token) => request('/api/sync/pull', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
   verifyToken: (token) => request('/api/sync/verify-token', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
   getSyncHistory: () => request('/api/sync/history'),
+
+  // Enhanced Features - Analytics
+  getAnalyticsOverview: () => request('/api/analytics/overview'),
+  getAnalyticsSlowQueries: (limit = 10) => request(`/api/analytics/slow-queries?limit=${limit}`),
+  getAnalyticsCostDistribution: () => request('/api/analytics/cost-distribution'),
+
+  // Enhanced Features - Health Check
+  runHealthCheck: () => request('/api/health-check', { method: 'POST' }),
+
+  // Enhanced Features - Model Verification
+  verifyProvider: (name, model = null) => request(`/api/providers/${name}/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ model })
+  }),
+
+  // Enhanced Features - Export
+  exportProviderKeys: (providerName, format = 'openai') => request(`/api/export/keys/${providerName}?format=${format}`),
+
+  // Enhanced Features - Enhanced Stats
+  getEnhancedStats: () => request('/api/stats/enhanced'),
+  getModelsPricing: () => request('/api/models/pricing'),
 }
