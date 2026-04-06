@@ -4,7 +4,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from .models import AppConfig, ModelRoutingConfig
 
@@ -202,3 +202,50 @@ class ModelRouter:
         body.pop("tools", None)
         body.pop("tool_choice", None)
         return body
+
+    def apply_transformation(self, body: dict, model: str) -> dict:
+        pt = self.config.model_routing.payload_transformation
+        if not pt.enabled:
+            return body
+
+        body = body.copy()
+        injected_keys: list[str] = []
+        overridden_keys: list[str] = []
+
+        for rule in pt.rules:
+            patterns = rule.models
+            if not patterns:
+                continue
+
+            matches = any(fnmatch.fnmatch(model.lower(), p.lower()) for p in patterns)
+            if not matches:
+                continue
+
+            for key, value in rule.inject_params.items():
+                if key not in body:
+                    body[key] = value
+                    injected_keys.append(key)
+
+            for key, value in rule.override_params.items():
+                if "." in key:
+                    self._set_nested(body, key, value)
+                else:
+                    body[key] = value
+                overridden_keys.append(key)
+
+        if injected_keys or overridden_keys:
+            logger.info(
+                f"Payload transformation applied | model={model} | "
+                f"injected={injected_keys} | overridden={overridden_keys}"
+            )
+
+        return body
+
+    def _set_nested(self, d: dict, path: str, value: Any) -> None:
+        keys = path.split(".")
+        current = d
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        current[keys[-1]] = value

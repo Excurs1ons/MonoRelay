@@ -136,7 +136,11 @@ async def _stream_messages(
                                     except Exception:
                                         pass
 
-            key_manager.report_success(key)
+            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+            total_tokens = tokens_in_calc + tokens_out_calc
+
+            key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
@@ -163,6 +167,8 @@ async def _stream_messages(
             stats_tracker.record_request(
                 provider_name, resolved_model,
                 input_tokens=tokens_in, output_tokens=tokens_out, success=True,
+                cost_per_m_input=provider_cfg.cost_per_m_input,
+                cost_per_m_output=provider_cfg.cost_per_m_output,
             )
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
@@ -205,9 +211,12 @@ async def _non_stream_messages(
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
 
-            key_manager.report_success(key)
             result = resp.json()
             tokens_in, tokens_out = extract_anthropic_token_usage(result)
+            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+            total_tokens = tokens_in_calc + tokens_out_calc
+            key_manager.report_success(key, total_tokens)
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
 
@@ -233,6 +242,8 @@ async def _non_stream_messages(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
                 success=True,
+                cost_per_m_input=provider_cfg.cost_per_m_input,
+                cost_per_m_output=provider_cfg.cost_per_m_output,
             )
             return result
         except Exception as e:
