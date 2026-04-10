@@ -87,7 +87,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore, useLocaleStore } from '@/stores'
 import { api } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3 } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -100,6 +100,7 @@ const authed = ref(!!authStore.token)
 const tabs = [
   { path: '/dashboard', label: 'common.dashboard', icon: LayoutDashboard },
   { path: '/providers', label: 'common.providers', icon: Server },
+  { path: '/analytics', label: 'common.analytics', icon: BarChart3 },
   { path: '/logs', label: 'common.logs', icon: FileText },
   { path: '/config', label: 'common.config', icon: SlidersHorizontal },
 ]

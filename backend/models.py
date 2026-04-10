@@ -50,11 +50,24 @@ class AnthropicRequest(BaseModel):
     tool_choice: Optional[dict[str, Any]] = None
 
 
+class UsageWindowConfig(BaseModel):
+    """Time-based usage window limits for rate limiting."""
+    window_5h: int = 0  # 0 = unlimited, max requests in 5 hours
+    window_1d: int = 0  # 0 = unlimited, max requests in 1 day
+    window_7d: int = 0  # 0 = unlimited, max requests in 7 days
+
+
 class ProviderKey(BaseModel):
     key: str
     label: str = "default"
     weight: int = 1
     enabled: bool = True
+    quota_limit: int = 0  # 0 = unlimited, max requests/keys
+    quota_used: int = 0
+    rate_limit_rps: float = 0.0  # 0 = unlimited, requests per second
+    expires_at: str = ""  # ISO 8601 datetime, empty = no expiry
+    metadata: dict[str, str] = Field(default_factory=dict)
+    usage_window_limits: UsageWindowConfig = Field(default_factory=UsageWindowConfig)
 
 
 class WebReverseConfig(BaseModel):
@@ -77,6 +90,17 @@ class WebReverseConfig(BaseModel):
     })
 
 
+class RequestCloakingConfig(BaseModel):
+    """Request cloaking options for enhanced privacy/anonymity."""
+    user_agent: str = ""  # Custom User-Agent header
+    referer: str = ""  # Custom Referer header
+    origin: str = ""  # Custom Origin header
+    accept: str = ""  # Custom Accept header
+    accept_language: str = ""  # Custom Accept-Language header
+    # TLS fingerprint options (these are hints for clients)
+    tls_fingerprint_profile: str = ""  # Profile name for TLS fingerprinting
+
+
 class ProviderConfig(BaseModel):
     enabled: bool = True
     provider_type: str = "api"
@@ -86,6 +110,7 @@ class ProviderConfig(BaseModel):
     timeout: int = 120
     models: dict[str, list[str]] = Field(default_factory=lambda: {"include": [], "exclude": []})
     headers: dict[str, str] = Field(default_factory=dict)
+    cloaking: RequestCloakingConfig = Field(default_factory=RequestCloakingConfig)
     web_reverse: Optional[WebReverseConfig] = None
     test_model: str = ""
     console_url: str = ""
@@ -106,6 +131,19 @@ class CascadeConfig(BaseModel):
     max_retries: int = 2
 
 
+class TransformationRule(BaseModel):
+    """Rule for transforming request payloads based on model patterns."""
+    models: list[str] = Field(default_factory=list)  # fnmatch patterns
+    inject_params: dict[str, Any] = Field(default_factory=dict)  # params to add
+    override_params: dict[str, Any] = Field(default_factory=dict)  # params to override
+
+
+class PayloadTransformation(BaseModel):
+    """Configuration for request payload transformation."""
+    enabled: bool = False
+    rules: list[TransformationRule] = Field(default_factory=list)
+
+
 class ModelRoutingConfig(BaseModel):
     enabled: bool = True
     mode: str = "passthrough"
@@ -114,6 +152,7 @@ class ModelRoutingConfig(BaseModel):
     model_overrides: dict[str, str] = Field(default_factory=dict)
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     cascade: CascadeConfig = Field(default_factory=CascadeConfig)
+    payload_transformation: PayloadTransformation = Field(default_factory=PayloadTransformation)
 
 
 class ToolCallingConfig(BaseModel):

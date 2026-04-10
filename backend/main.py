@@ -1,18 +1,23 @@
 """MonoRelay - LLM API Relay Server."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
-import yaml
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
@@ -25,12 +30,45 @@ from .proxy.openai_format import (
     handle_completions,
     handle_embeddings,
     handle_models_list,
+    handle_audio_transcriptions,
+    handle_image_generations,
 )
 from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
+from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
+from .cache import response_cache
+from .usage_tracker import usage_tracker
+
+
+class VerifyRequest(BaseModel):
+    probe_types: list[str] = ["text-gen", "tool-call", "streaming"]
+    model: str | None = None
+
 
 logger = logging.getLogger("monorelay.main")
+
+HEALTH_CHECK_HISTORY: dict[str, list[int]] = {}
+HEALTH_CHECK_MAX_HISTORY = 5
+
+
+def api_response(data: Any = None, message: str = "OK", page: int = 1, page_size: int = 20, total: int = 0) -> dict:
+    """Wrap admin API responses in standard envelope."""
+    return {
+        "success": True,
+        "message": message,
+        "data": data,
+        "metadata": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "timestamp": datetime.now().isoformat()
+        }
+    }
+
+
+def error_response(message: str, code: int = 400) -> dict:
+    return {"success": False, "message": message, "data": None, "metadata": None}
 
 
 def setup_logging(level: str = "INFO"):
@@ -85,6 +123,9 @@ async def lifespan(app: FastAPI):
     import asyncio
     asyncio.create_task(config_manager.watch())
 
+    global _app_start_time
+    _app_start_time = time.monotonic()
+
     # Register hot-reload callback
     config_manager.on_reload(lambda new, old: init_components(new))
 
@@ -101,12 +142,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config_manager.config.server.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    if path.startswith("/v1/") or path.startswith("/api/") or path == "/health":
+    if path.startswith("/v1/") or path.startswith("/api/"):
         access_key = config_manager.config.server.access_key
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
@@ -119,6 +168,8 @@ async def auth_middleware(request: Request, call_next):
                 status_code=401,
                 content={"error": {"message": "Unauthorized", "type": "auth_error"}},
             )
+
+        request.state.client_id = token[:16] if len(token) >= 16 else token
 
     response = await call_next(request)
     return response
@@ -191,6 +242,42 @@ async def health():
     }
 
 
+# Per-client usage tracking
+@app.get("/api/usage/stats")
+async def api_usage_stats(client_id: str | None = None):
+    return api_response(data=usage_tracker.get_stats(client_id))
+
+
+@app.post("/api/usage/clear")
+async def api_usage_clear(client_id: str | None = None):
+    """Clear usage stats, optionally for a specific client."""
+    usage_tracker.clear(client_id)
+    return {"status": "ok", "message": f"Usage stats cleared{' for: ' + client_id if client_id else ''}"}
+
+
+# Response cache management
+@app.get("/api/cache/stats")
+async def api_cache_stats():
+    """Get response cache statistics."""
+    return response_cache.stats()
+
+
+@app.post("/api/cache/clear")
+async def api_cache_clear(model: str | None = None):
+    """Clear response cache, optionally for a specific model only."""
+    response_cache.invalidate(model)
+    return {"status": "ok", "message": f"Cache cleared{' for model: ' + model if model else ''}"}
+
+
+@app.post("/api/cache/enable")
+async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_size: int = 1000):
+    """Enable/disable response cache and configure parameters."""
+    if enabled:
+        response_cache._max_size = max_size
+        response_cache._ttl_seconds = ttl_seconds
+    return {"status": "ok", "enabled": enabled, "ttl_seconds": response_cache._ttl_seconds, "max_size": response_cache._max_size}
+
+
 # OpenAI-compatible endpoints
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -230,6 +317,43 @@ async def models_list():
     return await handle_models_list(config_manager.config)
 
 
+@app.post("/v1/audio/transcriptions")
+async def audio_transcriptions(
+    file: UploadFile,
+    model: str = Form(...),
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    response_format: str | None = Form(None),
+    temperature: float | None = Form(None),
+):
+    form_data = {"model": model}
+    if language:
+        form_data["language"] = language
+    if prompt:
+        form_data["prompt"] = prompt
+    if response_format:
+        form_data["response_format"] = response_format
+    if temperature is not None:
+        form_data["temperature"] = temperature
+    result = await handle_audio_transcriptions(
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/images/generations")
+async def images_generations(request: Request):
+    body = await request.json()
+    result = await handle_image_generations(
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
 # Anthropic-compatible endpoints
 @app.post("/v1/messages")
 async def messages(request: Request):
@@ -247,17 +371,24 @@ async def messages(request: Request):
 async def api_stats():
     summary = stats_tracker.get_summary()
     db_stats = await request_logger.get_stats_summary()
-    return {
+    return api_response(data={
         "in_memory": summary,
         "persistent": db_stats,
         "keys": key_manager.get_stats(),
         "models": stats_tracker.get_model_details(),
-    }
+    })
 
 
 @app.get("/api/logs")
-async def api_logs(limit: int = 50):
-    return await request_logger.get_recent_requests(limit)
+async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
+    if limit < page_size:
+        page_size = limit
+    logs = await request_logger.get_recent_requests(limit)
+    total = len(logs)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = logs[start:end]
+    return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
 @app.get("/api/stats/file")
@@ -267,6 +398,221 @@ async def api_stats_file():
     if not path.exists():
         return {"content": "{}"}
     return {"content": path.read_text(encoding="utf-8")}
+
+
+# ========== Analytics Endpoints ==========
+
+@app.get("/api/analytics/overview")
+async def api_analytics_overview(
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """返回成本和用量摘要，支持日期范围过滤。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    # Convert to timestamps for DB query
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400  # End of day
+    
+    # Query request logger for date-filtered stats
+    db_stats = {}
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT
+                COUNT(*) as total_requests,
+                COALESCE(SUM(estimated_cost), 0) as total_cost,
+                COALESCE(SUM(input_tokens), 0) as total_input,
+                COALESCE(SUM(output_tokens), 0) as total_output,
+                provider,
+                model
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ?
+            GROUP BY provider, model
+            """,
+            (start_ts, end_ts)
+        )
+        rows = await cursor.fetchall()
+        db_stats = [dict(row) for row in rows]
+    
+    # Aggregate by provider
+    by_provider: dict[str, dict] = {}
+    # Aggregate by model
+    by_model: dict[str, dict] = {}
+    total_requests = 0
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    
+    for row in db_stats:
+        prov = row.get("provider", "unknown")
+        model = row.get("model", "unknown")
+        req_count = row.get("total_requests", 0) or 0
+        cost = float(row.get("total_cost", 0) or 0)
+        inp = int(row.get("total_input", 0) or 0)
+        out = int(row.get("total_output", 0) or 0)
+        
+        total_requests += req_count
+        total_cost += cost
+        total_input += inp
+        total_output += out
+        
+        if prov not in by_provider:
+            by_provider[prov] = {"requests": 0, "cost": 0.0}
+        by_provider[prov]["requests"] += req_count
+        by_provider[prov]["cost"] += cost
+        
+        if model not in by_model:
+            by_model[model] = {"requests": 0, "cost": 0.0, "tokens": 0}
+        by_model[model]["requests"] += req_count
+        by_model[model]["cost"] += cost
+        by_model[model]["tokens"] += inp + out
+    
+    return api_response(data={
+        "period": {"start": start, "end": end},
+        "total_requests": total_requests,
+        "total_cost": round(total_cost, 2),
+        "total_tokens": {"input": total_input, "output": total_output},
+        "by_provider": by_provider,
+        "by_model": by_model,
+    })
+
+
+@app.get("/api/analytics/slow-queries")
+async def api_analytics_slow_queries(
+    threshold_ms: int = 5000,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 100,
+):
+    """返回超过延迟阈值的慢查询。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400
+    
+    slow_queries = []
+    total = 0
+    
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT 
+                timestamp, model, provider, latency_ms, 
+                COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?
+            ORDER BY latency_ms DESC
+            LIMIT ?
+            """,
+            (start_ts, end_ts, threshold_ms, limit)
+        )
+        rows = await cursor.fetchall()
+        
+        for row in rows:
+            ts = datetime.fromtimestamp(row[0])
+            slow_queries.append({
+                "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S"),
+                "model": row[1],
+                "provider": row[2],
+                "latency_ms": round(row[3], 1) if row[3] else 0,
+                "tokens": row[4] or 0,
+            })
+        
+        # Get total count
+        cursor = await request_logger._db.execute(
+            "SELECT COUNT(*) FROM requests WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?",
+            (start_ts, end_ts, threshold_ms)
+        )
+        total = (await cursor.fetchone())[0] or 0
+    
+    return api_response(data={
+        "threshold_ms": threshold_ms,
+        "slow_queries": slow_queries,
+        "total": total,
+    })
+
+
+@app.get("/api/analytics/cost-distribution")
+async def api_analytics_cost_distribution(
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """返回成本分布：按提供商和按模型。"""
+    from datetime import datetime, timedelta
+    
+    # Default to last 7 days
+    today = datetime.now()
+    default_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+    
+    start = start_date or default_start
+    end = end_date or default_end
+    
+    start_ts = datetime.strptime(start, "%Y-%m-%d").timestamp()
+    end_ts = datetime.strptime(end, "%Y-%m-%d").timestamp() + 86400
+    
+    provider_costs: dict[str, float] = {}
+    model_costs: dict[str, float] = {}
+    total_cost = 0.0
+    
+    if request_logger._db:
+        cursor = await request_logger._db.execute(
+            """
+            SELECT provider, model, COALESCE(SUM(estimated_cost), 0) as cost
+            FROM requests
+            WHERE timestamp >= ? AND timestamp < ?
+            GROUP BY provider, model
+            """,
+            (start_ts, end_ts)
+        )
+        rows = await cursor.fetchall()
+        
+        for row in rows:
+            prov = row[0] or "unknown"
+            model = row[1] or "unknown"
+            cost = float(row[2] or 0)
+            
+            total_cost += cost
+            provider_costs[prov] = provider_costs.get(prov, 0) + cost
+            model_costs[model] = model_costs.get(model, 0) + cost
+    
+    # Build provider breakdown
+    by_provider = []
+    for prov, cost in sorted(provider_costs.items(), key=lambda x: x[1], reverse=True):
+        pct = round((cost / total_cost * 100), 1) if total_cost > 0 else 0
+        by_provider.append({"provider": prov, "cost": round(cost, 2), "percentage": pct})
+    
+    # Build model breakdown
+    by_model = []
+    for model, cost in sorted(model_costs.items(), key=lambda x: x[1], reverse=True):
+        pct = round((cost / total_cost * 100), 1) if total_cost > 0 else 0
+        by_model.append({"model": model, "cost": round(cost, 2), "percentage": pct})
+    
+    return api_response(data={
+        "total_cost": round(total_cost, 2),
+        "by_provider": by_provider,
+        "by_model": by_model,
+    })
+
+
+# ========== End Analytics ==========
 
 
 @app.put("/api/stats/file")
@@ -341,7 +687,7 @@ async def _push_to_gist(sync, content, stats_content, cfg):
 
 
 @app.get("/api/providers")
-async def api_providers():
+async def api_providers(page: int = 1, page_size: int = 20):
     result = {}
     for name, pc in config_manager.config.providers.items():
         result[name] = {
@@ -357,7 +703,14 @@ async def api_providers():
             "console_url": pc.console_url,
             "web_reverse": pc.web_reverse.model_dump() if pc.web_reverse else None,
         }
-    return result
+    
+    providers_list = list(result.items())
+    total = len(providers_list)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = dict(providers_list[start:end])
+    
+    return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
 @app.post("/api/providers/{name}/test")
@@ -384,21 +737,24 @@ async def api_test_provider(name: str):
                     "chat_token_obtained": bool(service.chat_token),
                     "proof_token_obtained": bool(service.proof_token),
                     "conversation_only": wr_cfg.get("conversation_only", False),
-                }
+                },
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    headers = {
-        "Authorization": f"Bearer {pc.keys[0].key[:8]}..." if len(pc.keys[0].key) > 8 else pc.keys[0].key,
-        "Content-Type": "application/json",
-    }
-    if pc.headers:
-        headers["Extra-Headers"] = str(list(pc.headers.keys()))
 
-    # Test with a minimal chat request to verify API key validity
-    # /models endpoint is often public (e.g. OpenRouter), so it doesn't prove key works
-    # Use a known working model per provider
+@app.post("/api/providers/{name}/verify")
+async def api_verify_provider(name: str, request: VerifyRequest):
+
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+    if not pc.keys:
+        raise HTTPException(status_code=400, detail="No keys configured")
+
+    if pc.provider_type == "web_reverse":
+        raise HTTPException(status_code=400, detail="web_reverse provider type not supported for verify")
+
     test_models = {
         "openrouter": "openai/gpt-4o-mini",
         "nvidia": "meta/llama-3.1-8b-instruct",
@@ -406,126 +762,767 @@ async def api_test_provider(name: str):
         "anthropic": "claude-3-haiku-20240307",
         "deepseek": "deepseek-chat",
     }
-    # Use provider's configured test_model, or fallback to defaults
-    test_model = pc.test_model or test_models.get(name, "gpt-4o-mini")
-
-    test_payload = {
-        "model": test_model,
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 1,
-    }
+    test_model = request.model or pc.test_model or test_models.get(name, "gpt-4o-mini")
 
     url = pc.base_url
-    if pc.provider_type != "web_reverse" and not url.endswith("/chat/completions"):
+    if not url.endswith("/chat/completions"):
         url = f"{url}/chat/completions"
-    import time as _time
-    start = _time.monotonic()
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {pc.keys[0].key}",
+    headers = {
+        "Authorization": f"Bearer {pc.keys[0].key}",
+        "Content-Type": "application/json",
+    }
+    if pc.headers:
+        headers.update(pc.headers)
+
+    async def probe_text_gen() -> dict[str, Any]:
+        start = time.monotonic()
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 10,
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+
+            if resp.status_code >= 400:
+                return {
+                    "status": "fail",
+                    "latency_ms": latency_ms,
+                    "error": f"HTTP {resp.status_code}",
+                    "summary": f"Request failed with HTTP {resp.status_code}",
+                }
+
+            body = resp.json()
+            choices = body.get("choices", [])
+            if choices and choices[0].get("message", {}).get("content"):
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Text generation works",
+                }
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": "No content in response",
+                "summary": "Empty response content",
+            }
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": "Timeout",
+                "summary": "Request timed out",
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
+            }
+
+    async def probe_tool_call() -> dict[str, Any]:
+        start = time.monotonic()
+
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "What is 2 + 2?"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "description": "A simple calculator",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "expression": {"type": "string", "description": "Math expression"}
+                            },
+                            "required": ["expression"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "calculator"}},
+            "max_tokens": 50,
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+
+            if resp.status_code >= 400:
+                if resp.status_code in (400, 403):
+                    error_msg = body.get("error", {}).get("message", "")
+                    if "tool" in error_msg.lower() or "function" in error_msg.lower():
+                        return {
+                            "status": "unsupported",
+                            "latency_ms": latency_ms,
+                            "error": "tools_not_supported",
+                            "summary": "Tool calling not supported by this provider",
+                        }
+                return {
+                    "status": "fail",
+                    "latency_ms": latency_ms,
+                    "error": f"HTTP {resp.status_code}",
+                    "summary": f"Request failed with HTTP {resp.status_code}",
+                }
+
+            choices = body.get("choices", [])
+            first_choice = choices[0] if choices else {}
+            message = first_choice.get("message", {})
+            tool_calls = message.get("tool_calls", [])
+            if tool_calls:
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Tool calling works",
+                }
+            if first_choice.get("finish_reason") == "tool_calls":
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "error": None,
+                    "summary": "Tool calling works",
+                }
+            return {
+                "status": "unsupported",
+                "latency_ms": latency_ms,
+                "error": "no_tool_calls",
+                "summary": "Tool calling returned no tool calls",
+            }
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": "Timeout",
+                "summary": "Request timed out",
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
+            }
+
+    async def probe_streaming() -> dict[str, Any]:
+        start = time.monotonic()
+        first_token_ms = None
+
+        payload = {
+            "model": test_model,
+            "messages": [{"role": "user", "content": "Count from 1 to 5"}],
+            "max_tokens": 30,
+            "stream": True,
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=15.0) as resp:
+                    if resp.status_code >= 400:
+                        latency_ms = round((time.monotonic() - start) * 1000, 1)
+                        return {
+                            "status": "fail",
+                            "latency_ms": latency_ms,
+                            "first_token_ms": None,
+                            "error": f"HTTP {resp.status_code}",
+                            "summary": f"Request failed with HTTP {resp.status_code}",
+                        }
+
+                    async for chunk in resp.aiter_bytes():
+                        if first_token_ms is None and chunk:
+                            first_token_ms = round((time.monotonic() - start) * 1000, 1)
+                        if b"[DONE]" in chunk or b"data: [DONE]" in chunk:
+                            break
+
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+
+            if first_token_ms is not None:
+                return {
+                    "status": "pass",
+                    "latency_ms": latency_ms,
+                    "first_token_ms": first_token_ms,
+                    "error": None,
+                    "summary": "Streaming works",
+                }
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": "No tokens received",
+                "summary": "No streaming data received",
+            }
+        except httpx.TimeoutException:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": "Timeout",
+                "summary": "Request timed out",
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return {
+                "status": "fail",
+                "latency_ms": latency_ms,
+                "first_token_ms": None,
+                "error": type(e).__name__,
+                "summary": f"Error: {type(e).__name__}",
+            }
+
+    probe_map = {
+        "text-gen": probe_text_gen,
+        "tool-call": probe_tool_call,
+        "streaming": probe_streaming,
+    }
+
+    results = {}
+    tasks = []
+    probe_names = []
+
+    for probe_type in request.probe_types:
+        if probe_type in probe_map:
+            tasks.append(probe_map[probe_type]())
+            probe_names.append(probe_type)
+        else:
+            results[probe_type] = {
+                "status": "fail",
+                "latency_ms": 0,
+                "error": "unknown_probe_type",
+                "summary": f"Unknown probe type: {probe_type}",
+            }
+
+    if tasks:
+        probe_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for name, result in zip(probe_names, probe_results):
+            if isinstance(result, Exception):
+                results[name] = {
+                    "status": "fail",
+                    "latency_ms": 0,
+                    "error": type(result).__name__,
+                    "summary": f"Error: {type(result).__name__}",
+                }
+            else:
+                results[name] = result
+
+    overall_status = "pass"
+    for result in results.values():
+        if result.get("status") == "fail":
+            overall_status = "fail"
+            break
+        elif result.get("status") == "unsupported" and overall_status != "fail":
+            overall_status = "partial"
+
+    return {
+        "provider": name,
+        "model": test_model,
+        "probes": results,
+        "overall_status": overall_status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# Batch health check - inspired by all-api-hub
+@app.post("/api/health-check")
+async def api_health_check():
+    results: dict[str, Any] = {}
+
+    def calculate_latency_trend(history: list[int]) -> str:
+        if len(history) < 2:
+            return "stable"
+        recent = history[-2:]
+        diff = recent[1] - recent[0]
+        if diff > 100:
+            return "up"
+        elif diff < -100:
+            return "down"
+        return "stable"
+
+    def detect_issues(key_results: list[dict[str, Any]], avg_latency: float | None) -> list[str]:
+        issues = []
+        statuses = [k.get("status") for k in key_results]
+        enabled_statuses = [s for s in statuses if s != "disabled"]
+
+        if not enabled_statuses:
+            return issues
+
+        all_rate_limited = all(s == "rate_limited" for s in enabled_statuses)
+        all_error = all(s == "error" for s in enabled_statuses)
+        all_timeout = all(s == "timeout" for s in enabled_statuses)
+
+        if all_rate_limited:
+            issues.append("rate_limited_issue")
+        if all_error:
+            issues.append("provider_error")
+        if all_timeout:
+            issues.append("timeout_issue")
+        if avg_latency is not None and avg_latency > 5000:
+            issues.append("latency_issue")
+
+        return issues
+
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled or not pc.keys:
+            results[name] = {"enabled": pc.enabled, "status": "skipped", "message": "Provider disabled or no keys"}
+            continue
+
+        key_results = []
+        provider_latencies = []
+
+        for idx, pk in enumerate(pc.keys):
+            if not pk.enabled:
+                key_results.append({"index": idx, "label": pk.label, "status": "disabled"})
+                continue
+
+            if pc.provider_type == "web_reverse":
+                try:
+                    from .web_reverse.chatgpt import WebReverseService
+                    wr_cfg = pc.web_reverse.model_dump() if pc.web_reverse else {}
+                    service = WebReverseService(name, wr_cfg)
+                    await service.prepare(pk.key)
+                    ok = bool(service.chat_token)
+                    key_results.append({
+                        "index": idx, "label": pk.label,
+                        "status": "ok" if ok else "error",
+                        "message": "ChatGPT session valid" if ok else "ChatGPT session invalid",
+                    })
+                except Exception as e:
+                    key_results.append({"index": idx, "label": pk.label, "status": "error", "message": str(e)})
+            else:
+                test_models = {
+                    "openrouter": "openai/gpt-4o-mini",
+                    "nvidia": "meta/llama-3.1-8b-instruct",
+                    "openai": "gpt-4o-mini",
+                    "anthropic": "claude-3-haiku-20240307",
+                    "deepseek": "deepseek-chat",
+                    "groq": "llama-3.1-8b-instant",
+                }
+                test_model = pc.test_model or test_models.get(name, "gpt-4o-mini")
+                test_url = pc.base_url
+                if not test_url.endswith("/chat/completions"):
+                    test_url = f"{test_url}/chat/completions"
+                test_headers = {
+                    "Authorization": f"Bearer {pk.key}",
                     "Content-Type": "application/json",
                     **(pc.headers or {}),
-                },
-                json=test_payload,
-                timeout=15.0,
-            )
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
+                }
+                try:
+                    start = time.monotonic()
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            test_url,
+                            headers=test_headers,
+                            json={"model": test_model, "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1},
+                            timeout=15.0,
+                        )
+                    elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+                    provider_latencies.append(elapsed_ms)
+                    status = "ok" if resp.status_code < 400 else ("rate_limited" if resp.status_code == 429 else "error")
+                    key_results.append({
+                        "index": idx, "label": pk.label, "status": status,
+                        "latency_ms": elapsed_ms, "http_status": resp.status_code,
+                    })
+                except httpx.TimeoutException:
+                    key_results.append({"index": idx, "label": pk.label, "status": "timeout"})
+                except Exception as e:
+                    key_results.append({"index": idx, "label": pk.label, "status": "error", "message": str(e)})
 
-        # Try to parse response body
-        try:
-            resp_body = resp.json()
-        except Exception:
-            resp_body = resp.text[:500]
+        ok_count = sum(1 for k in key_results if k["status"] == "ok")
+        current_latency = provider_latencies[0] if provider_latencies else None
 
-        if resp.status_code < 400:
-            # Extract useful info from success response
-            choices = resp_body.get("choices", []) if isinstance(resp_body, dict) else []
-            usage = resp_body.get("usage", {}) if isinstance(resp_body, dict) else {}
-            resp_model = resp_body.get("model", test_model) if isinstance(resp_body, dict) else test_model
-            finish_reason = choices[0].get("finish_reason", "") if choices else ""
+        if current_latency is not None:
+            history = HEALTH_CHECK_HISTORY.get(name, [])
+            history.append(int(current_latency))
+            if len(history) > HEALTH_CHECK_MAX_HISTORY:
+                history = history[-HEALTH_CHECK_MAX_HISTORY:]
+            HEALTH_CHECK_HISTORY[name] = history
 
-            return {
-                "status": "ok",
-                "message": f"测试成功 — API key 有效",
-                "debug": {
-                    "type": "api",
-                    "request": {
-                        "method": "POST",
-                        "url": url,
-                        "model": test_model,
-                        "payload": test_payload,
+        history = HEALTH_CHECK_HISTORY.get(name, [])
+        avg_latency = round(sum(history) / len(history), 1) if history else None
+        trend = calculate_latency_trend(history) if history else "stable"
+        issues = detect_issues(key_results, avg_latency)
+
+        results[name] = {
+            "enabled": pc.enabled,
+            "total_keys": len(pc.keys),
+            "healthy_keys": ok_count,
+            "status": "healthy" if ok_count > 0 else "degraded",
+            "issues": issues,
+            "latency": {
+                "current_ms": current_latency,
+                "avg_ms": avg_latency,
+                "trend": trend,
+                "history": history,
+            },
+            "keys": key_results,
+        }
+
+    total_healthy = sum(1 for r in results.values() if r.get("status") == "healthy")
+    total_degraded = sum(1 for r in results.values() if r.get("status") == "degraded")
+    issues_detected = []
+    for name, r in results.items():
+        if r.get("issues"):
+            for issue in r["issues"]:
+                issues_detected.append(f"{name}: {issue}")
+
+    return {
+        "providers": results,
+        "summary": {
+            "total": len(results),
+            "healthy": total_healthy,
+            "degraded": total_degraded,
+            "issues_detected": issues_detected,
+        },
+    }
+
+
+# API Key export - inspired by all-api-hub one-click export
+@app.get("/api/export/keys/{provider_name}")
+async def api_export_keys(provider_name: str, format: str = "openai"):
+    """Export provider keys in various client formats."""
+    pc = config_manager.config.providers.get(provider_name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+
+    enabled_keys = [k for k in pc.keys if k.enabled]
+    if not enabled_keys:
+        return {"format": format, "provider": provider_name, "content": "", "message": "No enabled keys"}
+
+    base_url = pc.base_url
+    if pc.provider_type != "web_reverse" and not base_url.endswith("/v1"):
+        base_url = base_url.rstrip("/")
+
+    # Get server base URL for SDK formats
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        local_ip = "127.0.0.1"
+    server_base_url = f"http://{local_ip}:{config_manager.config.server.port}/v1"
+
+    exports = []
+    for pk in enabled_keys:
+        if format == "openai":
+            exports.append(f"OPENAI_API_KEY={pk.key}\nOPENAI_BASE_URL={base_url}")
+        elif format == "anthropic":
+            exports.append(f"ANTHROPIC_API_KEY={pk.key}\nANTHROPIC_BASE_URL={base_url}")
+        elif format == "claude-code":
+            exports.append(f"# {pk.label}\nexport ANTHROPIC_BASE_URL='{base_url}'\nexport ANTHROPIC_API_KEY='{pk.key}'")
+        elif format == "claude-code-router":
+            exports.append(f"# Claude Code Router config\nexport ANTHROPIC_BASE_URL='{server_base_url}'\nexport ANTHROPIC_API_KEY='{pk.key}'")
+        elif format == "cherrystudio":
+            exports.append(f"# {provider_name} - {pk.label}\nAPI: {base_url}\nKey: {pk.key}")
+        elif format == "cherrystudio-deep-link":
+            import base64
+            deep_link_data = {
+                "provider": provider_name,
+                "name": "MonoRelay",
+                "api_key": pk.key,
+                "base_url": server_base_url,
+            }
+            encoded = base64.b64encode(json.dumps(deep_link_data).encode()).decode()
+            exports.append(f"cherrystudio://providers/api-keys?v=1&data={encoded}")
+        elif format == "vercel-ai-sdk":
+            import json as json_module
+            sdk_config = {
+                "providers": [{
+                    "provider": provider_name,
+                    "baseURL": server_base_url,
+                    "apiKey": pk.key,
+                    "models": {
+                        "default": ["gpt-4o-mini", "gpt-4o"],
+                        "fetchWith": ["gpt-4o-mini", "gpt-4o"],
                     },
-                    "response": {
-                        "status_code": resp.status_code,
-                        "model": resp_model,
-                        "finish_reason": finish_reason,
-                        "usage": usage,
-                        "body_preview": str(resp_body)[:300] if isinstance(resp_body, str) else resp_body,
-                    },
-                    "timing_ms": elapsed_ms,
-                }
+                }]
             }
-        elif resp.status_code == 401:
-            return {
-                "status": "error",
-                "message": f"API key 无效或已过期 (HTTP 401)",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": 401, "body": resp_body},
-                    "timing_ms": elapsed_ms,
-                }
+            exports.append(json_module.dumps(sdk_config, indent=2))
+        elif format == "llama.cpp":
+            import json as json_module
+            llama_config = {
+                "model_alias": "monorelay",
+                "api_key": pk.key,
+                "base_url": server_base_url,
             }
-        elif resp.status_code == 429:
-            return {
-                "status": "error",
-                "message": f"触发限流 (HTTP 429) — key 有效但额度已用完",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": 429, "body": resp_body},
-                    "timing_ms": elapsed_ms,
-                }
-            }
+            exports.append(json_module.dumps(llama_config, indent=2))
+        elif format == "curl":
+            exports.append(f"curl {base_url}/v1/chat/completions -H 'Authorization: Bearer {pk.key}' -H 'Content-Type: application/json' -d '{{\"model\":\"gpt-4o-mini\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hi\"}}]}}'")
+        elif format == "env":
+            exports.append(f"MONORELAY_{provider_name.upper()}_KEY={pk.key}")
         else:
-            return {
-                "status": "error",
-                "message": f"HTTP {resp.status_code}: {str(resp_body)[:200]}",
-                "debug": {
-                    "type": "api",
-                    "request": {"method": "POST", "url": url, "model": test_model},
-                    "response": {"status_code": resp.status_code, "body": resp_body},
-                    "timing_ms": elapsed_ms,
+            exports.append(f"{pk.label}: {pk.key[:8]}...")
+
+    return {
+        "format": format, "provider": provider_name,
+        "content": "\n\n".join(exports),
+        "key_count": len(enabled_keys),
+    }
+
+
+# Enhanced stats API with per-provider analytics
+@app.get("/api/stats/enhanced")
+async def api_enhanced_stats():
+    summary = stats_tracker.get_summary()
+    model_details = stats_tracker.get_model_details()
+
+    provider_breakdown = {}
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled:
+            continue
+        prov_stats = summary.get("by_provider", {}).get(name, {})
+        key_stats = key_manager.get_stats().get(name, {})
+        provider_breakdown[name] = {
+            "enabled": pc.enabled,
+            "total_requests": prov_stats.get("requests", 0),
+            "total_errors": prov_stats.get("errors", 0),
+            "keys": {
+                "total": len(pc.keys),
+                "enabled": sum(1 for k in pc.keys if k.enabled),
+                "details": key_stats.get("keys", []),
+            },
+            "cost_per_m_input": pc.cost_per_m_input,
+            "cost_per_m_output": pc.cost_per_m_output,
+        }
+
+    key_health = []
+    for name, pc in config_manager.config.providers.items():
+        for idx, pk in enumerate(pc.keys):
+            key_stats = key_manager.get_stats().get(name, {}).get("keys", [])
+            ks = key_stats[idx] if idx < len(key_stats) else {}
+            key_health.append({
+                "provider": name, "label": pk.label, "enabled": pk.enabled,
+                "total_requests": ks.get("total_requests", 0),
+                "total_failures": ks.get("total_failures", 0),
+                "is_available": ks.get("is_available", pk.enabled),
+                "cooldown_until": ks.get("cooldown_until"),
+                "quota_limit": pk.quota_limit,
+                "quota_used": pk.quota_used,
+                "rate_limit_rps": pk.rate_limit_rps,
+                "expires_at": pk.expires_at,
+            })
+
+    return api_response(data={
+        "summary": summary,
+        "provider_breakdown": provider_breakdown,
+        "model_details": model_details,
+        "key_health": key_health,
+    })
+
+
+# Model pricing comparison endpoint
+@app.get("/api/models/pricing")
+async def api_model_pricing():
+    """Return model pricing information from provider configurations."""
+    pricing = []
+    seen_models: dict[str, dict] = {}
+
+    for name, pc in config_manager.config.providers.items():
+        if not pc.enabled:
+            continue
+        include_list = pc.models.get("include", []) if pc.models else []
+        if not include_list:
+            continue
+
+        for model_id in include_list:
+            if model_id not in seen_models:
+                seen_models[model_id] = {
+                    "model": model_id,
+                    "input_per_1m": pc.cost_per_m_input,
+                    "output_per_1m": pc.cost_per_m_output,
+                    "available_on": [name],
                 }
-            }
-    except httpx.TimeoutException:
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
-        return {
-            "status": "error",
-            "message": f"请求超时 ({elapsed_ms}ms)",
-            "debug": {
-                "type": "api",
-                "request": {"method": "POST", "url": url, "model": test_model},
-                "error": "Timeout",
-                "timing_ms": elapsed_ms,
-            }
+            else:
+                seen_models[model_id]["available_on"].append(name)
+
+    pricing = list(seen_models.values())
+    pricing.sort(key=lambda x: x["input_per_1m"] + x["output_per_1m"])
+    return {"models": pricing, "currency": "USD"}
+
+
+# Key import endpoint - inspired by all-api-hub one-click import
+@app.post("/api/providers/{name}/keys/import")
+async def api_import_keys(name: str, request: Request):
+    """Import keys from various formats: raw text (one per line), JSON array, or CSV."""
+    body = await request.json()
+    content = body.get("content", "")
+    fmt = body.get("format", "raw")
+
+    pc = config_manager.config.providers.get(name)
+    if not pc:
+        raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
+
+    new_keys = []
+    if fmt == "json":
+        import json as _json
+        try:
+            items = _json.loads(content)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, str):
+                        new_keys.append({"key": item.strip(), "label": f"imported-{len(new_keys)+1}"})
+                    elif isinstance(item, dict):
+                        new_keys.append({
+                            "key": item.get("key", item.get("api_key", "")),
+                            "label": item.get("label", item.get("name", f"imported-{len(new_keys)+1}")),
+                            "weight": int(item.get("weight", 1)),
+                        })
+            elif isinstance(items, dict):
+                for k, v in items.items():
+                    new_keys.append({"key": str(v), "label": k})
+        except _json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
+    elif fmt == "csv":
+        for line in content.strip().split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2:
+                new_keys.append({"key": parts[0], "label": parts[1]})
+            elif len(parts) == 1 and parts[0]:
+                new_keys.append({"key": parts[0], "label": f"imported-{len(new_keys)+1}"})
+    else:
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#"):
+                if "=" in line:
+                    parts = line.split("=", 1)
+                    new_keys.append({"key": parts[1].strip().strip("'\""), "label": parts[0].strip()})
+                else:
+                    new_keys.append({"key": line, "label": f"imported-{len(new_keys)+1}"})
+
+    existing_labels = {k.label for k in pc.keys}
+    added = 0
+    for nk in new_keys:
+        if nk["key"] not in [k.key for k in pc.keys]:
+            label = nk["label"]
+            if label in existing_labels:
+                label = f"{label}-{len(pc.keys)+1}"
+            from .models import ProviderKey
+            pc.keys.append(ProviderKey(key=nk["key"], label=label, weight=nk.get("weight", 1)))
+            existing_labels.add(label)
+            added += 1
+
+    if added > 0:
+        cfg = config_manager.config.model_copy(deep=True)
+        cfg.providers[name] = pc
+        config_manager.save(cfg)
+        init_components(cfg)
+
+    return {"status": "ok", "added": added, "total": len(pc.keys), "skipped": len(new_keys) - added}
+
+
+# Request log filtering - inspired by all-api-hub usage analysis
+@app.get("/api/logs/filtered")
+async def api_logs_filtered(
+    provider: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 100,
+    page: int = 1,
+    page_size: int = 20,
+):
+    filters = {}
+    if provider:
+        filters["provider"] = provider
+    if model:
+        filters["model"] = model
+    if status:
+        filters["status"] = status
+    if date_from:
+        filters["date_from"] = date_from
+    if date_to:
+        filters["date_to"] = date_to
+
+    logs = await request_logger.get_recent_requests(limit * 5)
+    entries = logs if isinstance(logs, list) else logs.get("entries", [])
+
+    filtered = []
+    for entry in entries:
+        if provider and entry.get("provider") != provider:
+            continue
+        if model and model.lower() not in entry.get("model", "").lower():
+            continue
+        if status:
+            entry_status = "success" if entry.get("status_code", 500) < 400 else "error"
+            if entry_status != status:
+                continue
+        if date_from:
+            entry_time = entry.get("timestamp", "")
+            if entry_time and entry_time < date_from:
+                continue
+        if date_to:
+            entry_time = entry.get("timestamp", "")
+            if entry_time and entry_time > date_to:
+                continue
+        filtered.append(entry)
+        if len(filtered) >= limit:
+            break
+
+    total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated = filtered[start:end]
+
+    return api_response(
+        data={
+            "entries": paginated,
+            "filters_applied": {k: v for k, v in {"provider": provider, "model": model, "status": status}.items() if v},
+        },
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+# System info endpoint
+@app.get("/api/system/info")
+async def api_system_info():
+    """Return system information: version, uptime, memory usage, Python version."""
+    import os as _os
+    import platform
+
+    try:
+        import psutil
+        process = psutil.Process(_os.getpid())
+        memory = process.memory_info()
+        mem_info = {
+            "rss_mb": round(memory.rss / 1024 / 1024, 1),
+            "vms_mb": round(memory.vms / 1024 / 1024, 1),
+            "percent": round(process.memory_percent(), 1),
         }
-    except Exception as e:
-        elapsed_ms = round((_time.monotonic() - start) * 1000, 1)
-        return {
-            "status": "error",
-            "message": str(e),
-            "debug": {
-                "type": "api",
-                "request": {"method": "POST", "url": url, "model": test_model},
-                "error": str(e),
-                "timing_ms": elapsed_ms,
-            }
-        }
+    except ImportError:
+        mem_info = {"note": "psutil not installed, install with: pip install psutil"}
+
+    uptime = time.time() - _app_start_time
+    return {
+        "version": "1.0.0",
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "uptime_seconds": round(uptime, 1),
+        "uptime_human": f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m {int(uptime % 60)}s",
+        "pid": _os.getpid(),
+        "memory": mem_info,
+        "providers_loaded": len(config_manager.config.providers),
+        "providers_enabled": sum(1 for p in config_manager.config.providers.values() if p.enabled),
+        "total_keys": sum(len(p.keys) for p in config_manager.config.providers.values()),
+    }
 
 
 # Provider CRUD
@@ -1029,6 +2026,89 @@ async def api_sync_history():
 
     sync = GistSync(token, sc.gist_id)
     return await sync.get_history()
+
+
+# WebDAV backup endpoints - inspired by all-api-hub WebDAV backup
+@app.post("/api/backup/webdav/test")
+async def api_webdav_test(request: Request):
+    """Test WebDAV connection."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    return await wd.test_connection()
+
+
+@app.post("/api/backup/webdav/push")
+async def api_webdav_push(request: Request):
+    """Push config and stats to WebDAV."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    path = body.get("path", "monorelay")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    config_path = config_manager.config_path
+    results = []
+    try:
+        content = config_path.read_text(encoding="utf-8") if config_path and config_path.exists() else ""
+        if content:
+            ok = await wd.push(f"{path}/config.yml", content)
+            results.append({"file": f"{path}/config.yml", "ok": ok})
+        stats_path = stats_tracker.db_path
+        if stats_path.exists():
+            content = stats_path.read_text(encoding="utf-8")
+            ok = await wd.push(f"{path}/stats.json", content)
+            results.append({"file": f"{path}/stats.json", "ok": ok})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WebDAV push failed: {e}")
+
+    return {"status": "ok", "results": results}
+
+
+@app.post("/api/backup/webdav/pull")
+async def api_webdav_pull(request: Request):
+    """Pull config and stats from WebDAV."""
+    body = await request.json()
+    url = body.get("url", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+    path = body.get("path", "monorelay")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="WebDAV URL is required")
+
+    wd = WebDAVSync(url, username, password)
+    results = {}
+    try:
+        config_content = await wd.pull(f"{path}/config.yml")
+        if config_content:
+            import yaml
+            raw = yaml.safe_load(config_content)
+            new_cfg = AppConfig(**raw)
+            config_manager.save(new_cfg)
+            init_components(new_cfg)
+            results["config"] = {"ok": True, "applied": True}
+
+        stats_content = await wd.pull(f"{path}/stats.json")
+        if stats_content:
+            stats_path = stats_tracker.db_path
+            stats_path.parent.mkdir(parents=True, exist_ok=True)
+            stats_path.write_text(stats_content, encoding="utf-8")
+            stats_tracker._load()
+            results["stats"] = {"ok": True, "applied": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WebDAV pull failed: {e}")
+
+    return {"status": "ok", "results": results}
 
 
 @app.get("/{full_path:path}")

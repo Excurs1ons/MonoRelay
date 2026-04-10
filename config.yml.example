@@ -17,9 +17,21 @@ providers:
       - key: "sk-or-v1-your-backup-key"
         label: "backup"
         weight: 1
+        # usage_window_limits:
+        #   window_5h: 1000    # max requests in 5 hours (0 = unlimited)
+        #   window_1d: 5000    # max requests per day
+        #   window_7d: 20000   # max requests per week
     headers:
       HTTP-Referer: "https://github.com/Excurs1ons/MonoRelay"
       X-Title: "MonoRelay"
+    # cloaking:
+    #   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    #   referer: "https://chat.example.com"
+    #   origin: "https://chat.example.com"
+    #   accept: "application/json"
+    #   accept_language: "en-US,en;q=0.9"
+    #   # TLS fingerprint profile name (for clients that support it)
+    #   # tls_fingerprint_profile: "chrome-120"
     rate_limit_cooldown: 60
     timeout: 120
     models:
@@ -117,6 +129,26 @@ model_routing:
       - "openai/gpt-4o"
       - "anthropic/claude-sonnet-4-20250514"
     max_retries: 2
+
+  # Request payload transformation (inject_params / override_params)
+  # Supports fnmatch patterns for model matching (e.g., "gpt-4o-*", "claude-*")
+  # inject_params: adds new keys to the request body
+  # override_params: replaces existing keys (supports nested keys like "generationConfig.thinkingBudget")
+  payload_transformation:
+    enabled: false
+    rules:
+      # Example: inject metadata and override temperature for all gpt-4o variants
+      # - models: ["gpt-4o-*"]
+      #   inject_params:
+      #     metadata: {"source": "monorelay"}
+      #   override_params:
+      #     temperature: 0.7
+      # Example: force thinking budget for Claude models
+      # - models: ["claude-*"]
+      #   override_params:
+      #     thinking:
+      #       type: "enabled"
+      #       budget_tokens: 1024
 
 key_selection:
   strategy: "round-robin"
