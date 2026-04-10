@@ -173,6 +173,7 @@ class ServerConfig(BaseModel):
     access_key: str = "prisma-relay-change-me"
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    public_host: str = ""
 
 
 class KeySelectionConfig(BaseModel):

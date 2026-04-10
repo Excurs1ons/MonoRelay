@@ -5,6 +5,7 @@ server:
   log_level: "INFO"
   cors_origins:
     - "*"
+  public_host: ""  # 公网 IP 或域名，用于生成 API 地址（留空则自动检测内网 IP）
 
 providers:
   openrouter:

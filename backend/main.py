@@ -208,22 +208,27 @@ if FRONTEND_DIST.exists():
 async def api_info():
     """Return server connection info for dashboard."""
     import socket
-    try:
-        # Get local IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        local_ip = "127.0.0.1"
-
+    
     cfg = config_manager.config
+    public_host = getattr(cfg.server, 'public_host', None) or ""
+    
+    if public_host:
+        local_ip = public_host
+    else:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = "127.0.0.1"
+
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
         "port": cfg.server.port,
         "access_key": cfg.server.access_key,
-        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
+        "base_url": f"http://{local_ip}/v1",
     }
 
 
@@ -1207,16 +1212,21 @@ async def api_export_keys(provider_name: str, format: str = "openai"):
     if pc.provider_type != "web_reverse" and not base_url.endswith("/v1"):
         base_url = base_url.rstrip("/")
 
-    # Get server base URL for SDK formats
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        local_ip = "127.0.0.1"
-    server_base_url = f"http://{local_ip}:{config_manager.config.server.port}/v1"
+    cfg = config_manager.config
+    public_host = getattr(cfg.server, 'public_host', None) or ""
+    
+    if public_host:
+        local_ip = public_host
+    else:
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = "127.0.0.1"
+    server_base_url = f"http://{local_ip}/v1"
 
     exports = []
     for pk in enabled_keys:
