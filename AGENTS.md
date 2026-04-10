@@ -4,6 +4,8 @@
 
 Configurable LLM API relay server built with **Python 3.12 + FastAPI**. Supports OpenRouter, NVIDIA NIM, OpenAI, Anthropic, DeepSeek, Groq, and ChatGPT web reverse proxy.
 
+> ⚠️ **最低要求 Python 3.11**，Python 3.10 及以下版本可能因依赖包不兼容而无法运行。
+
 ## Commands
 
 ### Development
