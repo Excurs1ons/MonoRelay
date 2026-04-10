@@ -3,6 +3,7 @@
     "appName": "MonoRelay",
     "dashboard": "Dashboard",
     "providers": "Providers",
+    "analytics": "Analytics",
     "keys": "API Keys",
     "models": "Model Library",
     "logs": "Request Logs",

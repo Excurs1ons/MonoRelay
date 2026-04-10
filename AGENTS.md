@@ -4,6 +4,8 @@
 
 Configurable LLM API relay server built with **Python 3.12 + FastAPI**. Supports OpenRouter, NVIDIA NIM, OpenAI, Anthropic, DeepSeek, Groq, and ChatGPT web reverse proxy.
 
+> ⚠️ **最低要求 Python 3.11**，Python 3.10 及以下版本可能因依赖包不兼容而无法运行。
+
 ## Commands
 
 ### Development
@@ -149,11 +151,27 @@ main (stable / release-ready)
 
 ### Agent Rules
 
-- **NEVER push directly to `main` or `dev`** without merging from a feature branch
+- **NEVER push directly to `main`** without merging from `dev`
 - **ALWAYS branch from `dev`**, not `main`
-- **One task = one branch**: Keep scope atomic
+- **Small changes (docs, config, minor fixes)**: commit directly to `dev`
+- **Feature-level changes**: create `feat/xxx` branch, PR to `dev`
 - **Clean commits**: Use semantic commit messages (`feat:`, `fix:`, `chore:`, `docs:`)
 - **No Co-authored-by**: Do not add AI attribution footers to commits
+
+### Auto-Merge
+
+PRs 无冲突且无 pending checks 时，创建 PR 后直接开启 auto-merge：
+
+```bash
+gh pr merge <number> --merge --auto
+```
+
+或手动在 PR 页面点击 **"Enable auto-merge"**。
+
+**规则**：
+- 无冲突、无 pending workflow 的 PR → **创建后立即 auto-merge**
+- 有 pending checks（如 CI 构建）→ 开启 auto-merge 后等 checks 通过自动合
+- 不要手动点 Merge 按钮，统一用 auto-merge 保持流程一致
 
 ### Release Process
 

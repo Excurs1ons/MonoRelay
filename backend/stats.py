@@ -13,33 +13,17 @@ DECAY_RATE = 0.85       # Each older entry's weight = DECAY_RATE ^ distance_from
 
 logger = logging.getLogger("monorelay.stats")
 
-# Approximate per-token costs in USD (input / output per 1M tokens)
-MODEL_COSTS: dict[str, tuple[float, float]] = {
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4": (30.00, 60.00),
-    "gpt-3.5-turbo": (0.50, 1.50),
-    "claude-sonnet-4-20250514": (3.00, 15.00),
-    "claude-sonnet-4": (3.00, 15.00),
-    "claude-opus-4-20250514": (15.00, 75.00),
-    "claude-opus-4": (15.00, 75.00),
-    "claude-3-5-sonnet-20241022": (3.00, 15.00),
-    "claude-3-haiku-20240307": (0.25, 1.25),
-    "gemini-2.5-pro": (1.25, 10.00),
-    "gemini-2.5-flash": (0.15, 3.50),
-    "llama-3.3-70b": (0.20, 0.60),
-    "llama-3.1-8b": (0.05, 0.10),
-    "mixtral-8x7b": (0.24, 0.24),
-    "deepseek-chat": (0.14, 0.28),
-}
 
-
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    model_lower = model.lower()
-    for pattern, (input_cost, output_cost) in MODEL_COSTS.items():
-        if pattern in model_lower:
-            return (input_tokens / 1_000_000) * input_cost + (output_tokens / 1_000_000) * output_cost
-    return (input_tokens / 1_000_000) * 0.50 + (output_tokens / 1_000_000) * 1.50
+def estimate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_per_m_input: float = 0.0,
+    cost_per_m_output: float = 0.0,
+) -> float:
+    if cost_per_m_input > 0 or cost_per_m_output > 0:
+        return (input_tokens / 1_000_000) * cost_per_m_input + (output_tokens / 1_000_000) * cost_per_m_output
+    return 0.0
 
 
 def extract_token_usage(response_data: dict) -> tuple[Optional[int], Optional[int]]:
@@ -145,6 +129,8 @@ class StatsTracker:
         is_streaming: bool = False,
         first_token_ms: Optional[float] = None,
         stream_chunks: int = 0,
+        cost_per_m_input: float = 0.0,
+        cost_per_m_output: float = 0.0,
     ):
         self.total_requests += 1
         self.requests_by_provider[provider] = self.requests_by_provider.get(provider, 0) + 1
@@ -158,8 +144,7 @@ class StatsTracker:
         if output_tokens is not None:
             self.total_tokens_out += out_tokens
 
-        # Calculate cost even with partial token data
-        cost = estimate_cost(model, in_tokens, out_tokens)
+        cost = estimate_cost(model, in_tokens, out_tokens, cost_per_m_input, cost_per_m_output)
         if input_tokens is not None or output_tokens is not None:
             self.total_cost += cost
 

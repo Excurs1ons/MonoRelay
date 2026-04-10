@@ -22,6 +22,11 @@ const routes = [
     name: 'Config',
     component: () => import('@/views/Config.vue'),
   },
+  {
+    path: '/analytics',
+    name: 'Analytics',
+    component: () => import('@/views/Analytics.vue'),
+  },
 ]
 
 const router = createRouter({

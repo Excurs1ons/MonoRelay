@@ -2,7 +2,13 @@
   <div>
     <!-- Provider list -->
     <div class="card mb-4">
-      <div class="card-title">{{ $t('providers.title') }}</div>
+      <div class="card-title-row">
+        <div class="card-title">{{ $t('providers.title') }}</div>
+        <button class="btn btn-primary btn-sm" @click="openAddModal">
+          <Plus :size="14" />
+          添加
+        </button>
+      </div>
       <div v-if="loading" class="loading"><div class="spinner"></div></div>
       <div v-else class="provider-list">
         <div v-for="(pc, name) in providers" :key="name" class="provider-item">
@@ -37,6 +43,14 @@
                 <Zap :size="14" :class="{ 'animate-pulse': testing[name] }" />
                 {{ testing[name] ? '测试中...' : '测试' }}
               </button>
+              <button class="btn btn-ghost btn-sm" :disabled="verifying[name]" @click.stop="verifyProvider(name)">
+                <ShieldCheck :size="14" :class="{ 'animate-pulse': verifying[name] }" />
+                {{ verifying[name] ? '验证中...' : '验证' }}
+              </button>
+              <button class="btn btn-ghost btn-sm" @click.stop="exportKeys(name)">
+                <Download :size="14" />
+                导出
+              </button>
               <button class="btn btn-ghost btn-sm" @click.stop="openModelsModal(name)">
                 <BookOpen :size="14" />
                 模型
@@ -49,6 +63,22 @@
                 <Trash2 :size="14" />
                 删除
               </button>
+            </div>
+            <div v-if="verifyResults[name]" class="verify-result">
+              <div class="verify-header">
+                <span class="verify-badge" :class="verifyResults[name].overall_status === 'pass' ? 'badge-green' : 'badge-red'">
+                  {{ verifyResults[name].overall_status === 'pass' ? '验证通过' : '验证失败' }}
+                </span>
+                <span class="verify-model">{{ verifyResults[name].model }}</span>
+              </div>
+              <div class="verify-probes">
+                <div v-for="(probe, key) in verifyResults[name].probes" :key="key" class="probe-item">
+                  <CheckCircle v-if="probe.status === 'pass'" :size="12" class="probe-ok" />
+                  <XCircle v-else :size="12" class="probe-error" />
+                  <span class="probe-name">{{ getProbeLabel(key) }}</span>
+                  <span class="probe-latency">{{ probe.latency_ms?.toFixed(0) }}ms</span>
+                </div>
+              </div>
             </div>
             <div v-if="testResults[name]" class="test-result" :class="testResults[name].ok ? 'test-ok' : 'test-error'">
               {{ testResults[name].message }}
@@ -126,6 +156,14 @@
             <label>{{ $t('providers.rateLimitCooldown') }}</label>
             <input v-model.number="editForm.rate_limit_cooldown" type="number" class="form-input" />
           </div>
+          <div class="form-group">
+            <label>输入价格（$/1M tokens）</label>
+            <input v-model.number="editForm.cost_per_m_input" type="number" step="0.01" class="form-input mono" placeholder="0.00" />
+          </div>
+          <div class="form-group">
+            <label>输出价格（$/1M tokens）</label>
+            <input v-model.number="editForm.cost_per_m_output" type="number" step="0.01" class="form-input mono" placeholder="0.00" />
+          </div>
           <label class="checkbox-label">
             <input v-model="editForm.enabled" type="checkbox" />
             {{ $t('common.enabled') }}
@@ -134,6 +172,58 @@
         <div class="modal-footer">
           <button class="btn btn-ghost" @click="showEditModal = false">{{ $t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="saveProvider">{{ $t('common.save') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Provider Modal -->
+    <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
+      <div class="modal">
+        <div class="modal-header">添加提供商</div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>名称</label>
+            <input v-model="addForm.name" type="text" class="form-input mono" placeholder="例如: openrouter" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.baseUrl') }}</label>
+            <input v-model="addForm.base_url" type="text" class="form-input mono" placeholder="https://api.example.com/v1" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.type') }}</label>
+            <select v-model="addForm.provider_type" class="form-input">
+              <option value="api">API</option>
+              <option value="web_reverse">Web Reverse</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.testModel') }}</label>
+            <input v-model="addForm.test_model" type="text" class="form-input mono" placeholder="gpt-4o-mini" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.timeout') }}</label>
+            <input v-model.number="addForm.timeout" type="number" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>{{ $t('providers.rateLimitCooldown') }}</label>
+            <input v-model.number="addForm.rate_limit_cooldown" type="number" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>输入价格（$/1M tokens）</label>
+            <input v-model.number="addForm.cost_per_m_input" type="number" step="0.01" class="form-input mono" placeholder="0.00" />
+          </div>
+          <div class="form-group">
+            <label>输出价格（$/1M tokens）</label>
+            <input v-model.number="addForm.cost_per_m_output" type="number" step="0.01" class="form-input mono" placeholder="0.00" />
+          </div>
+          <label class="checkbox-label">
+            <input v-model="addForm.enabled" type="checkbox" />
+            {{ $t('common.enabled') }}
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="showAddModal = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="saveAddProvider">添加</button>
         </div>
       </div>
     </div>
@@ -181,19 +271,25 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api'
-import { ChevronRight, Zap, BookOpen, Pencil, Trash2, Search, Check, X } from 'lucide-vue-next'
+import { ChevronRight, Zap, BookOpen, Pencil, Trash2, Search, Check, X, ShieldCheck, Download, CheckCircle, XCircle, Plus } from 'lucide-vue-next'
 
 const loading = ref(true)
 const providers = ref({})
 const expanded = ref({})
 const testing = ref({})
 const testResults = ref({})
+const verifying = ref({})
+const verifyResults = ref({})
 const stats = ref(null)
 
 // Edit modal
 const showEditModal = ref(false)
 const editingName = ref('')
-const editForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60 })
+const editForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 })
+
+// Add modal
+const showAddModal = ref(false)
+const addForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 })
 
 // Models modal
 const showModelsModal = ref(false)
@@ -231,6 +327,11 @@ function getModelCount(name) {
   return pc.models.include?.length || Object.keys(pc.models).length || 0
 }
 
+function getProbeLabel(key) {
+  const labels = { 'text-gen': '文本生成', 'tool-call': '工具调用', 'streaming': '流式输出' }
+  return labels[key] || key
+}
+
 async function fetchData() {
   try {
     const [p, s] = await Promise.all([api.getProviders(), api.getStats()])
@@ -250,6 +351,21 @@ function openEditModal(name, pc) {
   editingName.value = name
   editForm.value = { ...pc, name }
   showEditModal.value = true
+}
+
+function openAddModal() {
+  addForm.value = { name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 }
+  showAddModal.value = true
+}
+
+async function saveAddProvider() {
+  const { name, ...config } = addForm.value
+  if (!name) { alert('请输入提供商名称'); return }
+  try {
+    await api.addProvider(name, config)
+    showAddModal.value = false
+    await fetchData()
+  } catch (e) { alert(e.message) }
 }
 
 async function saveProvider() {
@@ -278,6 +394,23 @@ async function testProvider(name) {
   } finally {
     testing.value[name] = false
   }
+}
+
+async function verifyProvider(name) {
+  verifying.value[name] = true
+  verifyResults.value[name] = null
+  try {
+    const result = await api.verifyProvider(name)
+    verifyResults.value[name] = result
+  } catch (e) {
+    verifyResults.value[name] = { overall_status: 'fail', message: e.message }
+  } finally {
+    verifying.value[name] = false
+  }
+}
+
+function exportKeys(name) {
+  window.open(`/api/export/keys/${name}?format=openai`, '_blank')
 }
 
 // Models
@@ -333,6 +466,7 @@ onMounted(fetchData)
 .mb-4 { margin-bottom: 16px; }
 .card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 20px; margin-bottom: 16px; }
 .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+.card-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .provider-list { display: flex; flex-direction: column; gap: 10px; }
 .provider-item {
   background: var(--color-bg-card);
@@ -373,6 +507,16 @@ onMounted(fetchData)
 .test-result { margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
 .test-ok { background: rgba(0,184,148,0.1); border: 1px solid rgba(0,184,148,0.2); color: var(--color-green); }
 .test-error { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.2); color: var(--color-red); }
+.verify-result { margin-top: 12px; padding: 12px; background: var(--color-bg-input); border-radius: 6px; }
+.verify-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.verify-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.verify-model { font-size: 12px; color: var(--color-text-dim); font-family: 'SF Mono', monospace; }
+.verify-probes { display: flex; flex-direction: column; gap: 4px; }
+.probe-item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.probe-ok { color: var(--color-green); }
+.probe-error { color: var(--color-red); }
+.probe-name { color: var(--color-text); }
+.probe-latency { color: var(--color-text-dim); margin-left: auto; }
 .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .badge-green { background: rgba(0,184,148,0.15); color: var(--color-green); }
 .badge-red { background: rgba(231,76,60,0.15); color: var(--color-red); }
