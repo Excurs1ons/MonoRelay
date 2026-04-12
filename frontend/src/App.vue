@@ -280,16 +280,12 @@ if (event.data && event.data.type === 'SSO_CALLBACK') {
 window.removeEventListener('message', handleMessage)
 clearInterval(checkClosed)
 
-// Do NOT close popup here - let the callback page handle closing with its delay
+// Do NOT close popup here - let the callback page handle closing
 
 if (!event.data.success) {
 ssoLoading.value = false
 loginError.value = event.data.error || (localeStore.locale === 'zh' ? 'SSO登录失败' : 'SSO登录失败')
-// Close popup on error
-if (ssoPopup) {
-ssoPopup.close()
-ssoPopup = null
-}
+// Popup will close itself after showing error message (3s)
 return
 }
 
@@ -297,10 +293,7 @@ const { access_token: token, state: callbackState } = event.data
 if (callbackState !== state) {
 ssoLoading.value = false
 loginError.value = localeStore.locale === 'zh' ? '状态验证失败' : 'State mismatch'
-if (ssoPopup) {
-ssoPopup.close()
-ssoPopup = null
-}
+// Popup will close itself after showing error message (3s)
 return
 }
 
@@ -310,7 +303,7 @@ authStore.setToken(token)
 authed.value = true
 fetchInfo()
 }
-// Popup will close itself after showing success message
+// Popup will close itself after showing success message (1.5s)
 }
 }
 
