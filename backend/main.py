@@ -448,7 +448,9 @@ def _build_callback_html(
         """
         script = f"""
         <script>
+        console.log('SSO Callback page loaded - success=true');
         if (window.opener) {{
+            console.log('Sending postMessage to opener');
             // Send message to opener
             window.opener.postMessage({{
                 type: 'SSO_CALLBACK',
@@ -456,9 +458,14 @@ def _build_callback_html(
                 access_token: '{access_token}',
                 state: '{state}'
             }}, '*');
+            console.log('postMessage sent, will close in 1500ms');
             // Close after 1.5 seconds to let user see success message
-            setTimeout(() => window.close(), 1500);
+            setTimeout(() => {{
+                console.log('Closing popup now');
+                window.close();
+            }}, 1500);
         }} else {{
+            console.log('No opener - showing redirect message');
             // No opener - show message and redirect
             document.write('<div style="text-align:center;padding:40px;font-family:sans-serif;"><div style="font-size:48px;color:#27ae60;">✓</div><p style="color:#27ae60;font-weight:600;">登录成功！</p><p style="color:#888;">正在跳转到主页面...</p></div>');
             setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 1500);
