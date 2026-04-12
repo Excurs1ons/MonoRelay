@@ -15,16 +15,20 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
 from .logger import RequestLogger
-from .models import AppConfig, ProviderConfig, ProviderKey
+from .models import AppConfig, ProviderConfig, ProviderKey, SSOConfig
 from .router import ModelRouter
 from .stats import StatsTracker
+from .sso import create_sso_config_from_dict, SSOUser
+from .sso_session import sso_session_manager, sso_state_manager
+from .auth_service import AuthService
+from .auth_models import UserCreate, UserLogin
 from .proxy.openai_format import (
     handle_chat_completions,
     handle_completions,
@@ -39,6 +43,8 @@ from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
 from .cache import response_cache
 from .usage_tracker import usage_tracker
+from .auth_service import AuthService
+from .auth_models import UserCreate, UserLogin
 
 
 class VerifyRequest(BaseModel):
@@ -85,11 +91,24 @@ request_logger = RequestLogger()
 stats_tracker = StatsTracker()
 model_router = ModelRouter(AppConfig())
 sync_storage = SyncStorage()
+auth_service = AuthService(jwt_secret="")
+sso_validator = None
 
 
 def init_components(cfg: AppConfig):
-    global model_router
+    global model_router, auth_service, sso_validator
+    from .sso import OAuthValidator, create_sso_config_from_dict, SSOConfig
+    
     model_router = ModelRouter(cfg)
+    auth_service.jwt_secret = cfg.server.jwt_secret or ""
+    
+    if cfg.sso and cfg.sso.enabled:
+        sso_config = create_sso_config_from_dict(cfg.sso.model_dump())
+        if sso_config.is_configured:
+            sso_validator = OAuthValidator(sso_config)
+            logger.info(f"SSO enabled with provider: {sso_config.provider}")
+        else:
+            logger.warning("SSO enabled but not configured properly")
 
     for name in list(key_manager._entries.keys()):
         if name not in cfg.providers:
@@ -109,6 +128,9 @@ async def lifespan(app: FastAPI):
 
     cfg = config_manager.config
     init_components(cfg)
+
+    os.makedirs("./data", exist_ok=True)
+    await auth_service.init()
 
     if cfg.logging.enabled:
         os.makedirs(os.path.dirname(cfg.logging.db_path) or ".", exist_ok=True)
@@ -132,6 +154,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await request_logger.close()
+    await auth_service.close()
     logger.info("MonoRelay shut down.")
 
 
@@ -156,23 +179,72 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
     if path.startswith("/v1/") or path.startswith("/api/"):
-        access_key = config_manager.config.server.access_key
+        # Public endpoints that don't require authentication
+        public_endpoints = [
+            "/api/auth/register",
+            "/api/auth/login",
+            "/api/auth/refresh",
+            "/api/auth/sso",
+            "/api/auth/sso/callback",
+            "/api/info",
+            "/api/setup/status",
+        ]
+
+        if any(path == ep or path.startswith(ep + "/") for ep in public_endpoints):
+            response = await call_next(request)
+            return response
+
+        # Get token from headers
         auth_header = request.headers.get("authorization", "")
+        token = None
+
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
         else:
             token = request.headers.get("x-access-key", "")
 
-        if token != access_key:
-            return JSONResponse(
-                status_code=401,
-                content={"error": {"message": "Unauthorized", "type": "auth_error"}},
-            )
+        # Try local JWT authentication (SSO users get local JWTs after OAuth callback)
+        if token:
+            from .auth_utils import verify_token
 
-        request.state.client_id = token[:16] if len(token) >= 16 else token
+            jwt_secret = config_manager.config.server.jwt_secret or ""
+            user_id = verify_token(token, config_secret=jwt_secret)
+            if user_id:
+                user = await auth_service.user_manager.get_user_by_id(user_id)
+                if user and user.is_active:
+                    request.state.user = user
+                    request.state.client_id = user.username
+                    response = await call_next(request)
+                    return response
+
+        # Fallback to access_key authentication (for backward compatibility)
+        access_key = config_manager.config.server.access_key
+        if token == access_key:
+            request.state.client_id = token[:16] if len(token) >= 16 else token
+            response = await call_next(request)
+            return response
+
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"message": "Unauthorized", "type": "auth_error"}},
+        )
 
     response = await call_next(request)
     return response
+
+
+@app.post("/api/auth/refresh")
+async def api_auth_refresh(request: Request):
+    """Refresh access token using refresh token."""
+    body = await request.json()
+    refresh_token = body.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="refresh_token required")
+    
+    token = await auth_service.refresh_token(refresh_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return token
 
 
 def _get_resource_path(relative_path: str) -> Path:
@@ -202,6 +274,313 @@ if FRONTEND_DIST.exists():
         @app.get("/favicon.svg")
         async def serve_favicon():
             return FileResponse(FRONTEND_DIST / "favicon.svg")
+
+
+@app.get("/api/setup/status")
+async def api_setup_status():
+    """Check if initial setup is needed."""
+    has_users = await auth_service.has_users()
+    return {
+        "initialized": has_users,
+        "needs_setup": not has_users,
+    }
+
+
+@app.post("/api/auth/register")
+async def api_auth_register(request: Request):
+    """Register a new user account."""
+    body = await request.json()
+    user_data = UserCreate(
+        username=body.get("username"),
+        email=body.get("email"),
+        password=body.get("password")
+    )
+
+    is_first = not await auth_service.has_users()
+    token = await auth_service.register(user_data, is_first_user=is_first)
+    return token
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    """Login with username and password."""
+    body = await request.json()
+    login_data = UserLogin(
+        username=body.get("username"),
+        password=body.get("password")
+    )
+    token = await auth_service.login(login_data)
+    return token
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    """Get current user info."""
+    # Check SSO user first
+    sso_user = getattr(request.state, "sso_user", None)
+    if sso_user:
+        return {
+            "type": "sso",
+            "username": sso_user.username,
+            "email": sso_user.email,
+            "name": sso_user.name,
+            "is_admin": sso_user.is_admin,
+            "roles": sso_user.roles,
+        }
+
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "type": "local",
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_admin": user.is_admin,
+    }
+
+
+@app.get("/api/auth/sso/login")
+async def api_auth_sso_login(request: Request):
+    """Initiate OAuth SSO login flow."""
+    global sso_validator
+    
+    if not sso_validator:
+        raise HTTPException(status_code=400, detail="SSO not configured")
+    
+    redirect_uri = request.query_params.get("redirect_uri", "")
+    
+    # Create session for state management
+    session = sso_session_manager.create_session(redirect_uri=redirect_uri)
+    
+    # Get authorization URL from OAuth provider
+    callback_url = f"{request.base_url}api/auth/sso/callback"
+    login_url = sso_validator.get_authorization_url(session.state, callback_url)
+    
+    return {"login_url": login_url, "state": session.state}
+
+
+@app.get("/api/auth/sso/callback")
+async def api_auth_sso_callback(request: Request):
+    """Handle OAuth SSO callback and communicate with popup via postMessage."""
+    global sso_validator
+    
+    if not sso_validator:
+        return HTMLResponse(
+            content=_build_callback_html(error="SSO not configured"),
+            media_type="text/html"
+        )
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error_desc = request.query_params.get("error_description") or request.query_params.get("error", "")
+
+    if error_desc:
+        return HTMLResponse(
+            content=_build_callback_html(error=error_desc),
+            media_type="text/html"
+        )
+
+    if not code or not state:
+        return HTMLResponse(
+            content=_build_callback_html(error="Missing code or state"),
+            media_type="text/html"
+        )
+
+    # Verify state
+    session = sso_session_manager.get_session(state)
+    if not session:
+        return HTMLResponse(
+            content=_build_callback_html(error="Invalid or expired state"),
+            media_type="text/html"
+        )
+
+    sso_session_manager.remove_session(state)
+
+    # Exchange code for tokens and get user info
+    callback_url = f"{request.base_url}api/auth/sso/callback"
+    tokens = await sso_validator.exchange_code(code, callback_url)
+    
+    if not tokens or not tokens.get("access_token"):
+        return HTMLResponse(
+            content=_build_callback_html(error="Failed to get access token"),
+            media_type="text/html"
+        )
+
+    # Get user info from OAuth provider
+    sso_user = await sso_validator.get_user_info(tokens["access_token"])
+    if not sso_user:
+        return HTMLResponse(
+            content=_build_callback_html(error="Failed to get user info"),
+            media_type="text/html"
+        )
+
+    # Generate local JWT token for MonoRelay
+    from .auth_utils import create_access_token
+    local_token = create_access_token(
+        user_id=hash(sso_user.unique_id) % 1000000,
+        config_secret=config_manager.config.server.jwt_secret or ""
+    )
+
+    # Return success response with postMessage
+    return HTMLResponse(
+        content=_build_callback_html(
+            success=True,
+            access_token=local_token,
+            state=state
+        ),
+        media_type="text/html"
+    )
+
+
+def _build_callback_html(
+    success: bool = False,
+    error: str = None,
+    access_token: str = None,
+    state: str = None
+) -> str:
+    """Build HTML for SSO callback that communicates via postMessage."""
+    if success:
+        message_html = """
+            <div class="success-icon">✓</div>
+            <p style="color: #27ae60; font-weight: 600;">登录成功！正在关闭...</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">Login successful! Closing...</p>
+        """
+        script = f"""
+        <script>
+        if (window.opener) {{
+            // Send message to opener
+            window.opener.postMessage({{
+                type: 'SSO_CALLBACK',
+                success: true,
+                access_token: '{access_token}',
+                state: '{state}'
+            }}, '*');
+            // Close after 1.5 seconds to let user see success message
+            setTimeout(() => window.close(), 1500);
+        }} else {{
+            // No opener - show message and redirect
+            document.write('<div style="text-align:center;padding:40px;font-family:sans-serif;"><div style="font-size:48px;color:#27ae60;">✓</div><p style="color:#27ae60;font-weight:600;">登录成功！</p><p style="color:#888;">正在跳转到主页面...</p></div>');
+            setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 1500);
+        }}
+        </script>
+        """
+    else:
+        message_html = f"""
+            <div class="error-icon">✗</div>
+            <p style="color: #e74c3c; font-weight: 600;">❌ {error}</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">This window will close in 3 seconds...</p>
+        """
+        script = f"""
+        <script>
+        if (window.opener) {{
+            window.opener.postMessage({{
+                type: 'SSO_CALLBACK',
+                success: false,
+                error: '{error}',
+                state: '{state or ''}'
+            }}, '*');
+            setTimeout(() => window.close(), 3000);
+        }}
+        </script>
+        """
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SSO Callback</title>
+        <style>
+            body {{ 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                height: 100vh; 
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #f5f5f5;
+            }}
+            .status {{
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            }}
+            .spinner {{
+                width: 40px;
+                height: 40px;
+                border: 3px solid #e0e0e0;
+                border-top-color: #6c5ce7;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            }}
+            @keyframes spin {{
+                to {{ transform: rotate(360deg); }}
+            }}
+            .success-icon {{
+                font-size: 48px;
+                color: #27ae60;
+                margin-bottom: 10px;
+            }}
+            .error-icon {{
+                font-size: 48px;
+                color: #e74c3c;
+                margin-bottom: 10px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="status">
+            {message_html}
+        </div>
+        {script}
+    </body>
+    </html>
+    """
+
+
+@app.get("/api/auth/sso/status")
+async def api_auth_sso_status():
+    """Check SSO configuration status."""
+    cfg = config_manager.config
+    if not cfg.sso or not cfg.sso.enabled:
+        return {"enabled": False, "provider": None, "configured": False}
+    
+    provider = cfg.sso.provider or "github"
+    configured = bool(
+        (provider == "prismaauth" and cfg.sso.prismaauth_url and cfg.sso.client_id and cfg.sso.client_secret) or
+        (provider == "github" and cfg.sso.github_client_id and cfg.sso.github_client_secret) or
+        (provider == "google" and cfg.sso.google_client_id and cfg.sso.google_client_secret)
+    )
+    
+    return {
+        "enabled": True,
+        "provider": provider,
+        "configured": configured,
+        "sso_only": cfg.sso.sso_only,
+    }
+
+
+@app.post("/api/auth/sso/logout")
+async def api_auth_sso_logout(request: Request):
+    """Logout from SSO."""
+    cfg = config_manager.config
+    if not cfg.sso or not cfg.sso.enabled:
+        raise HTTPException(status_code=400, detail="SSO is not enabled")
+
+    body = await request.json()
+    id_token = body.get("id_token")
+
+    logout_url = f"{cfg.sso.keycloak_url}/realms/{cfg.sso.realm}/protocol/openid-connect/logout"
+    if id_token:
+        logout_url = f"{logout_url}?id_token_hint={id_token}"
+
+    if cfg.sso.post_logout_uri:
+        logout_url = f"{logout_url}&post_logout_redirect_uri={cfg.sso.post_logout_uri}"
+
+    return {"logout_url": logout_url}
 
 
 @app.get("/api/info")

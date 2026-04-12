@@ -174,6 +174,7 @@ class ServerConfig(BaseModel):
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     public_host: str = ""
+    jwt_secret: str = ""
 
 
 class KeySelectionConfig(BaseModel):
@@ -186,6 +187,22 @@ class SyncConfig(BaseModel):
     gist_id_stats: str = ""
 
 
+class SSOConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "github"
+    prismaauth_url: str = "http://localhost:8080"
+    client_id: str = ""
+    client_secret: str = ""
+    scopes: list[str] = ["openid", "profile", "email"]
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    local_sso_enabled: bool = False
+    local_sso_secret: str = ""
+    sso_only: bool = False  # When True, SSO is the only login method (disables local login)
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
@@ -194,3 +211,4 @@ class AppConfig(BaseModel):
     tool_calling: ToolCallingConfig = Field(default_factory=ToolCallingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    sso: SSOConfig = Field(default_factory=SSOConfig)

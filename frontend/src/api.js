@@ -1,33 +1,78 @@
 const BASE = ''
 
 function getToken() {
-  return localStorage.getItem('access_token') || ''
+  return localStorage.getItem('access_token') || localStorage.getItem('token') || ''
+}
+
+function setToken(token) {
+  localStorage.setItem('access_token', token)
+  localStorage.setItem('token', token)
+}
+
+function clearToken() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('token')
+}
+
+function getAccessKey() {
+  return localStorage.getItem('access_key') || ''
+}
+
+function setAccessKey(key) {
+  localStorage.setItem('access_key', key)
 }
 
 async function request(url, options = {}) {
   const token = getToken()
+  const accessKey = getAccessKey()
+  const authHeader = token ? `Bearer ${token}` : (accessKey ? `Bearer ${accessKey}` : '')
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(authHeader ? { Authorization: authHeader } : {}),
     ...options.headers,
   }
 
   const resp = await fetch(BASE + url, { ...options, headers })
 
   if (resp.status === 401) {
-    localStorage.removeItem('access_token')
+    clearToken()
     throw new Error('Unauthorized')
   }
 
   const json = await resp.json()
-  // 自动解包 api_response 包装格式
   if (json && json.success === true && json.data !== undefined) {
     return json.data
   }
   return json
 }
 
+export { getToken, setToken, clearToken, getAccessKey, setAccessKey, request }
+
 export const api = {
+  // Auth
+  checkSetupStatus: () => request('/api/setup/status'),
+  register: (username, email, password) => request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, email, password })
+  }),
+  login: (username, password) => request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password })
+  }),
+  getMe: () => request('/api/auth/me'),
+  logout: () => {
+    clearToken()
+    return Promise.resolve({ ok: true })
+  },
+
+  // SSO
+  getSSOStatus: () => request('/api/auth/sso/status'),
+  getSSOLoginUrl: (redirectUri) => request('/api/auth/sso/login' + (redirectUri ? '?redirect_uri=' + encodeURIComponent(redirectUri) : '')),
+  ssoLogout: (idToken) => request('/api/auth/sso/logout', {
+    method: 'POST',
+    body: JSON.stringify({ id_token: idToken })
+  }),
+
   // Info & Health
   getInfo: () => request('/api/info'),
   health: () => request('/health'),
