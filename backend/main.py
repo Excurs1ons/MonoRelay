@@ -449,14 +449,19 @@ def _build_callback_html(
         """
         script = f"""
         <script>
+        console.log('Callback loaded - success=true');
+        console.log('window.opener:', window.opener ? 'exists' : 'null');
         if (window.opener) {{
+            console.log('Sending postMessage...');
             window.opener.postMessage({{
                 type: 'SSO_CALLBACK',
                 success: true,
                 access_token: '{access_token}',
                 state: '{state}'
             }}, '*');
+            console.log('postMessage sent');
         }} else {{
+            console.log('No opener, redirecting...');
             setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 500);
         }}
         </script>
@@ -469,13 +474,17 @@ def _build_callback_html(
         """
         script = f"""
         <script>
+        console.log('Callback loaded - error: {error}');
+        console.log('window.opener:', window.opener ? 'exists' : 'null');
         if (window.opener) {{
+            console.log('Sending error postMessage...');
             window.opener.postMessage({{
                 type: 'SSO_CALLBACK',
                 success: false,
                 error: '{error}',
                 state: '{state or ''}'
             }}, '*');
+            console.log('postMessage sent');
         }}
         </script>
         """
