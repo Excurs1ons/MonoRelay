@@ -443,32 +443,21 @@ def _build_callback_html(
     if success:
         message_html = """
             <div class="success-icon">✓</div>
-            <p style="color: #27ae60; font-weight: 600;">登录成功！正在关闭...</p>
-            <p style="color: #888; font-size: 14px; margin-top: 10px;">Login successful! Closing...</p>
+            <p style="color: #27ae60; font-weight: 600;">登录成功！</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">Login successful!</p>
+            <p style="color: #888; font-size: 13px; margin-top: 20px;">此窗口可以关闭了</p>
         """
         script = f"""
         <script>
-        console.log('SSO Callback page loaded - success=true');
         if (window.opener) {{
-            console.log('Sending postMessage to opener');
-            // Send message to opener
             window.opener.postMessage({{
                 type: 'SSO_CALLBACK',
                 success: true,
                 access_token: '{access_token}',
                 state: '{state}'
             }}, '*');
-            console.log('postMessage sent, will close in 1500ms');
-            // Close after 1.5 seconds to let user see success message
-            setTimeout(() => {{
-                console.log('Closing popup now');
-                window.close();
-            }}, 1500);
         }} else {{
-            console.log('No opener - showing redirect message');
-            // No opener - show message and redirect
-            document.write('<div style="text-align:center;padding:40px;font-family:sans-serif;"><div style="font-size:48px;color:#27ae60;">✓</div><p style="color:#27ae60;font-weight:600;">登录成功！</p><p style="color:#888;">正在跳转到主页面...</p></div>');
-            setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 1500);
+            setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 500);
         }}
         </script>
         """
@@ -476,7 +465,7 @@ def _build_callback_html(
         message_html = f"""
             <div class="error-icon">✗</div>
             <p style="color: #e74c3c; font-weight: 600;">❌ {error}</p>
-            <p style="color: #888; font-size: 14px; margin-top: 10px;">This window will close in 3 seconds...</p>
+            <p style="color: #888; font-size: 13px; margin-top: 20px;">请手动关闭此窗口</p>
         """
         script = f"""
         <script>
@@ -487,7 +476,6 @@ def _build_callback_html(
                 error: '{error}',
                 state: '{state or ''}'
             }}, '*');
-            setTimeout(() => window.close(), 3000);
         }}
         </script>
         """
