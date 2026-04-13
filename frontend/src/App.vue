@@ -246,25 +246,23 @@ if (ssoOnly.value && ssoEnabled.value) {
 authMode.value = 'sso'
 }
 
-// Check for SSO token in URL or localStorage (from popup redirect)
+// Only check for SSO token if NOT already logged in
+if (!authStore.token) {
 const urlParams = new URLSearchParams(window.location.search)
 let ssoToken = urlParams.get('sso_token')
 if (!ssoToken) {
 ssoToken = localStorage.getItem('sso_token')
-console.log('Checking localStorage for sso_token:', ssoToken ? 'found' : 'not found')
+}
 if (ssoToken) {
+console.log('Found SSO token, logging in...')
 localStorage.removeItem('sso_token')
-console.log('Removed sso_token from localStorage')
-}
-}
-if (ssoToken) {
-console.log('Setting SSO token, logging in...')
 const token = 'Bearer ' + ssoToken
 setToken(token)
 authStore.setToken(token)
 authed.value = true
 fetchInfo()
 window.history.replaceState({}, document.title, window.location.pathname)
+}
 }
 } catch (e) {
 isSetupMode.value = false
