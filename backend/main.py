@@ -360,6 +360,59 @@ async def api_auth_sso_login(request: Request):
     return {"login_url": login_url, "state": session.state}
 
 
+@app.get("/api/auth/sso/test-popup")
+async def test_popup():
+    """Test page to verify popup stays open."""
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Popup Test</title>
+        <style>
+            body { 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                height: 100vh; 
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #f5f5f5;
+            }
+            .box {
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            }
+            .green { color: #27ae60; }
+            .count { font-size: 48px; font-weight: bold; color: #667eea; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h1 class="green">Popup Test</h1>
+            <p>弹窗测试页面</p>
+            <p>Popup is working!</p>
+            <div class="count" id="countdown">5</div>
+            <p>秒后自动关闭 / Auto close in 5 seconds</p>
+        </div>
+        <script>
+            let count = 5;
+            const interval = setInterval(() => {
+                count--;
+                document.getElementById('countdown').textContent = count;
+                if (count <= 0) {
+                    clearInterval(interval);
+                    window.close();
+                }
+            }, 1000);
+        </script>
+    </body>
+    </html>
+    """)
+
+
 @app.get("/api/auth/sso/callback")
 async def api_auth_sso_callback(request: Request):
     """Handle OAuth SSO callback and communicate with popup via postMessage."""
