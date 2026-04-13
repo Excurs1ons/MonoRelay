@@ -467,7 +467,7 @@ async def api_auth_sso_callback(request: Request):
         config_secret=config_manager.config.server.jwt_secret or ""
     )
     
-    # Return page that will close itself and redirect parent
+    # Return page that will NOT auto-close
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -492,26 +492,36 @@ async def api_auth_sso_callback(request: Request):
             }
             h2 { color: #27ae60; }
             p { color: #666; margin-top: 20px; }
+            .btn {
+                display: inline-block;
+                margin-top: 20px;
+                padding: 12px 24px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+            .btn:hover {
+                opacity: 0.9;
+            }
         </style>
     </head>
     <body>
         <div class="box">
             <h2>✓ 登录成功！</h2>
-            <p>正在关闭...</p>
+            <p>请关闭此窗口</p>
+            <button class="btn" onclick="window.close()">关闭窗口</button>
         </div>
         <script>
-            // Try to send token to parent via localStorage
+            // Save token and redirect parent
+            try {
+                localStorage.setItem('sso_token', '""" + local_token + """');
+            } catch(e) {}
             if (window.opener) {
-                try {
-                    localStorage.setItem('sso_token', '""" + local_token + """');
-                    window.opener.location.href = '/';
-                } catch(e) {
-                    window.opener.location.href = '/?sso_token=""" + local_token + """';
-                }
-            } else {
-                window.location.href = '/?sso_token=""" + local_token + """';
+                window.opener.location.href = '/';
             }
-            setTimeout(function() { window.close(); }, 800);
         </script>
     </body>
     </html>
