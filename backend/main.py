@@ -500,12 +500,18 @@ async def api_auth_sso_callback(request: Request):
             <p>正在关闭...</p>
         </div>
         <script>
+            // Try to send token to parent via localStorage
             if (window.opener) {
-                window.opener.location.href = '/?sso_token=""" + local_token + """';
+                try {
+                    localStorage.setItem('sso_token', '""" + local_token + """');
+                    window.opener.location.href = '/';
+                } catch(e) {
+                    window.opener.location.href = '/?sso_token=""" + local_token + """';
+                }
             } else {
                 window.location.href = '/?sso_token=""" + local_token + """';
             }
-            setTimeout(function() { window.close(); }, 500);
+            setTimeout(function() { window.close(); }, 800);
         </script>
     </body>
     </html>

@@ -246,15 +246,20 @@ if (ssoOnly.value && ssoEnabled.value) {
 authMode.value = 'sso'
 }
 
-// Check for SSO token in URL (from popup redirect)
+// Check for SSO token in URL or localStorage (from popup redirect)
 const urlParams = new URLSearchParams(window.location.search)
-const ssoToken = urlParams.get('sso_token')
+let ssoToken = urlParams.get('sso_token')
+if (!ssoToken) {
+ssoToken = localStorage.getItem('sso_token')
+if (ssoToken) {
+localStorage.removeItem('sso_token')
+}
+}
 if (ssoToken) {
 const token = 'Bearer ' + ssoToken
 setToken(token)
 authStore.setToken(token)
 authed.value = true
-// Clean URL and reload to ensure Vue state is correct
 window.location.href = '/'
 }
 } catch (e) {
