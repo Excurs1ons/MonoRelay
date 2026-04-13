@@ -245,6 +245,19 @@ ssoOnly.value = ssoStatus.sso_only || false
 if (ssoOnly.value && ssoEnabled.value) {
 authMode.value = 'sso'
 }
+
+// Check for SSO token in URL (from popup redirect)
+const urlParams = new URLSearchParams(window.location.search)
+const ssoToken = urlParams.get('sso_token')
+if (ssoToken) {
+const token = 'Bearer ' + ssoToken
+setToken(token)
+authStore.setToken(token)
+authed.value = true
+// Clean URL
+window.history.replaceState({}, document.title, '/')
+fetchInfo()
+}
 } catch (e) {
 isSetupMode.value = false
 ssoEnabled.value = false

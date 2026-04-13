@@ -415,75 +415,103 @@ async def test_popup():
 
 @app.get("/api/auth/sso/callback")
 async def api_auth_sso_callback(request: Request):
-    """Handle OAuth SSO callback and communicate with popup via postMessage."""
+    """Handle OAuth SSO callback - redirect with token in URL."""
     global sso_validator
     
     if not sso_validator:
-        return HTMLResponse(
-            content=_build_callback_html(error="SSO not configured"),
-            media_type="text/html"
-        )
-
+        return HTMLResponse(content="<script>window.close()</script><h1>SSO not configured</h1>")
+    
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     error_desc = request.query_params.get("error_description") or request.query_params.get("error", "")
-
+    
     if error_desc:
         return HTMLResponse(
-            content=_build_callback_html(error=error_desc),
-            media_type="text/html"
+            content="""
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <h2 style="color:red;">Error: """ + error_desc + """</h2>
+                <p>请手动关闭此窗口</p>
+            </body>
+            </html>
+            """
         )
-
+    
     if not code or not state:
-        return HTMLResponse(
-            content=_build_callback_html(error="Missing code or state"),
-            media_type="text/html"
-        )
-
+        return HTMLResponse(content="<script>window.close()</script><h1>Missing code or state</h1>")
+    
     # Verify state
     session = sso_session_manager.get_session(state)
     if not session:
-        return HTMLResponse(
-            content=_build_callback_html(error="Invalid or expired state"),
-            media_type="text/html"
-        )
-
+        return HTMLResponse(content="<script>window.close()</script><h1>Invalid or expired state</h1>")
+    
     sso_session_manager.remove_session(state)
-
+    
     # Exchange code for tokens and get user info
     callback_url = f"{request.base_url}api/auth/sso/callback"
     tokens = await sso_validator.exchange_code(code, callback_url)
     
     if not tokens or not tokens.get("access_token"):
-        return HTMLResponse(
-            content=_build_callback_html(error="Failed to get access token"),
-            media_type="text/html"
-        )
-
+        return HTMLResponse(content="<script>window.close()</script><h1>Failed to get access token</h1>")
+    
     # Get user info from OAuth provider
     sso_user = await sso_validator.get_user_info(tokens["access_token"])
     if not sso_user:
-        return HTMLResponse(
-            content=_build_callback_html(error="Failed to get user info"),
-            media_type="text/html"
-        )
-
+        return HTMLResponse(content="<script>window.close()</script><h1>Failed to get user info</h1>")
+    
     # Generate local JWT token for MonoRelay
     from .auth_utils import create_access_token
     local_token = create_access_token(
         user_id=hash(sso_user.unique_id) % 1000000,
         config_secret=config_manager.config.server.jwt_secret or ""
     )
-
-    # Return success response with postMessage
-    return HTMLResponse(
-        content=_build_callback_html(
-            success=True,
-            access_token=local_token,
-            state=state
-        ),
-        media_type="text/html"
-    )
+    
+    # Return page that will close itself and redirect parent
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>登录成功</title>
+        <style>
+            body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .box {
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            h2 { color: #27ae60; }
+            p { color: #666; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h2>✓ 登录成功！</h2>
+            <p>正在关闭...</p>
+        </div>
+        <script>
+            if (window.opener) {
+                window.opener.location.href = '/?sso_token=""" + local_token + """';
+            } else {
+                window.location.href = '/?sso_token=""" + local_token + """';
+            }
+            setTimeout(function() { window.close(); }, 500);
+        </script>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content, media_type="text/html")
 
 
 def _build_callback_html(
