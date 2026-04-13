@@ -516,12 +516,23 @@ async def api_auth_sso_callback(request: Request):
         </div>
         <script>
             // Save token and redirect parent
+            console.log('Saving token to localStorage');
             try {
                 localStorage.setItem('sso_token', '""" + local_token + """');
-            } catch(e) {}
-            if (window.opener) {
-                window.opener.location.href = '/';
+                console.log('Token saved to localStorage');
+            } catch(e) {
+                console.error('Failed to save token:', e);
             }
+            // Redirect after showing content
+            setTimeout(function() {
+                if (window.opener) {
+                    console.log('Redirecting opener to /');
+                    window.opener.location.href = '/';
+                } else {
+                    console.log('No opener, redirecting current page');
+                    window.location.href = '/?sso_token=""" + local_token + """';
+                }
+            }, 500);
         </script>
     </body>
     </html>

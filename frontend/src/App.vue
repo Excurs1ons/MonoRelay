@@ -251,16 +251,20 @@ const urlParams = new URLSearchParams(window.location.search)
 let ssoToken = urlParams.get('sso_token')
 if (!ssoToken) {
 ssoToken = localStorage.getItem('sso_token')
+console.log('Checking localStorage for sso_token:', ssoToken ? 'found' : 'not found')
 if (ssoToken) {
 localStorage.removeItem('sso_token')
+console.log('Removed sso_token from localStorage')
 }
 }
 if (ssoToken) {
+console.log('Setting SSO token, logging in...')
 const token = 'Bearer ' + ssoToken
 setToken(token)
 authStore.setToken(token)
 authed.value = true
-window.location.href = '/'
+fetchInfo()
+window.history.replaceState({}, document.title, window.location.pathname)
 }
 } catch (e) {
 isSetupMode.value = false
