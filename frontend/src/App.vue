@@ -254,9 +254,8 @@ const token = 'Bearer ' + ssoToken
 setToken(token)
 authStore.setToken(token)
 authed.value = true
-// Clean URL
-window.history.replaceState({}, document.title, '/')
-fetchInfo()
+// Clean URL and reload to ensure Vue state is correct
+window.location.href = '/'
 }
 } catch (e) {
 isSetupMode.value = false
