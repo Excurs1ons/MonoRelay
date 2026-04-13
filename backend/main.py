@@ -467,7 +467,7 @@ async def api_auth_sso_callback(request: Request):
         config_secret=config_manager.config.server.jwt_secret or ""
     )
     
-    # Return page that will NOT auto-close
+    # Return page that saves token and redirects to home
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -492,47 +492,18 @@ async def api_auth_sso_callback(request: Request):
             }
             h2 { color: #27ae60; }
             p { color: #666; margin-top: 20px; }
-            .btn {
-                display: inline-block;
-                margin-top: 20px;
-                padding: 12px 24px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 16px;
-                cursor: pointer;
-            }
-            .btn:hover {
-                opacity: 0.9;
-            }
         </style>
     </head>
     <body>
         <div class="box">
             <h2>✓ 登录成功！</h2>
-            <p>请关闭此窗口</p>
-            <button class="btn" onclick="window.close()">关闭窗口</button>
+            <p>正在跳转...</p>
         </div>
         <script>
-            // Save token and redirect parent
-            console.log('Saving token to localStorage');
-            try {
-                localStorage.setItem('sso_token', '""" + local_token + """');
-                console.log('Token saved to localStorage');
-            } catch(e) {
-                console.error('Failed to save token:', e);
-            }
-            // Redirect after showing content
-            setTimeout(function() {
-                if (window.opener) {
-                    console.log('Redirecting opener to /');
-                    window.opener.location.href = '/';
-                } else {
-                    console.log('No opener, redirecting current page');
-                    window.location.href = '/?sso_token=""" + local_token + """';
-                }
-            }, 500);
+            // Save token to localStorage (this page is on MonoRelay domain)
+            localStorage.setItem('sso_token', '""" + local_token + """');
+            // Redirect to home page
+            window.location.href = '/';
         </script>
     </body>
     </html>
