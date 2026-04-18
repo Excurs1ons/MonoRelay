@@ -69,7 +69,14 @@
           {{ saving ? $t('common.loading') : $t('config.save') }}
         </button>
       </div>
-      <p class="text-dim text-xs mb-3">{{ $t('config.yamlHint') }}</p>
+      <div class="flex-between mb-2">
+        <p class="text-dim text-xs">{{ $t('config.yamlHint') }}</p>
+        <div class="editor-stats">
+          <span>{{ yamlContent.length }} {{ $t('common.chars', '字符') }}</span>
+          <span class="stats-sep">|</span>
+          <span>{{ yamlContent.split('\n').length }} {{ $t('common.lines', '行') }}</span>
+        </div>
+      </div>
       <textarea
         v-model="yamlContent"
         class="config-editor"
@@ -89,7 +96,14 @@
           {{ statsSaving ? $t('common.loading') : $t('common.save') }}
         </button>
       </div>
-      <p class="text-dim text-xs mb-3">编辑 stats.json（JSON 格式）</p>
+      <div class="flex-between mb-2">
+        <p class="text-dim text-xs">编辑 stats.json（JSON 格式）</p>
+        <div class="editor-stats">
+          <span>{{ statsContent.length }} {{ $t('common.chars', '字符') }}</span>
+          <span class="stats-sep">|</span>
+          <span>{{ statsContent.split('\n').length }} {{ $t('common.lines', '行') }}</span>
+        </div>
+      </div>
       <textarea
         v-model="statsContent"
         class="config-editor"
@@ -326,6 +340,19 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 .config-editor:focus { outline: none; border-color: var(--color-accent); }
+.editor-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.stats-sep {
+  opacity: 0.3;
+}
 .toast-success { background: rgba(0,184,148,0.1); border: 1px solid rgba(0,184,148,0.3); color: var(--color-green); border-radius: 6px; }
 .toast-error { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3); color: var(--color-red); border-radius: 6px; }
 </style>
