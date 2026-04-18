@@ -360,6 +360,7 @@ async def api_auth_sso_login(request: Request):
     code_challenge = base64.urlsafe_b64encode(digest).decode().rstrip('=')
     
     callback_url = f"{request.base_url}api/auth/sso/callback"
+    logger.info(f"Initiating SSO login: callback_url={callback_url}")
     login_url = sso_validator.get_authorization_url(
         session.state, callback_url, code_verifier, code_challenge
     )
@@ -426,31 +427,21 @@ async def api_auth_sso_callback(request: Request):
     global sso_validator
     
     if not sso_validator:
-        return HTMLResponse(content="<script>window.close()</script><h1>SSO not configured</h1>")
+        return HTMLResponse(content=_build_callback_html(error="SSO not configured"))
     
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     error_desc = request.query_params.get("error_description") or request.query_params.get("error", "")
     
     if error_desc:
-        return HTMLResponse(
-            content="""
-            <!DOCTYPE html>
-            <html>
-            <body>
-                <h2 style="color:red;">Error: """ + error_desc + """</h2>
-                <p>请手动关闭此窗口</p>
-            </body>
-            </html>
-            """
-        )
+        return HTMLResponse(content=_build_callback_html(error=error_desc, state=state))
     
     if not code or not state:
-        return HTMLResponse(content="<script>window.close()</script><h1>Missing code or state</h1>")
+        return HTMLResponse(content=_build_callback_html(error="Missing code or state", state=state))
     
     session = sso_session_manager.get_session(state)
     if not session:
-        return HTMLResponse(content="<script>window.close()</script><h1>Invalid or expired state</h1>")
+        return HTMLResponse(content=_build_callback_html(error="Invalid or expired state", state=state))
     
     code_verifier = session.code_verifier
     sso_session_manager.remove_session(state)
@@ -459,46 +450,51 @@ async def api_auth_sso_callback(request: Request):
     tokens = await sso_validator.exchange_code(code, callback_url, code_verifier)
     
     if not tokens or not tokens.get("access_token"):
-        return HTMLResponse(content="<script>window.close()</script><h1>Failed to get access token</h1>")
+        return HTMLResponse(content=_build_callback_html(error="Failed to get access token", state=state))
     
     # Get user info from OAuth provider
     sso_user = await sso_validator.get_user_info(tokens["access_token"])
     if not sso_user:
-        return HTMLResponse(content="<script>window.close()</script><h1>Failed to get user info</h1>")
+        return HTMLResponse(content=_build_callback_html(error="Failed to get user info", state=state))
     
-    # Generate local JWT token for MonoRelay
-    from .auth_utils import create_access_token
-    local_token = create_access_token(
-        user_id=hash(sso_user.unique_id) % 1000000,
-        config_secret=config_manager.config.server.jwt_secret or ""
-    )
-    
-    logger.info(f"SSO callback - generating local token for user: {sso_user.username}")
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>登录成功</title>
-        <script>
-            try {{
-                localStorage.setItem('sso_token', '{local_token}');
-                window.opener.location.href = '/';
-                setTimeout(() => window.close(), 100);
-            }} catch(e) {{
-                console.error('Error:', e);
-                window.location.href = '/';
-            }}
-        </script>
-    </head>
-    <body>
-        <h2>✓ 登录成功！</h2>
-        <p>正在跳转...</p>
-    </body>
-    </html>
-    """
-    
-    return HTMLResponse(content=html_content, media_type="text/html")
+    try:
+        # Find or create user in database
+        user = await auth_service.user_manager.get_user_by_sso(sso_user.provider, sso_user.provider_id)
+        if not user:
+            # Try find by email to link
+            existing_user = await auth_service.user_manager.get_user_by_email(sso_user.email)
+            if existing_user:
+                user = await auth_service.user_manager.update_user(
+                    existing_user.id, 
+                    sso_provider=sso_user.provider, 
+                    sso_id=sso_user.provider_id
+                )
+                logger.info(f"Linked existing user {user.username} to SSO {sso_user.unique_id}")
+            else:
+                # Create new user
+                is_first = not await auth_service.has_users()
+                user = await auth_service.user_manager.create_sso_user(
+                    provider=sso_user.provider,
+                    sso_id=sso_user.provider_id,
+                    username=sso_user.username,
+                    email=sso_user.email,
+                    is_admin=is_first
+                )
+                logger.info(f"Created new SSO user: {user.username}")
+        
+        # Generate local JWT token for MonoRelay using database user_id
+        from .auth_utils import create_access_token
+        local_token = create_access_token(
+            user_id=user.id,
+            config_secret=config_manager.config.server.jwt_secret or ""
+        )
+        
+        logger.info(f"SSO callback success for user: {user.username}")
+        return HTMLResponse(content=_build_callback_html(success=True, access_token=local_token, state=state))
+        
+    except Exception as e:
+        logger.error(f"SSO callback processing error: {e}")
+        return HTMLResponse(content=_build_callback_html(error=str(e), state=state))
 
 
 def _build_callback_html(
@@ -507,52 +503,69 @@ def _build_callback_html(
     access_token: str = None,
     state: str = None
 ) -> str:
-    """Build HTML for SSO callback that communicates via postMessage."""
+    """Build HTML for SSO callback that communicates via postMessage and localStorage."""
     if success:
-        message_html = """
+        message_html = f"""
             <div class="success-icon">✓</div>
             <p style="color: #27ae60; font-weight: 600;">登录成功！</p>
             <p style="color: #888; font-size: 14px; margin-top: 10px;">Login successful!</p>
-            <p style="color: #888; font-size: 13px; margin-top: 20px;">此窗口可以关闭了</p>
+            <p style="color: #888; font-size: 13px; margin-top: 20px;">窗口即将关闭...</p>
         """
         script = f"""
         <script>
         console.log('Callback loaded - success=true');
-        console.log('window.opener:', window.opener ? 'exists' : 'null');
+        const token = '{access_token}';
+        const state = '{state}';
+        
+        // 1. Try postMessage to opener
         if (window.opener) {{
-            console.log('Sending postMessage...');
-            window.opener.postMessage({{
-                type: 'SSO_CALLBACK',
-                success: true,
-                access_token: '{access_token}',
-                state: '{state}'
-            }}, '*');
-            console.log('postMessage sent');
-        }} else {{
-            console.log('No opener, redirecting...');
-            setTimeout(() => {{ window.location.href = '/?token={access_token}'; }}, 500);
+            try {{
+                window.opener.postMessage({{
+                    type: 'SSO_CALLBACK',
+                    success: true,
+                    access_token: token,
+                    state: state
+                }}, '*');
+                console.log('postMessage sent');
+            }} catch(e) {{
+                console.error('postMessage failed:', e);
+            }}
         }}
+        
+        // 2. Set localStorage as fallback for storage event listener
+        try {{
+            localStorage.setItem('sso_token', token);
+            console.log('localStorage set');
+        }} catch(e) {{
+            console.error('localStorage failed:', e);
+        }}
+        
+        // 3. Fallback redirect if everything else fails
+        setTimeout(() => {{
+            if (window.opener && !window.opener.closed) {{
+                window.close();
+            }} else {{
+                window.location.href = '/?sso_success=true';
+            }}
+        }}, 1000);
         </script>
         """
     else:
         message_html = f"""
             <div class="error-icon">✗</div>
-            <p style="color: #e74c3c; font-weight: 600;">❌ {error}</p>
+            <p style="color: #e74c3c; font-weight: 600;">登录失败</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">{error or 'Unknown error'}</p>
             <p style="color: #888; font-size: 13px; margin-top: 20px;">请手动关闭此窗口</p>
         """
         script = f"""
         <script>
-        console.log('Callback loaded - error: {error}');
-        console.log('window.opener:', window.opener ? 'exists' : 'null');
         if (window.opener) {{
-            console.log('Sending error postMessage...');
             window.opener.postMessage({{
                 type: 'SSO_CALLBACK',
                 success: false,
-                error: '{error}',
+                error: '{error or "Unknown error"}',
                 state: '{state or ''}'
             }}, '*');
-            console.log('postMessage sent');
         }}
         </script>
         """
@@ -653,6 +666,47 @@ async def api_auth_sso_logout(request: Request):
         logout_url = f"{logout_url}&post_logout_redirect_uri={cfg.sso.post_logout_uri}"
 
     return {"logout_url": logout_url}
+
+
+@app.get("/api/users")
+async def api_list_users(request: Request):
+    """List all users (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = await auth_service.user_manager.list_users()
+    return {"users": [u.model_dump() for u in users]}
+
+
+@app.put("/api/users/{user_id}")
+async def api_update_user(user_id: int, request: Request):
+    """Update user info (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    # Don't allow updating sensitive fields like id or password_hash here
+    allowed_updates = {k: v for k, v in body.items() if k in {"is_active", "is_admin", "email"}}
+    updated = await auth_service.user_manager.update_user(user_id, **allowed_updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return updated
+
+
+@app.delete("/api/users/{user_id}")
+async def api_delete_user(user_id: int, request: Request):
+    """Delete user (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if user.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+        
+    success = await auth_service.user_manager.delete_user(user_id)
+    return {"success": success}
 
 
 @app.get("/api/info")

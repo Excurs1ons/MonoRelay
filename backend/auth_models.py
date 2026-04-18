@@ -21,6 +21,8 @@ class User(BaseModel):
     email: str
     is_active: bool = True
     is_admin: bool = False
+    sso_provider: Optional[str] = None
+    sso_id: Optional[str] = None
     created_at: datetime
     last_login: Optional[datetime] = None
 
@@ -79,11 +81,21 @@ class UserManager:
                 password_hash TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 is_admin INTEGER DEFAULT 0,
+                sso_provider TEXT,
+                sso_id TEXT,
                 created_at REAL NOT NULL,
                 last_login REAL
             )
             """
         )
+        
+        # Check for missing columns (migration for existing users)
+        cursor = await self._db.execute("PRAGMA table_info(users)")
+        columns = [row["name"] for row in await cursor.fetchall()]
+        if "sso_provider" not in columns:
+            await self._db.execute("ALTER TABLE users ADD COLUMN sso_provider TEXT")
+        if "sso_id" not in columns:
+            await self._db.execute("ALTER TABLE users ADD COLUMN sso_id TEXT")
         
         # Create indexes
         await self._db.execute(
@@ -94,6 +106,11 @@ class UserManager:
         await self._db.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)
+            """
+        )
+        await self._db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_users_sso ON users(sso_provider, sso_id)
             """
         )
         
@@ -128,6 +145,20 @@ class UserManager:
             100000
         )
         return pwdhash.hex() == stored_hash
+    
+    def _row_to_user(self, row: aiosqlite.Row) -> User:
+        """Convert a database row to a User model."""
+        return User(
+            id=row["id"],
+            username=row["username"],
+            email=row["email"],
+            is_active=bool(row["is_active"]),
+            is_admin=bool(row["is_admin"]),
+            sso_provider=row["sso_provider"],
+            sso_id=row["sso_id"],
+            created_at=datetime.fromtimestamp(row["created_at"]),
+            last_login=datetime.fromtimestamp(row["last_login"]) if row["last_login"] else None
+        )
     
     async def create_user(self, user_data: UserCreate, is_admin: bool = False) -> User:
         """Create a new user."""
@@ -170,6 +201,49 @@ class UserManager:
                 raise ValueError(f"Email '{user_data.email}' already exists")
             raise ValueError(f"User already exists: {e}")
     
+    async def create_sso_user(self, provider: str, sso_id: str, username: str, email: str, is_admin: bool = False) -> User:
+        """Create a new user from SSO data."""
+        if not self._db:
+            await self.init()
+        
+        # Use a random string as password hash for SSO users since they don't have a local password
+        password_hash = "SSO:" + secrets.token_hex(32)
+        created_at = time.time()
+        
+        try:
+            cursor = await self._db.execute(
+                """
+                INSERT INTO users (username, email, password_hash, is_active, is_admin, sso_provider, sso_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (username, email, password_hash, 1, 1 if is_admin else 0, provider, sso_id, created_at)
+            )
+            await self._db.commit()
+            
+            return await self.get_user_by_id(cursor.lastrowid)
+        except aiosqlite.IntegrityError as e:
+            # If username exists, try with a suffix
+            if "username" in str(e).lower():
+                new_username = f"{username}_{secrets.token_hex(4)}"
+                return await self.create_sso_user(provider, sso_id, new_username, email, is_admin)
+            raise ValueError(f"Failed to create SSO user: {e}")
+
+    async def get_user_by_sso(self, provider: str, sso_id: str) -> Optional[User]:
+        """Get user by SSO provider and ID."""
+        if not self._db:
+            await self.init()
+        
+        cursor = await self._db.execute(
+            "SELECT * FROM users WHERE sso_provider = ? AND sso_id = ?",
+            (provider, sso_id)
+        )
+        row = await cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        return self._row_to_user(row)
+
     async def get_user_by_username(self, username: str) -> Optional[User]:
         """Get user by username."""
         if not self._db:
@@ -184,16 +258,24 @@ class UserManager:
         if not row:
             return None
         
-        return User(
-            id=row["id"],
-            username=row["username"],
-            email=row["email"],
-            is_active=bool(row["is_active"]),
-            is_admin=bool(row["is_admin"]),
-            created_at=datetime.fromtimestamp(row["created_at"]),
-            last_login=datetime.fromtimestamp(row["last_login"]) if row["last_login"] else None
-        )
+        return self._row_to_user(row)
     
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get user by email."""
+        if not self._db:
+            await self.init()
+        
+        cursor = await self._db.execute(
+            "SELECT * FROM users WHERE email = ?",
+            (email,)
+        )
+        row = await cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        return self._row_to_user(row)
+
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
         """Get user by ID."""
         if not self._db:
@@ -208,15 +290,7 @@ class UserManager:
         if not row:
             return None
         
-        return User(
-            id=row["id"],
-            username=row["username"],
-            email=row["email"],
-            is_active=bool(row["is_active"]),
-            is_admin=bool(row["is_admin"]),
-            created_at=datetime.fromtimestamp(row["created_at"]),
-            last_login=datetime.fromtimestamp(row["last_login"]) if row["last_login"] else None
-        )
+        return self._row_to_user(row)
     
     async def authenticate_user(self, username: str, password: str) -> Optional[User]:
         """Authenticate user with username and password."""
@@ -232,7 +306,8 @@ class UserManager:
         if not row:
             return None
         
-        if not self._verify_password(password, row["password_hash"]):
+        # SSO users might not have a verifyable password hash if it starts with "SSO:"
+        if row["password_hash"].startswith("SSO:") or not self._verify_password(password, row["password_hash"]):
             return None
         
         # Update last login
@@ -242,22 +317,14 @@ class UserManager:
         )
         await self._db.commit()
         
-        return User(
-            id=row["id"],
-            username=row["username"],
-            email=row["email"],
-            is_active=bool(row["is_active"]),
-            is_admin=bool(row["is_admin"]),
-            created_at=datetime.fromtimestamp(row["created_at"]),
-            last_login=datetime.now()
-        )
+        return self._row_to_user(row)
     
     async def update_user(self, user_id: int, **kwargs) -> Optional[User]:
         """Update user fields."""
         if not self._db:
             await self.init()
         
-        allowed_fields = {"email", "is_active", "is_admin"}
+        allowed_fields = {"email", "is_active", "is_admin", "last_login", "sso_provider", "sso_id"}
         updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
         
         if not updates:
@@ -274,34 +341,6 @@ class UserManager:
         
         return await self.get_user_by_id(user_id)
     
-    async def change_password(self, user_id: int, new_password: str) -> bool:
-        """Change user password."""
-        if not self._db:
-            await self.init()
-        
-        password_hash = self._hash_password(new_password)
-        
-        await self._db.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (password_hash, user_id)
-        )
-        await self._db.commit()
-        
-        return True
-    
-    async def delete_user(self, user_id: int) -> bool:
-        """Delete a user."""
-        if not self._db:
-            await self.init()
-        
-        cursor = await self._db.execute(
-            "DELETE FROM users WHERE id = ?",
-            (user_id,)
-        )
-        await self._db.commit()
-        
-        return cursor.rowcount > 0
-    
     async def list_users(self) -> list[User]:
         """List all users."""
         if not self._db:
@@ -312,18 +351,7 @@ class UserManager:
         )
         rows = await cursor.fetchall()
         
-        return [
-            User(
-                id=row["id"],
-                username=row["username"],
-                email=row["email"],
-                is_active=bool(row["is_active"]),
-                is_admin=bool(row["is_admin"]),
-                created_at=datetime.fromtimestamp(row["created_at"]),
-                last_login=datetime.fromtimestamp(row["last_login"]) if row["last_login"] else None
-            )
-            for row in rows
-        ]
+        return [self._row_to_user(row) for row in rows]
     
     async def has_users(self) -> bool:
         """Check if any users exist."""
