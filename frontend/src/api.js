@@ -98,6 +98,8 @@ export const api = {
   // Config
   getConfig: () => request('/api/config'),
   updateConfig: (body) => request('/api/config', { method: 'PUT', body: JSON.stringify(body) }),
+  getFullConfig: () => request('/api/config/full'),
+  updateFullConfig: (body) => request('/api/config/full', { method: 'PUT', body: JSON.stringify(body) }),
 
   // Providers
   getProviders: () => request('/api/providers'),
