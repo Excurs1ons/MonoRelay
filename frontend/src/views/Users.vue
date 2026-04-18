@@ -35,8 +35,11 @@
               </span>
             </td>
             <td>
-              <span :class="['badge', user.is_admin ? 'badge-primary' : 'badge-ghost']">
-                {{ user.is_admin ? $t('users.admin', '管理员') : $t('users.user', '普通用户') }}
+              <span v-if="user.is_admin" class="badge badge-admin">
+                <Shield :size="10" class="mr-1" /> 管理员
+              </span>
+              <span v-else class="badge badge-user">
+                <User :size="10" class="mr-1" /> 普通用户
               </span>
             </td>
             <td class="text-xs text-dim">{{ formatDate(user.created_at) }}</td>
@@ -84,7 +87,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores'
-import { RefreshCw, UserX, UserCheck, Shield, ShieldOff, Trash2 } from 'lucide-vue-next'
+import { RefreshCw, UserX, UserCheck, Shield, ShieldOff, Trash2, User } from 'lucide-vue-next'
 
 const users = ref([])
 const loading = ref(false)
@@ -204,8 +207,20 @@ onMounted(async () => {
 
 .badge-success { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
 .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-.badge-primary { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-.badge-ghost { background: rgba(255, 255, 255, 0.05); color: var(--color-text-dim); }
+.badge-admin { 
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2)); 
+  color: #a78bfa; 
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+.badge-user { 
+  background: rgba(255, 255, 255, 0.05); 
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-border);
+}
+
+.mr-1 {
+  margin-right: 4px;
+}
 
 .spin {
   animation: spin 1s linear infinite;
