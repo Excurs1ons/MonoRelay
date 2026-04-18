@@ -61,6 +61,9 @@
           <a href="https://github.com/Excurs1ons/MonoRelay" target="_blank">
             <Github :size="16" /> GitHub
           </a>
+          <router-link to="/help">
+            <HelpCircle :size="16" /> 使用指南
+          </router-link>
           <a href="https://github.com/Excurs1ons/MonoRelay/issues" target="_blank">
             <Bug :size="16" /> 问题反馈
           </a>
@@ -73,7 +76,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '@/api'
-import { CheckCircle, Github, Bug } from 'lucide-vue-next'
+import { CheckCircle, Github, Bug, HelpCircle } from 'lucide-vue-next'
 
 const providers = ref([])
 

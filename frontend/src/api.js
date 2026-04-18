@@ -66,6 +66,10 @@ export const api = {
     body: JSON.stringify({ username, password })
   }),
   getMe: () => request('/api/auth/me'),
+  changePassword: (oldPassword, newPassword) => request('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+  }),
   logout: () => {
     clearToken()
     return Promise.resolve({ ok: true })

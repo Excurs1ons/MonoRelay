@@ -317,28 +317,51 @@ async def api_auth_login(request: Request):
 @app.get("/api/auth/me")
 async def api_auth_me(request: Request):
     """Get current user info."""
-    # Check SSO user first
-    sso_user = getattr(request.state, "sso_user", None)
-    if sso_user:
-        return {
-            "type": "sso",
-            "username": sso_user.username,
-            "email": sso_user.email,
-            "name": sso_user.name,
-            "is_admin": sso_user.is_admin,
-            "roles": sso_user.roles,
-        }
-
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # We always return the DB user model
     return {
-        "type": "local",
         "id": user.id,
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "sso_provider": user.sso_provider,
+        "sso_id": user.sso_id
     }
+
+
+@app.post("/api/auth/change-password")
+async def api_auth_change_password(request: Request):
+    """Change current user password."""
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    body = await request.json()
+    old_password = body.get("old_password")
+    new_password = body.get("new_password")
+    
+    if not old_password or not new_password:
+        raise HTTPException(status_code=400, detail="old_password and new_password required")
+    
+    # Get fresh user data from DB
+    db_user = await auth_service.user_manager.get_user_by_id(user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # For users who only have SSO login, they might not have a password set yet.
+    # However, our UserManager currently sets a "SSO:..." random string.
+    
+    # Verify old password
+    authenticated = await auth_service.user_manager.authenticate_user(db_user.username, old_password)
+    if not authenticated:
+        raise HTTPException(status_code=400, detail="Incorrect old password")
+    
+    # Change password
+    success = await auth_service.user_manager.change_password(user.id, new_password)
+    return {"success": success}
 
 
 @app.get("/api/auth/sso/login")
