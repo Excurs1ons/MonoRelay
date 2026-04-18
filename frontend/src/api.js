@@ -40,6 +40,12 @@ async function request(url, options = {}) {
   }
 
   const json = await resp.json()
+  
+  // Check for error status
+  if (!resp.ok) {
+    throw new Error(json.detail || json.message || `Error ${resp.status}`)
+  }
+  
   if (json && json.success === true && json.data !== undefined) {
     return json.data
   }
@@ -94,7 +100,10 @@ export const api = {
   addProvider: (name, config) => request('/api/providers', { method: 'POST', body: JSON.stringify({ name, config }) }),
   updateProvider: (name, config) => request(`/api/providers/${name}`, { method: 'PUT', body: JSON.stringify({ config }) }),
   deleteProvider: (name) => request(`/api/providers/${name}`, { method: 'DELETE' }),
-  testProvider: (name) => request(`/api/providers/${name}/test`, { method: 'POST' }),
+  testProvider: (name, testModel) => request(`/api/providers/${name}/test`, { 
+  method: 'POST',
+  body: testModel ? JSON.stringify({ model: testModel }) : undefined
+}),
 
   // Keys
   addKey: (name, keyData) => request(`/api/providers/${name}/keys`, { method: 'POST', body: JSON.stringify(keyData) }),

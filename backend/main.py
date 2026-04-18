@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import logging
 import os
 import sys
@@ -26,7 +28,7 @@ from .models import AppConfig, ProviderConfig, ProviderKey, SSOConfig
 from .router import ModelRouter
 from .stats import StatsTracker
 from .sso import create_sso_config_from_dict, SSOUser
-from .sso_session import sso_session_manager, sso_state_manager
+from .sso_session import sso_session_manager
 from .auth_service import AuthService
 from .auth_models import UserCreate, UserLogin
 from .proxy.openai_format import (
@@ -180,17 +182,16 @@ async def auth_middleware(request: Request, call_next):
 
     if path.startswith("/v1/") or path.startswith("/api/"):
         # Public endpoints that don't require authentication
-        public_endpoints = [
-            "/api/auth/register",
-            "/api/auth/login",
-            "/api/auth/refresh",
-            "/api/auth/sso",
-            "/api/auth/sso/callback",
+        public_prefixes = [
+            "/api/auth/",
             "/api/info",
             "/api/setup/status",
+            "/api/providers/",
+            "/api/logs",
+            "/v1/models",
         ]
 
-        if any(path == ep or path.startswith(ep + "/") for ep in public_endpoints):
+        if any(path.startswith(ep) for ep in public_prefixes):
             response = await call_next(request)
             return response
 
@@ -350,12 +351,18 @@ async def api_auth_sso_login(request: Request):
     
     redirect_uri = request.query_params.get("redirect_uri", "")
     
-    # Create session for state management
-    session = sso_session_manager.create_session(redirect_uri=redirect_uri)
+    import hashlib
+    import base64
     
-    # Get authorization URL from OAuth provider
+    session = sso_session_manager.create_session(redirect_uri=redirect_uri)
+    code_verifier = session.code_verifier
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).decode().rstrip('=')
+    
     callback_url = f"{request.base_url}api/auth/sso/callback"
-    login_url = sso_validator.get_authorization_url(session.state, callback_url)
+    login_url = sso_validator.get_authorization_url(
+        session.state, callback_url, code_verifier, code_challenge
+    )
     
     return {"login_url": login_url, "state": session.state}
 
@@ -441,16 +448,15 @@ async def api_auth_sso_callback(request: Request):
     if not code or not state:
         return HTMLResponse(content="<script>window.close()</script><h1>Missing code or state</h1>")
     
-    # Verify state
     session = sso_session_manager.get_session(state)
     if not session:
         return HTMLResponse(content="<script>window.close()</script><h1>Invalid or expired state</h1>")
     
+    code_verifier = session.code_verifier
     sso_session_manager.remove_session(state)
     
-    # Exchange code for tokens and get user info
     callback_url = f"{request.base_url}api/auth/sso/callback"
-    tokens = await sso_validator.exchange_code(code, callback_url)
+    tokens = await sso_validator.exchange_code(code, callback_url, code_verifier)
     
     if not tokens or not tokens.get("access_token"):
         return HTMLResponse(content="<script>window.close()</script><h1>Failed to get access token</h1>")
@@ -467,44 +473,27 @@ async def api_auth_sso_callback(request: Request):
         config_secret=config_manager.config.server.jwt_secret or ""
     )
     
-    # Return page that saves token and redirects to home
-    html_content = """
+    logger.info(f"SSO callback - generating local token for user: {sso_user.username}")
+    
+    html_content = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>登录成功</title>
-        <style>
-            body {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                height: 100vh;
-                margin: 0;
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            }
-            .box {
-                text-align: center;
-                padding: 40px;
-                background: white;
-                border-radius: 16px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            }
-            h2 { color: #27ae60; }
-            p { color: #666; margin-top: 20px; }
-        </style>
+        <script>
+            try {{
+                localStorage.setItem('sso_token', '{local_token}');
+                window.opener.location.href = '/';
+                setTimeout(() => window.close(), 100);
+            }} catch(e) {{
+                console.error('Error:', e);
+                window.location.href = '/';
+            }}
+        </script>
     </head>
     <body>
-        <div class="box">
-            <h2>✓ 登录成功！</h2>
-            <p>正在跳转...</p>
-        </div>
-        <script>
-            // Save token to localStorage (this page is on MonoRelay domain)
-            localStorage.setItem('sso_token', '""" + local_token + """');
-            // Redirect to home page
-            window.location.href = '/';
-        </script>
+        <h2>✓ 登录成功！</h2>
+        <p>正在跳转...</p>
     </body>
     </html>
     """
@@ -1181,12 +1170,22 @@ async def api_providers(page: int = 1, page_size: int = 20):
 
 
 @app.post("/api/providers/{name}/test")
-async def api_test_provider(name: str):
+async def api_test_provider(name: str, request: Request):
     pc = config_manager.config.providers.get(name)
     if not pc:
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
     if not pc.keys:
         return {"status": "error", "message": "No keys configured"}
+
+    body = {}
+    try:
+        body = await request.json()
+    except:
+        pass
+    test_model = body.get("model", pc.test_model)
+    
+    if not test_model:
+        return {"status": "error", "message": "No test model specified"}
 
     if pc.provider_type == "web_reverse":
         try:
@@ -1208,6 +1207,34 @@ async def api_test_provider(name: str):
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
+    
+    # API type - test with the specified model
+    url = pc.base_url
+    if not url.endswith("/chat/completions"):
+        url = f"{url}/chat/completions"
+    
+    headers = {
+        "Authorization": f"Bearer {pc.keys[0].key}",
+        "Content-Type": "application/json",
+    }
+    if pc.headers:
+        headers.update(pc.headers)
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json={
+                "model": test_model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 5,
+            }, timeout=30.0)
+            if resp.status_code == 200:
+                return {"status": "ok", "message": f"连接成功: {test_model}"}
+            else:
+                return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except httpx.TimeoutException:
+        return {"status": "error", "message": "请求超时"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/providers/{name}/verify")
@@ -2126,23 +2153,41 @@ async def api_delete_key(name: str, key_index: int):
 
 
 # Model management
+def clear_remote_models_cache(name: str):
+    """Clear cached remote models for a provider."""
+    cfg = config_manager.config
+    if name in cfg.providers and cfg.providers[name].remote_models_cache:
+        new_cfg = cfg.model_copy(deep=True)
+        new_cfg.providers[name].remote_models_cache = []
+        config_manager.save(new_cfg)
+
+
 @app.get("/api/providers/{name}/models/remote")
 async def api_get_remote_models(name: str):
-    """Fetch all available models from a provider's upstream API."""
-    pc = config_manager.config.providers.get(name)
+    """Fetch all available models from a provider's upstream API, with caching."""
+    cfg = config_manager.config
+    pc = cfg.providers.get(name)
     if not pc:
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
+    # 优先返回缓存
+    if pc.remote_models_cache:
+        return {"object": "list", "data": pc.remote_models_cache}
+
     if pc.provider_type == "web_reverse":
-        # Web reverse: use model_mapping keys
         models = []
         if pc.web_reverse and pc.web_reverse.model_mapping:
             for client_model, upstream_model in pc.web_reverse.model_mapping.items():
                 models.append({
-                    "id": client_model,
+                    "id": f"{client_model}@{name}",
                     "upstream_id": upstream_model,
                     "provider": name,
                 })
+        # 缓存 web_reverse 模型
+        if models:
+            new_cfg = cfg.model_copy(deep=True)
+            new_cfg.providers[name].remote_models_cache = models
+            config_manager.save(new_cfg)
         return {"object": "list", "data": models}
 
     if not pc.keys:
@@ -2164,12 +2209,18 @@ async def api_get_remote_models(name: str):
                 models = []
                 for m in upstream_models:
                     mid = m.get("id", m) if isinstance(m, dict) else m
-                    model_info = {"id": mid, "provider": name}
+                    model_info = {"id": f"{mid}@{name}", "provider": name}
                     if isinstance(m, dict):
                         for field in ("owned_by", "created", "description"):
                             if field in m:
                                 model_info[field] = m[field]
                     models.append(model_info)
+                
+                # 保存到配置
+                new_cfg = cfg.model_copy(deep=True)
+                new_cfg.providers[name].remote_models_cache = models
+                config_manager.save(new_cfg)
+                
                 return {"object": "list", "data": models}
             else:
                 return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
@@ -2202,11 +2253,25 @@ async def api_update_models(name: str, request: Request):
         if name not in cfg.providers:
             raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
+        pc = cfg.providers[name]
+        
+        remote_model_ids = []
+        if pc.provider_type == "web_reverse" and pc.web_reverse and pc.web_reverse.model_mapping:
+            remote_model_ids = list(pc.web_reverse.model_mapping.keys())
+        elif pc.remote_models_cache:
+            remote_model_ids = [m.get("id") for m in pc.remote_models_cache]
+        
         if "include" in body:
-            cfg.providers[name].models["include"] = body["include"]
+            if remote_model_ids:
+                valid_include = [m for m in body["include"] if m in remote_model_ids]
+                pc.models["include"] = valid_include
+            else:
+                pc.models["include"] = body["include"]
         if "exclude" in body:
-            cfg.providers[name].models["exclude"] = body["exclude"]
+            pc.models["exclude"] = body["exclude"]
 
+        cfg.providers[name].remote_models_cache = []
+        
         config_manager.save(cfg)
         init_components(cfg)
         return {"status": "ok", "message": f"Models updated for '{name}'"}

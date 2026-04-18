@@ -7,15 +7,20 @@
         <option value="">{{ $t('models.selectProvider') }}</option>
         <option v-for="p in providerList" :key="p" :value="p">{{ p }}</option>
       </select>
-      <button v-if="selectedProvider" class="btn btn-ghost" :disabled="fetchingRemote" @click="fetchRemoteModels">
-        {{ fetchingRemote ? $t('common.loading') : $t('models.fetchModels') }}
+      <button v-if="selectedProvider" class="btn btn-ghost" :disabled="fetchingRemote" @click="fetchRemoteModels(true)">
+        {{ fetchingRemote ? $t('common.loading') : '获取模型列表' }}
       </button>
     </div>
 
-    <div v-if="selectedProvider" class="models-grid">
+    <div v-if="selectedProvider && !remoteModels.length" class="empty mb-4">
+      暂无模型数据，请点击"获取模型列表"
+    </div>
+
+    <div v-if="selectedProvider && remoteModels.length" class="models-grid">
       <div class="card">
         <div class="card-title flex-between">
           {{ $t('models.remoteModels') }}
+          <span class="text-dim text-xs">{{ remoteModels.length }} 个</span>
           <div class="flex gap-2">
             <button class="btn btn-ghost btn-xs" @click="selectAll">{{ $t('models.selectAll') }}</button>
             <button class="btn btn-ghost btn-xs" @click="deselectAll">{{ $t('models.deselectAll') }}</button>
@@ -26,7 +31,6 @@
             <input type="checkbox" :checked="selectedModels.includes(m.id)" @change="toggleModel(m.id)" />
             <span class="mono">{{ m.id }}</span>
           </label>
-          <div v-if="!remoteModels.length" class="empty">{{ $t('dashboard.noData') }}</div>
         </div>
       </div>
 
@@ -51,8 +55,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { api } from '@/api'
+import { useToastStore } from '@/stores'
+
+const toast = useToastStore()
 
 const providers = ref({})
 const selectedProvider = ref('')
@@ -70,12 +77,15 @@ async function fetchProviders() {
   } catch (e) { console.error(e) }
 }
 
-async function fetchRemoteModels() {
+async function fetchRemoteModels(force = false) {
   if (!selectedProvider.value) return
   fetchingRemote.value = true
   try {
     const data = await api.getRemoteModels(selectedProvider.value)
     remoteModels.value = data.data || []
+    if (!force && !remoteModels.value.length) {
+      toast.info('点击"获取模型列表"从上游加载')
+    }
   } catch (e) { console.error(e) }
   finally { fetchingRemote.value = false }
 }
@@ -87,6 +97,13 @@ async function fetchEnabledModels() {
     enabledModels.value = data.include || []
   } catch (e) { console.error(e) }
 }
+
+watch(selectedProvider, async (newVal) => {
+  if (newVal) {
+    await fetchRemoteModels()
+    await fetchEnabledModels()
+  }
+})
 
 function toggleModel(id) {
   const idx = enabledModels.value.indexOf(id)
@@ -102,11 +119,11 @@ function deselectAll() { enabledModels.value = [] }
 
 async function saveModels() {
   await api.updateModels(selectedProvider.value, { include: enabledModels.value })
+  toast.success('模型配置已保存')
 }
 
 onMounted(async () => {
   await fetchProviders()
-  if (selectedProvider.value) await fetchEnabledModels()
 })
 </script>
 

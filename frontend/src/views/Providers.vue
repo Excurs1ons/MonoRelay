@@ -39,9 +39,13 @@
               <div class="detail-value mono">{{ pc.provider_type === 'web_reverse' ? (pc.web_reverse?.chatgpt_base_url || 'chatgpt.com') : pc.base_url }}</div>
             </div>
             <div class="provider-actions">
-              <button class="btn btn-ghost btn-sm" :disabled="testing[name]" @click.stop="testProvider(name)">
-                <Zap :size="14" :class="{ 'animate-pulse': testing[name] }" />
-                {{ testing[name] ? '测试中...' : '测试' }}
+              <button class="btn btn-ghost btn-sm" @click.stop="openTestModal(name)">
+                <Zap :size="14" />
+                测试
+              </button>
+              <button class="btn btn-ghost btn-sm" @click.stop="openTestModal(name)">
+                <ListChecks :size="14" />
+                批量
               </button>
               <button class="btn btn-ghost btn-sm" :disabled="verifying[name]" @click.stop="verifyProvider(name)">
                 <ShieldCheck :size="14" :class="{ 'animate-pulse': verifying[name] }" />
@@ -138,15 +142,15 @@
             <input v-model="editForm.base_url" type="text" class="form-input mono" />
           </div>
           <div class="form-group">
+            <label>API Key <span class="text-dim text-xs">({{ editingProviderKeys }} 个已存储)</span></label>
+            <input v-model="editForm.api_key" type="password" class="form-input mono" placeholder="留空保持不变" />
+          </div>
+          <div class="form-group">
             <label>{{ $t('providers.type') }}</label>
             <select v-model="editForm.provider_type" class="form-input">
               <option value="api">API</option>
               <option value="web_reverse">Web Reverse</option>
             </select>
-          </div>
-          <div class="form-group">
-            <label>{{ $t('providers.testModel') }}</label>
-            <input v-model="editForm.test_model" type="text" class="form-input mono" />
           </div>
           <div class="form-group">
             <label>{{ $t('providers.timeout') }}</label>
@@ -195,10 +199,6 @@
               <option value="api">API</option>
               <option value="web_reverse">Web Reverse</option>
             </select>
-          </div>
-          <div class="form-group">
-            <label>{{ $t('providers.testModel') }}</label>
-            <input v-model="addForm.test_model" type="text" class="form-input mono" placeholder="gpt-4o-mini" />
           </div>
           <div class="form-group">
             <label>{{ $t('providers.timeout') }}</label>
@@ -265,13 +265,50 @@
         </div>
       </div>
     </div>
+
+    <!-- Test Modal -->
+    <div v-if="showTestModal" class="modal-overlay" @click.self="showTestModal = false">
+      <div class="modal">
+        <div class="modal-header">测试 - {{ testProviderName }}</div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>测试模型</label>
+            <select v-model="testForm.test_model" class="form-input">
+              <option value="">-- 选择模型 --</option>
+              <option v-for="m in testModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+          <div v-if="testModels.length > 1" class="mt-3">
+            <button class="btn btn-ghost" :disabled="batchTesting" @click="runBatchTest">
+              {{ batchTesting ? `测试中 ${batchProgress}/${testModels.length}...` : `批量测试 (${testModels.length} 个模型)` }}
+            </button>
+          </div>
+          <div v-if="batchResults.length" class="mt-3 batch-results">
+            <div v-for="r in batchResults" :key="r.model" class="batch-result-item" :class="r.ok ? 'batch-ok' : 'batch-error'">
+              <span class="batch-model mono">{{ r.model }}</span>
+              <span class="batch-status">{{ r.ok ? '✓' : '✗' }}</span>
+              <span class="batch-msg">{{ r.message }}</span>
+            </div>
+          </div>
+          <div v-if="testResults[testProviderName]" class="test-result mt-3" :class="testResults[testProviderName].ok ? 'test-ok' : 'test-error'">
+            {{ testResults[testProviderName].message }}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="showTestModal = false">{{ $t('common.cancel') }}</button>
+          <button class="btn btn-primary" :disabled="testing[testProviderName]" @click="runTest">
+            {{ testing[testProviderName] ? '测试中...' : '开始测试' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@/api'
-import { ChevronRight, Zap, BookOpen, Pencil, Trash2, Search, Check, X, ShieldCheck, Download, CheckCircle, XCircle, Plus } from 'lucide-vue-next'
+import { ChevronRight, Zap, BookOpen, Pencil, Trash2, Search, Check, X, ShieldCheck, Download, CheckCircle, XCircle, Plus, ListChecks } from 'lucide-vue-next'
 
 const loading = ref(true)
 const providers = ref({})
@@ -285,11 +322,21 @@ const stats = ref(null)
 // Edit modal
 const showEditModal = ref(false)
 const editingName = ref('')
-const editForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 })
+const editingProviderKeys = ref(0)
+const editForm = ref({ name: '', base_url: '', api_key: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 })
 
 // Add modal
 const showAddModal = ref(false)
 const addForm = ref({ name: '', base_url: '', provider_type: 'api', enabled: true, test_model: '', timeout: 30, rate_limit_cooldown: 60, cost_per_m_input: 0, cost_per_m_output: 0 })
+
+// Test modal
+const showTestModal = ref(false)
+const testProviderName = ref('')
+const testForm = ref({ test_model: '' })
+const testModels = ref([])
+const batchTesting = ref(false)
+const batchProgress = ref(0)
+const batchResults = ref([])
 
 // Models modal
 const showModelsModal = ref(false)
@@ -349,6 +396,7 @@ function toggleExpand(name) {
 // Edit
 function openEditModal(name, pc) {
   editingName.value = name
+  editingProviderKeys.value = pc.keys?.length || 0
   editForm.value = { ...pc, name }
   showEditModal.value = true
 }
@@ -416,14 +464,81 @@ function exportKeys(name) {
 // Models
 function openModelsModal(name) {
   modelsProvider.value = name
-  remoteModels.value = []
   selectedModels.value = []
   modelSearch.value = ''
   showModelsModal.value = true
-  // Load enabled models
+  // Load cached remote models and enabled models in parallel
+  api.getRemoteModels(name).then(data => {
+    remoteModels.value = data.data || []
+  }).catch(() => { remoteModels.value = [] })
   api.getEnabledModels(name).then(data => {
     selectedModels.value = data.include || []
   }).catch(() => {})
+}
+
+// Test modal
+function openTestModal(name) {
+  testProviderName.value = name
+  testForm.value.test_model = ''
+  testResults.value[name] = null
+  showTestModal.value = true
+  // Load enabled models for this provider
+  api.getEnabledModels(name).then(data => {
+    testModels.value = data.include || []
+  }).catch(() => {
+    testModels.value = []
+  })
+}
+
+async function runTest() {
+  if (!testForm.value.test_model) {
+    testResults.value[testProviderName.value] = { ok: false, message: '请选择测试模型' }
+    return
+  }
+  testing.value[testProviderName.value] = true
+  try {
+    const result = await api.testProvider(testProviderName.value, testForm.value.test_model)
+    if (!result) {
+      testResults.value[testProviderName.value] = { ok: false, message: '无响应' }
+      return
+    }
+    testResults.value[testProviderName.value] = { 
+      ok: result.status === 'ok', 
+      message: result.message || result.error?.message || JSON.stringify(result) 
+    }
+  } catch (e) {
+    testResults.value[testProviderName.value] = { ok: false, message: e.message }
+  } finally {
+    testing.value[testProviderName.value] = false
+  }
+}
+
+async function runBatchTest() {
+  if (!testModels.value.length) return
+  batchTesting.value = true
+  batchProgress.value = 0
+  batchResults.value = []
+  
+  for (let i = 0; i < testModels.value.length; i++) {
+    const model = testModels.value[i]
+    batchProgress.value = i + 1
+    try {
+      const result = await api.testProvider(testProviderName.value, model)
+      batchResults.value.push({
+        model,
+        ok: result?.status === 'ok',
+        message: result?.message || result?.error?.message || '未知错误'
+      })
+    } catch (e) {
+      batchResults.value.push({
+        model,
+        ok: false,
+        message: e.message
+      })
+    }
+  }
+  
+  batchTesting.value = false
 }
 
 async function fetchRemoteModels() {
@@ -534,12 +649,12 @@ tr:last-child td { border-bottom: none; }
 .btn-ghost:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .btn-sm { padding: 5px 10px; font-size: 11px; }
 .btn-xs { padding: 3px 8px; font-size: 10px; }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); width: 100%; max-width: 440px; max-height: 90vh; display: flex; flex-direction: column; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { background: rgba(24, 24, 27, 0.75); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; width: 100%; max-width: 440px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
 .modal-lg { max-width: 700px; }
-.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
-.modal-footer { padding: 16px 20px; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: 8px; }
+.modal-footer { padding: 16px 20px; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; justify-content: flex-end; gap: 8px; }
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
 .form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
@@ -573,4 +688,12 @@ tr:last-child td { border-bottom: none; }
 @media (min-width: 769px) {
   .mobile-only { display: none; }
 }
+.mt-3 { margin-top: 12px; }
+.batch-results { max-height: 200px; overflow-y: auto; }
+.batch-result-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; font-size: 12px; margin-bottom: 4px; }
+.batch-ok { background: rgba(0,184,148,0.1); color: var(--color-green); }
+.batch-error { background: rgba(231,76,60,0.1); color: var(--color-red); }
+.batch-model { font-size: 11px; }
+.batch-status { font-weight: bold; }
+.batch-msg { color: var(--color-text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 </style>

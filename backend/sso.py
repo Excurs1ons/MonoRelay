@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import secrets
+import hashlib
+import base64
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -15,6 +18,13 @@ try:
     JOSE_AVAILABLE = True
 except ImportError:
     JOSE_AVAILABLE = False
+
+
+def _generate_pkce_codes() -> tuple[str, str]:
+    code_verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).decode().rstrip('=')
+    return code_verifier, code_challenge
 
 
 class OAuthProvider:
@@ -60,6 +70,8 @@ class SSOUser:
         self.email = profile.get("email", "")
         self.name = profile.get("name", "") or profile.get("login", "")
         self.avatar_url = profile.get("picture") or profile.get("avatar_url", "")
+        self.is_admin = profile.get("is_admin", False)
+        self.roles = profile.get("roles", [])
         self.raw_profile = profile
         self.tokens = tokens or {}
     
@@ -82,7 +94,7 @@ class OAuthValidator:
     def __init__(self, config: SSOConfig):
         self.config = config
     
-    def get_authorization_url(self, state: str, redirect_uri: str) -> str:
+    def get_authorization_url(self, state: str, redirect_uri: str, code_verifier: str = "", code_challenge: str = "") -> str:
         provider = self.config.provider
         
         if provider == OAuthProvider.PRISMAAUTH:
@@ -92,6 +104,9 @@ class OAuthValidator:
                 "state": state,
                 "scope": " ".join(self.config.scopes),
             }
+            if code_challenge:
+                params["code_challenge"] = code_challenge
+                params["code_challenge_method"] = "S256"
             base_url = self.config.prismaauth_url.rstrip("/")
             return f"{base_url}/login?{urlencode(params)}"
         
@@ -102,6 +117,9 @@ class OAuthValidator:
                 "scope": " ".join(self.config.scopes),
                 "state": state,
             }
+            if code_challenge:
+                params["code_challenge"] = code_challenge
+                params["code_challenge_method"] = "S256"
             return f"https://github.com/login/oauth/authorize?{urlencode(params)}"
         
         elif provider == OAuthProvider.GOOGLE:
@@ -113,11 +131,14 @@ class OAuthValidator:
                 "state": state,
                 "access_type": "online",
             }
+            if code_challenge:
+                params["code_challenge"] = code_challenge
+                params["code_challenge_method"] = "S256"
             return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
         
         raise ValueError(f"Unsupported provider: {provider}")
     
-    async def exchange_code(self, code: str, redirect_uri: str) -> Optional[dict]:
+    async def exchange_code(self, code: str, redirect_uri: str, code_verifier: str = "") -> Optional[dict]:
         provider = self.config.provider
         
         try:
@@ -126,17 +147,18 @@ class OAuthValidator:
                 token_url = f"{base_url}/token"
                 logger.info(f"Exchanging code at {token_url}")
                 
+                data = {
+                    "grant_type": "authorization_code",
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                }
+                if code_verifier:
+                    data["code_verifier"] = code_verifier
+                
                 async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        token_url,
-                        data={
-                            "grant_type": "authorization_code",
-                            "client_id": self.config.client_id,
-                            "client_secret": self.config.client_secret,
-                            "code": code,
-                            "redirect_uri": redirect_uri,
-                        },
-                    )
+                    resp = await client.post(token_url, data=data)
                     logger.info(f"Token response status: {resp.status_code}")
                     logger.info(f"Token response body: {resp.text[:500]}")
                     
@@ -147,29 +169,35 @@ class OAuthValidator:
                     return resp.json()
             
             elif provider == OAuthProvider.GITHUB:
+                data = {
+                    "client_id": self.config.github_client_id,
+                    "client_secret": self.config.github_client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                }
+                if code_verifier:
+                    data["code_verifier"] = code_verifier
                 resp = await AsyncOAuth2Client().post(
                     "https://github.com/login/oauth/access_token",
-                    data={
-                        "client_id": self.config.github_client_id,
-                        "client_secret": self.config.github_client_secret,
-                        "code": code,
-                        "redirect_uri": redirect_uri,
-                    },
+                    data=data,
                     headers={"Accept": "application/json"},
                 )
                 resp.raise_for_status()
                 return resp.json()
             
             elif provider == OAuthProvider.GOOGLE:
+                data = {
+                    "client_id": self.config.google_client_id,
+                    "client_secret": self.config.google_client_secret,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri,
+                }
+                if code_verifier:
+                    data["code_verifier"] = code_verifier
                 resp = await AsyncOAuth2Client().post(
                     "https://oauth2.googleapis.com/token",
-                    data={
-                        "client_id": self.config.google_client_id,
-                        "client_secret": self.config.google_client_secret,
-                        "code": code,
-                        "grant_type": "authorization_code",
-                        "redirect_uri": redirect_uri,
-                    },
+                    data=data,
                 )
                 resp.raise_for_status()
                 return resp.json()
