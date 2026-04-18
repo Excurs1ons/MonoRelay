@@ -265,7 +265,7 @@ async def serve_frontend():
     if not index.exists():
         index = FRONTEND_DIR / "index.html"
     if index.exists():
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return JSONResponse({"error": "Frontend not found. Run `cd frontend && npm run build` first."}, status_code=404)
 
 
@@ -274,7 +274,7 @@ if FRONTEND_DIST.exists():
     if (FRONTEND_DIST / "favicon.svg").exists():
         @app.get("/favicon.svg")
         async def serve_favicon():
-            return FileResponse(FRONTEND_DIST / "favicon.svg")
+            return FileResponse(FRONTEND_DIST / "favicon.svg", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/api/setup/status")

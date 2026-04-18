@@ -226,7 +226,7 @@ const inputKey = ref('')
 const loginError = ref(false)
 const authError = ref('')
 const serverInfo = ref('')
-const authed = ref(!!authStore.token)
+const authed = computed(() => !!authStore.token)
 const isSetupMode = ref(false)
 const userData = ref(null)
 const authMode = ref('key') // 'key' or 'user' or 'sso'
@@ -291,7 +291,6 @@ if (ssoToken) {
 localStorage.removeItem('sso_token')
 setToken(ssoToken)
 authStore.setToken(ssoToken)
-authed.value = true
 fetchInfo()
 window.history.replaceState({}, document.title, window.location.pathname)
 }
@@ -348,7 +347,6 @@ return
 if (token) {
 setToken(token)
 authStore.setToken(token)
-authed.value = true
 fetchInfo()
 }
 ssoLoading.value = false
@@ -359,7 +357,6 @@ clearInterval(checkClosed)
 if (event.data.token) {
 setToken(event.data.token)
 authStore.setToken(event.data.token)
-authed.value = true
 fetchInfo()
 }
 ssoLoading.value = false
@@ -392,7 +389,7 @@ setAccessKey(inputKey.value)
 setToken('')
 try {
 await api.health()
-authed.value = true
+authStore.setToken(inputKey.value)
 fetchInfo()
 } catch {
 loginError.value = true
@@ -404,7 +401,7 @@ loginError.value = false
 try {
 const result = await api.login(loginForm.value.username, loginForm.value.password)
 setToken(result.access_token)
-authed.value = true
+authStore.setToken(result.access_token)
 fetchInfo()
 } catch (e) {
 loginError.value = true
@@ -431,17 +428,15 @@ registerForm.value.email,
 registerForm.value.password
 )
 setToken(result.access_token)
-authed.value = true
+authStore.setToken(result.access_token)
 isSetupMode.value = false
 fetchInfo()
 } catch (e) {
 authError.value = e.message || (localeStore.locale === 'zh' ? '注册失败' : 'Registration failed')
 }
 }
-
 function handleLogout() {
 authStore.clearToken()
-authed.value = false
 inputKey.value = ''
 loginForm.value = { username: '', password: '' }
 registerForm.value = { username: '', email: '', password: '', confirmPassword: '' }
@@ -481,7 +476,6 @@ console.log('Storage event: sso_token changed')
 localStorage.removeItem('sso_token')
 setToken(e.newValue)
 authStore.setToken(e.newValue)
-authed.value = true
 fetchInfo()
 }
 })
