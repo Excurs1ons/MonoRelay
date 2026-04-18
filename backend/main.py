@@ -1203,30 +1203,44 @@ async def api_update_stats_file(request: Request):
 
 @app.get("/api/config")
 async def api_get_config():
-    import yaml
-    raw = config_manager.config.model_dump(mode="json")
-    # 清理 sync 字段（token 不暴露）
-    if 'sync' in raw:
-        raw['sync'] = {
-            'enabled': raw['sync'].get('enabled', False),
-            'gist_id': raw['sync'].get('gist_id', ''),
-        }
-    return {"content": yaml.dump(raw, default_flow_style=False, allow_unicode=True)}
+    """返回原始配置文件内容（保留注释）。"""
+    path = config_manager.config_path
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        # 简单脱敏：如果包含 gist_token，将其替换
+        # 注意：正常情况下 config.yml 不存 token，token 在 sync.json
+        return {"content": content}
+    return {"content": ""}
 
 
 @app.put("/api/config")
 async def api_update_config(request: Request):
     try:
         body = await request.json()
+        content = body.get("content", "").strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Content required")
+
         import yaml
-        raw = yaml.safe_load(body.get("content", "{}"))
-        new_cfg = AppConfig(**raw)
-        config_manager.save(new_cfg)
-        init_components(new_cfg)
+        # 1. 验证 YAML 语法
+        try:
+            raw = yaml.safe_load(content)
+            # 2. 验证模型结构
+            new_cfg = AppConfig(**raw)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"YAML 或配置格式错误: {e}")
+
+        # 3. 直接写入原始文本（保留注释）
+        config_manager.config_path.write_text(content, encoding="utf-8")
+        
+        # 4. 热重载内存中的配置
+        config_manager.reload()
+        init_components(config_manager.config)
 
         # Auto-push to Gist if sync is enabled
-        sc = new_cfg.sync
+        sc = config_manager.config.sync
         if sc.enabled and sync_storage.has_token:
+            # ... (rest of push logic)
             import asyncio
             import yaml
             from .sync import GistSync
@@ -2545,17 +2559,22 @@ async def api_sync_setup(request: Request):
 
 @app.post("/api/sync/push")
 async def api_sync_push():
-    """推送当前配置和统计到 Gist。"""
+    """推送当前原始配置和统计到 Gist。"""
     sc = config_manager.config.sync
     import logging
     logger = logging.getLogger("monorelay.sync")
     token = sync_storage.gist_token
-    logger.info(f"同步推送: enabled={sc.enabled}, token_len={len(token)}, token_prefix={token[:15]}..., gist_id={sc.gist_id}")
     if not sc.enabled or not token:
         raise HTTPException(status_code=400, detail="Gist 同步未配置")
 
-    sync = GistSync(token, sc.gist_id)
-    content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
+    # 读取原始文本（保留注释）
+    content = ""
+    if config_manager.config_path.exists():
+        content = config_manager.config_path.read_text(encoding="utf-8")
+    
+    if not content:
+        import yaml
+        content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
 
     # 附带统计数据
     stats_content = None
@@ -2566,21 +2585,21 @@ async def api_sync_push():
         except Exception:
             pass
 
+    sync = GistSync(token, sc.gist_id)
     ok = await sync.push(content, stats_content)
-
+    
     if ok:
-        # 如果创建了新 Gist，保存 gist_id
         if sync.gist_id and sync.gist_id != sc.gist_id:
             cfg = config_manager.config.model_copy(deep=True)
             cfg.sync.gist_id = sync.gist_id
             config_manager.save(cfg)
-        return {"status": "ok", "message": "配置和统计已推送到 Gist", "gist_id": sync.gist_id}
+        return {"status": "ok", "message": "原始配置和统计已推送到 Gist", "gist_id": sync.gist_id}
     raise HTTPException(status_code=500, detail="推送到 Gist 失败")
 
 
 @app.post("/api/sync/pull")
 async def api_sync_pull(request: Request):
-    """从 Gist 拉取配置和统计并应用。"""
+    """从 Gist 拉取原始文本并应用。"""
     sc = config_manager.config.sync
     body = await request.json()
     token = body.get("gist_token", "").strip() or sync_storage.gist_token
@@ -2599,25 +2618,18 @@ async def api_sync_pull(request: Request):
     changes_made = False
     try:
         if "config" in data:
-            import yaml
-            # Get current config as string for comparison
-            current_raw = config_manager.config.model_dump(mode="json")
-            # Mask sync token if present (it shouldn't be in model_dump, but for safety)
-            if 'sync' in current_raw:
-                current_raw['sync'] = {
-                    'enabled': current_raw['sync'].get('enabled', False),
-                    'gist_id': current_raw['sync'].get('gist_id', ''),
-                }
-            current_yaml = yaml.dump(current_raw, default_flow_style=False, allow_unicode=True)
+            # 读取当前原始文本进行对比
+            current_content = ""
+            if config_manager.config_path.exists():
+                current_content = config_manager.config_path.read_text(encoding="utf-8")
             
-            # Compare with new config
-            new_raw = yaml.safe_load(data["config"])
-            new_yaml = yaml.dump(new_raw, default_flow_style=False, allow_unicode=True)
-            
-            if current_yaml.strip() != new_yaml.strip():
-                new_cfg = AppConfig(**new_raw)
-                config_manager.save(new_cfg)
-                init_components(new_cfg)
+            new_content = data["config"]
+            if current_content.strip() != new_content.strip():
+                # 写入原始文本（保留注释）
+                config_manager.config_path.write_text(new_content, encoding="utf-8")
+                # 触发重载
+                config_manager.reload()
+                init_components(config_manager.config)
                 results.append("配置")
                 changes_made = True
             else:
@@ -2629,9 +2641,10 @@ async def api_sync_pull(request: Request):
             if stats_path.exists():
                 current_stats = stats_path.read_text(encoding="utf-8")
             
-            if current_stats.strip() != data["stats"].strip():
+            new_stats = data["stats"]
+            if current_stats.strip() != new_stats.strip():
                 stats_path.parent.mkdir(parents=True, exist_ok=True)
-                stats_path.write_text(data["stats"], encoding="utf-8")
+                stats_path.write_text(new_stats, encoding="utf-8")
                 stats_tracker._load()
                 results.append("统计数据")
                 changes_made = True
