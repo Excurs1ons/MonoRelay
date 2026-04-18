@@ -1,6 +1,11 @@
 <template>
+<Toast />
 <!-- Auth screen -->
 <div v-if="!authed" class="auth-screen">
+  <div class="bg-layer">
+    <div class="bg-gradient"></div>
+    <div class="bg-grain"></div>
+  </div>
 <transition name="fade" appear>
 <div class="auth-card">
 <div class="auth-icon">
@@ -146,6 +151,9 @@ class="auth-input"
 
   <!-- Main app -->
   <div v-else class="app">
+  <div class="bg-layer">
+    <div class="bg-gradient"></div>
+  </div>
     <div class="container">
       <!-- Header -->
       <header class="header">
@@ -193,8 +201,9 @@ class="auth-input"
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore, useLocaleStore } from '@/stores'
+import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3 } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -224,11 +233,13 @@ confirmPassword: ''
 })
 
 const tabs = [
-{ path: '/dashboard', label: 'common.dashboard', icon: LayoutDashboard },
-{ path: '/providers', label: 'common.providers', icon: Server },
-{ path: '/analytics', label: 'common.analytics', icon: BarChart3 },
-{ path: '/logs', label: 'common.logs', icon: FileText },
-{ path: '/config', label: 'common.config', icon: SlidersHorizontal },
+  { path: '/dashboard', label: 'common.dashboard', icon: LayoutDashboard },
+  { path: '/providers', label: 'common.providers', icon: Server },
+  { path: '/keys', label: 'common.keys', icon: Key },
+  { path: '/models', label: 'common.models', icon: Boxes },
+  { path: '/analytics', label: 'common.analytics', icon: BarChart3 },
+  { path: '/logs', label: 'common.logs', icon: FileText },
+  { path: '/config', label: 'common.config', icon: SlidersHorizontal },
 ]
 
 async function checkSetup() {
@@ -248,17 +259,11 @@ authMode.value = 'sso'
 
 // Only check for SSO token if NOT already logged in
 if (!authStore.token) {
-const urlParams = new URLSearchParams(window.location.search)
-let ssoToken = urlParams.get('sso_token')
-if (!ssoToken) {
-ssoToken = localStorage.getItem('sso_token')
-}
+const ssoToken = localStorage.getItem('sso_token')
 if (ssoToken) {
-console.log('Found SSO token, logging in...')
 localStorage.removeItem('sso_token')
-const token = 'Bearer ' + ssoToken
-setToken(token)
-authStore.setToken(token)
+setToken(ssoToken)
+authStore.setToken(ssoToken)
 authed.value = true
 fetchInfo()
 window.history.replaceState({}, document.title, window.location.pathname)
@@ -295,6 +300,7 @@ return
 
 // Listen for messages from popup
 const handleMessage = (event) => {
+console.log('handleMessage: received', event.data)
 if (event.data && event.data.type === 'SSO_CALLBACK') {
 window.removeEventListener('message', handleMessage)
 clearInterval(checkClosed)
@@ -319,6 +325,18 @@ authed.value = true
 fetchInfo()
 }
 ssoLoading.value = false
+} else if (event.data && event.data.type === 'SSO_LOGIN_SUCCESS') {
+console.log('handleMessage: SSO_LOGIN_SUCCESS received')
+window.removeEventListener('message', handleMessage)
+clearInterval(checkClosed)
+if (event.data.token) {
+setToken(event.data.token)
+authStore.setToken(event.data.token)
+authed.value = true
+fetchInfo()
+}
+ssoLoading.value = false
+ssoPopup = null
 }
 }
 
@@ -404,9 +422,13 @@ registerForm.value = { username: '', email: '', password: '', confirmPassword: '
 
 async function fetchInfo() {
 try {
+console.log('fetchInfo: calling api.getInfo()...')
 const data = await api.getInfo()
+console.log('fetchInfo: got data:', data)
 serverInfo.value = `${data.local_ip || '127.0.0.1'}:${data.port || 8787}`
-} catch {
+console.log('fetchInfo: serverInfo set to:', serverInfo.value)
+} catch (e) {
+console.error('fetchInfo: error:', e)
 serverInfo.value = 'localhost:8787'
 }
 }
@@ -417,6 +439,18 @@ fetchInfo()
 } else {
 checkSetup()
 }
+
+// Listen for storage changes (from SSO callback in popup)
+window.addEventListener('storage', (e) => {
+if (e.key === 'sso_token' && e.newValue) {
+console.log('Storage event: sso_token changed')
+localStorage.removeItem('sso_token')
+setToken(e.newValue)
+authStore.setToken(e.newValue)
+authed.value = true
+fetchInfo()
+}
+})
 })
 </script>
 
@@ -426,22 +460,66 @@ checkSetup()
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px;
   background: var(--color-bg);
+  position: relative;
+  overflow: hidden;
+}
+.auth-screen .bg-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.auth-screen .bg-gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(ellipse 100% 60% at 15% 20%, rgba(249, 115, 22, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 85% 80%, rgba(124, 58, 237, 0.1) 0%, transparent 45%),
+    radial-gradient(ellipse 60% 40% at 50% 60%, rgba(219, 39, 119, 0.08) 0%, transparent 40%);
+  animation: gradientPulse 25s ease-in-out infinite alternate;
+}
+.auth-screen .bg-grain {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.025;
+}
+@keyframes gradientPulse {
+  0% { opacity: 0.7; transform: scale(1); }
+  100% { opacity: 1; transform: scale(1.03); }
 }
 .auth-card {
   width: 100%;
   max-width: 380px;
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius, 10px);
-  padding: 32px;
+  background: rgba(24, 24, 27, 0.6);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 40px 32px;
   text-align: center;
+  position: relative;
+  z-index: 1;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .auth-icon {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 16px;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 20px;
   color: var(--color-accent);
   animation: float 3s ease-in-out infinite;
 }
@@ -454,40 +532,48 @@ checkSetup()
   50% { transform: translateY(-6px); }
 }
 .auth-title {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
-  color: var(--color-accent);
+  font-family: var(--font-mono);
+  background: linear-gradient(135deg, var(--color-text), var(--color-text-dim));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   margin-bottom: 8px;
 }
 .auth-subtitle {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text-dim);
-  margin-bottom: 24px;
+  margin-bottom: 28px;
 }
 .auth-input {
   width: 100%;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 8px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-input);
   color: var(--color-text);
-  font-size: 13px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  font-family: var(--font-mono);
   transition: border-color 0.15s, box-shadow 0.15s;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .auth-input:focus {
   outline: none;
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.15);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
+}
+.auth-input::placeholder {
+  color: var(--color-text-dim);
+  opacity: 0.6;
 }
 .auth-error {
   font-size: 12px;
   color: var(--color-red);
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .auth-footer {
-  margin-top: 20px;
+  margin-top: 24px;
   display: flex;
   justify-content: center;
 }
@@ -503,19 +589,20 @@ checkSetup()
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
+  font-family: var(--font-mono);
 }
 .lang-btn:hover {
-border-color: var(--color-accent);
-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 .auth-toggle {
 display: flex;
 gap: 8px;
-margin-bottom: 20px;
+margin-bottom: 24px;
 justify-content: center;
 }
 .auth-toggle-btn {
-padding: 8px 16px;
+padding: 8px 18px;
 border-radius: 6px;
 border: 1px solid var(--color-border);
 background: transparent;
@@ -523,6 +610,7 @@ color: var(--color-text-dim);
 font-size: 13px;
 cursor: pointer;
 transition: all 0.15s;
+font-family: var(--font-mono);
 }
 .auth-toggle-btn:hover {
 border-color: var(--color-accent);
@@ -562,7 +650,8 @@ border-color: var(--color-accent);
   height: 80%;
   top: 10%;
   left: 10%;
-  border-top-color: var(--color-accent-light);
+  border-top-color: var(--color-accent);
+  opacity: 0.6;
   animation-duration: 1.5s;
   animation-direction: reverse;
 }
@@ -572,6 +661,7 @@ border-color: var(--color-accent);
   top: 20%;
   left: 20%;
   border-top-color: var(--color-accent);
+  opacity: 0.3;
   animation-duration: 0.9s;
 }
 @keyframes auth-sso-spin {
@@ -621,70 +711,122 @@ border-color: var(--color-accent);
   min-height: 100vh;
   background: var(--color-bg);
   color: var(--color-text);
+  position: relative;
+  overflow: hidden;
+}
+.app .bg-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.app .bg-gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(ellipse 100% 60% at 15% 20%, rgba(249, 115, 22, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 85% 80%, rgba(124, 58, 237, 0.06) 0%, transparent 45%);
+  animation: gradientPulse 25s ease-in-out infinite alternate;
 }
 .container {
-  max-width: 1200px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 24px;
+  position: relative;
+  z-index: 1;
 }
 .header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 0;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 16px 24px;
+  margin-bottom: 32px;
+  background: rgba(24, 24, 27, 0.85);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.25),
+    0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+@media (min-width: 768px) {
+  .header {
+    position: relative;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    margin-bottom: 32px;
+    padding: 16px 24px;
+    background: rgba(24, 24, 27, 0.7);
+  }
 }
 .header h1 {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
+  font-family: var(--font-mono);
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .header-logo {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   color: var(--color-accent);
 }
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--color-green);
   display: inline-block;
-  box-shadow: 0 0 6px var(--color-green);
+  box-shadow: 0 0 8px var(--color-green);
   animation: pulse 2s ease-in-out infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--color-green); }
-  50% { opacity: 0.7; box-shadow: 0 0 12px var(--color-green); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--color-green); }
+  50% { opacity: 0.6; box-shadow: 0 0 16px var(--color-green); }
 }
 .status-text {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-dim);
+  font-family: var(--font-mono);
 }
 
 .tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-bottom: 20px;
-  background: var(--color-bg-card);
+  margin-bottom: 32px;
+  background: rgba(24, 24, 27, 0.6);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   padding: 4px;
-  border-radius: var(--radius, 10px);
-  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 4px 16px rgba(0, 0, 0, 0.3);
 }
 .tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 18px;
+  padding: 10px 20px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
@@ -697,28 +839,30 @@ border-color: var(--color-accent);
   flex: 1 1 auto;
   justify-content: center;
   min-width: 0;
+  font-family: var(--font-mono);
 }
 .tab:hover {
   color: var(--color-text);
-  background: rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.04);
 }
 .tab.active {
   background: var(--color-accent);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(108, 92, 231, 0.3);
+  box-shadow: 0 2px 12px rgba(249, 115, 22, 0.35);
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 7px 14px;
-  border-radius: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
   border: none;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+  font-family: var(--font-mono);
 }
 .btn-primary {
   background: var(--color-accent);
@@ -726,12 +870,13 @@ border-color: var(--color-accent);
 }
 .btn-primary:hover {
   background: var(--color-accent-hover);
-  box-shadow: 0 2px 8px rgba(108, 92, 231, 0.3);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35);
 }
 .btn-block {
   width: 100%;
   justify-content: center;
-  padding: 10px 14px;
+  padding: 12px 16px;
+  font-size: 13px;
 }
 .btn-ghost {
   background: transparent;
@@ -743,19 +888,19 @@ border-color: var(--color-accent);
   color: var(--color-accent);
 }
 .btn-xs {
-  padding: 4px 10px;
+  padding: 6px 12px;
   font-size: 11px;
 }
 
 @media (max-width: 768px) {
   .container {
-    padding: 12px;
+    padding: 16px;
   }
   .header {
     flex-wrap: wrap;
-    gap: 8px;
-    padding: 12px 0;
-    margin-bottom: 16px;
+    gap: 12px;
+    padding: 16px 0;
+    margin-bottom: 20px;
   }
   .header h1 {
     font-size: 18px;
@@ -765,6 +910,13 @@ border-color: var(--color-accent);
   }
   .header-right {
     margin-left: auto;
+  }
+  .tabs {
+    margin-bottom: 20px;
+  }
+  .tab {
+    padding: 8px 14px;
+    font-size: 12px;
   }
 }
 </style>

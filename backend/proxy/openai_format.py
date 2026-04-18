@@ -320,6 +320,12 @@ async def handle_embeddings(
     resolved_model, provider_name = router.resolve_model(original_model)
     body["model"] = resolved_model
 
+    # Extract text content
+    input_text = body.get("input", "")
+    if isinstance(input_text, list):
+        input_text = "\n".join([str(i) for i in input_text])
+    request_text = str(input_text) if input_text else None
+    
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
@@ -379,7 +385,20 @@ async def _stream_chat(
             last_chunk_data = None
             first_token_ms = None
             first_token_recorded = False
-            output_content = []  # Accumulate output content for estimation
+            output_content = []
+            response_preview = None
+            
+            messages = body.get("messages", [])
+            request_text = "\n".join([
+                f"{m.get('role', 'user')}: {m.get('content', '')}"
+                for m in messages if m.get("content")
+            ]) if messages else None
+            
+            temperature = body.get("temperature")
+            top_p = body.get("top_p")
+            presence_penalty = body.get("presence_penalty")
+            frequency_penalty = body.get("frequency_penalty")
+            max_tokens = body.get("max_tokens")
 
             async with client.stream(
                 "POST", url, headers=headers, json=body,
@@ -448,6 +467,11 @@ async def _stream_chat(
 
             if tokens_in is None:
                 messages = body.get("messages", [])
+                # Extract text content from messages
+                request_text = "\n".join([
+                    f"{m.get('role', 'user')}: {m.get('content', '')}"
+                    for m in messages if m.get("content")
+                ])
                 tokens_in = _estimate_input_tokens(messages)
                 is_estimated_in = True
 
@@ -468,6 +492,10 @@ async def _stream_chat(
             elapsed = time.time() - start_time
             tokens_in = int(tokens_in) if tokens_in is not None else None
             tokens_out = int(tokens_out) if tokens_out is not None else None
+
+            full_output = "".join(output_content)
+            if full_output:
+                response_preview = full_output[:500] if len(full_output) > 500 else full_output
 
             # Detailed logging
             log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
@@ -495,11 +523,19 @@ async def _stream_chat(
                 model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
-                status_code=200,
+                status_code=response.status_code,
                 latency_ms=round(elapsed * 1000, 2),
+                first_token_ms=first_token_ms,
                 streaming=True,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                request_preview=request_text if request_text else None,
+                response_preview=response_preview if response_preview else None,
+                temperature=temperature,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                max_tokens=max_tokens,
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
@@ -526,6 +562,12 @@ async def _stream_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
                 error_message=str(e),
+                request_preview=request_text if request_text else None,
+                temperature=temperature,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                max_tokens=max_tokens,
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
@@ -538,6 +580,19 @@ async def _non_stream_chat(
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
     from ..cache import response_cache
+    
+    messages = body.get("messages", [])
+    request_text = "\n".join([
+        f"{m.get('role', 'user')}: {m.get('content', '')}"
+        for m in messages if m.get("content")
+    ])
+    
+    temperature = body.get("temperature")
+    top_p = body.get("top_p")
+    presence_penalty = body.get("presence_penalty")
+    frequency_penalty = body.get("frequency_penalty")
+    max_tokens = body.get("max_tokens")
+    
     cached = response_cache.get(body, resolved_model)
     if cached is not None:
         logger.info(f"Cache hit | 模型={resolved_model}")
@@ -558,6 +613,12 @@ async def _non_stream_chat(
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=resp.text,
+                    request_preview=request_text if request_text else None,
+                    temperature=temperature,
+                    top_p=top_p,
+                    presence_penalty=presence_penalty,
+                    frequency_penalty=frequency_penalty,
+                    max_tokens=max_tokens,
                 )
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
@@ -601,6 +662,13 @@ async def _non_stream_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                request_preview=request_text if request_text else None,
+                response_preview=json.dumps(result) if result else None,
+                temperature=temperature,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                max_tokens=max_tokens,
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
@@ -803,7 +871,7 @@ async def handle_models_list(config: AppConfig) -> dict:
                 for client_model in pc.web_reverse.model_mapping:
                     if client_model in enabled_models:
                         all_models.append({
-                            "id": client_model,
+                            "id": f"{client_model}@{name}",
                             "provider": name,
                             "object": "model",
                         })
@@ -811,7 +879,7 @@ async def handle_models_list(config: AppConfig) -> dict:
 
         for mid in enabled_models:
             all_models.append({
-                "id": mid,
+                "id": f"{mid}@{name}",
                 "provider": name,
                 "object": "model",
             })
@@ -875,8 +943,9 @@ async def _handle_web_reverse_chat(
                 model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
-                status_code=200,
+                status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
+                request_preview=request_text,
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return result
