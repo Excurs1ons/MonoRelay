@@ -182,8 +182,12 @@ async def auth_middleware(request: Request, call_next):
 
     if path.startswith("/v1/") or path.startswith("/api/"):
         # Public endpoints that don't require authentication
-        public_prefixes = [
-            "/api/auth/",
+        public_endpoints = [
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/sso/login",
+            "/api/auth/sso/callback",
+            "/api/auth/sso/status",
             "/api/info",
             "/api/setup/status",
             "/api/providers/",
@@ -191,10 +195,9 @@ async def auth_middleware(request: Request, call_next):
             "/v1/models",
         ]
 
-        if any(path.startswith(ep) for ep in public_prefixes):
-            response = await call_next(request)
-            return response
-
+        # Use exact match or prefix for some, but be careful with /api/auth/
+        is_public = any(path == ep or (ep.endswith("/") and path.startswith(ep)) for ep in public_endpoints)
+        
         # Get token from headers
         auth_header = request.headers.get("authorization", "")
         token = None
@@ -222,6 +225,10 @@ async def auth_middleware(request: Request, call_next):
         access_key = config_manager.config.server.access_key
         if token == access_key:
             request.state.client_id = token[:16] if len(token) >= 16 else token
+            response = await call_next(request)
+            return response
+
+        if is_public:
             response = await call_next(request)
             return response
 
