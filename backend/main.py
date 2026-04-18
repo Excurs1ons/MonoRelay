@@ -1221,6 +1221,10 @@ async def api_test_provider(name: str, request: Request):
         headers.update(pc.headers)
     
     try:
+        # Strip provider suffix if present
+        if "@" in test_model:
+            test_model = test_model.rsplit("@", 1)[0]
+        
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, headers=headers, json={
                 "model": test_model,
@@ -2179,11 +2183,10 @@ async def api_get_remote_models(name: str):
         if pc.web_reverse and pc.web_reverse.model_mapping:
             for client_model, upstream_model in pc.web_reverse.model_mapping.items():
                 models.append({
-                    "id": f"{client_model}@{name}",
+                    "id": client_model,
                     "upstream_id": upstream_model,
                     "provider": name,
                 })
-        # 缓存 web_reverse 模型
         if models:
             new_cfg = cfg.model_copy(deep=True)
             new_cfg.providers[name].remote_models_cache = models
@@ -2209,7 +2212,7 @@ async def api_get_remote_models(name: str):
                 models = []
                 for m in upstream_models:
                     mid = m.get("id", m) if isinstance(m, dict) else m
-                    model_info = {"id": f"{mid}@{name}", "provider": name}
+                    model_info = {"id": mid, "provider": name}
                     if isinstance(m, dict):
                         for field in ("owned_by", "created", "description"):
                             if field in m:

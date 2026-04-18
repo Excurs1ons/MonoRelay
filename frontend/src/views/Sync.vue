@@ -6,7 +6,13 @@
       <div class="form-group">
         <label>{{ $t('sync.token') }}</label>
         <div class="flex gap-2">
-          <input v-model="token" type="password" :placeholder="$t('sync.tokenPlaceholder')" class="form-input flex-1 mono" />
+          <div class="input-with-toggle flex-1">
+            <input v-model="token" :type="showToken ? 'text' : 'password'" :placeholder="$t('sync.tokenPlaceholder')" class="form-input mono" />
+            <button type="button" class="toggle-btn" @click="showToken = !showToken">
+              <Eye v-if="!showToken" :size="16" />
+              <EyeOff v-else :size="16" />
+            </button>
+          </div>
           <button class="btn btn-ghost" @click="verifyToken">{{ $t('sync.verifyToken') }}</button>
         </div>
         <p v-if="tokenStatus" class="mt-2 text-sm" :class="tokenStatus.ok ? 'text-green' : 'text-red'">{{ tokenStatus.message }}</p>
@@ -40,10 +46,12 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
+import { Eye, EyeOff } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
 const token = ref('')
+const showToken = ref(false)
 const gistId = ref('')
 const busy = ref(false)
 const action = ref('')
@@ -104,6 +112,10 @@ onMounted(fetchStatus)
 .form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
 .form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
 .form-input:focus { outline: none; border-color: var(--color-accent); }
+.input-with-toggle { position: relative; display: flex; flex: 1; }
+.input-with-toggle .form-input { padding-right: 36px; flex: 1; }
+.toggle-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-text-dim); cursor: pointer; padding: 4px; display: flex; align-items: center; }
+.toggle-btn:hover { color: var(--color-text); }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-sm { font-size: 12px; }
 .text-green { color: var(--color-green); }

@@ -37,6 +37,16 @@ const routes = [
     name: 'Analytics',
     component: () => import('@/views/Analytics.vue'),
   },
+  {
+    path: '/help',
+    name: 'Help',
+    component: () => import('@/views/Help.vue'),
+  },
+  {
+    path: '/about',
+    name: 'About',
+    component: () => import('@/views/About.vue'),
+  },
 ]
 
 const router = createRouter({

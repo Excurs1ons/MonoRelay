@@ -187,7 +187,7 @@ class="auth-input"
           @click="$router.push(tab.path)"
         >
           <component :is="tab.icon" :size="16" />
-          {{ $t(tab.label) }}
+          {{ tab.label.startsWith('common.') ? $t(tab.label) : tab.label }}
         </button>
       </nav>
 
@@ -203,7 +203,7 @@ import { useRoute } from 'vue-router'
 import { useAuthStore, useLocaleStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, HelpCircle, Info } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -240,6 +240,8 @@ const tabs = [
   { path: '/analytics', label: 'common.analytics', icon: BarChart3 },
   { path: '/logs', label: 'common.logs', icon: FileText },
   { path: '/config', label: 'common.config', icon: SlidersHorizontal },
+  { path: '/help', label: '帮助', icon: HelpCircle },
+  { path: '/about', label: '关于', icon: Info },
 ]
 
 async function checkSetup() {
@@ -808,8 +810,8 @@ border-color: var(--color-accent);
 }
 
 .tabs {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin-bottom: 32px;
   background: rgba(24, 24, 27, 0.6);
@@ -823,8 +825,9 @@ border-color: var(--color-accent);
     0 4px 16px rgba(0, 0, 0, 0.3);
 }
 .tab {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 10px 20px;
   border-radius: 8px;
@@ -835,11 +838,8 @@ border-color: var(--color-accent);
   background: transparent;
   border: none;
   transition: all 0.2s;
-  white-space: nowrap;
-  flex: 1 1 auto;
+  width: 100%;
   justify-content: center;
-  min-width: 0;
-  font-family: var(--font-mono);
 }
 .tab:hover {
   color: var(--color-text);
