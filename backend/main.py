@@ -2596,24 +2596,53 @@ async def api_sync_pull(request: Request):
         raise HTTPException(status_code=500, detail="从 Gist 拉取失败")
 
     results = []
+    changes_made = False
     try:
         if "config" in data:
             import yaml
-            raw = yaml.safe_load(data["config"])
-            new_cfg = AppConfig(**raw)
-            config_manager.save(new_cfg)
-            init_components(new_cfg)
-            results.append("配置")
+            # Get current config as string for comparison
+            current_raw = config_manager.config.model_dump(mode="json")
+            # Mask sync token if present (it shouldn't be in model_dump, but for safety)
+            if 'sync' in current_raw:
+                current_raw['sync'] = {
+                    'enabled': current_raw['sync'].get('enabled', False),
+                    'gist_id': current_raw['sync'].get('gist_id', ''),
+                }
+            current_yaml = yaml.dump(current_raw, default_flow_style=False, allow_unicode=True)
+            
+            # Compare with new config
+            new_raw = yaml.safe_load(data["config"])
+            new_yaml = yaml.dump(new_raw, default_flow_style=False, allow_unicode=True)
+            
+            if current_yaml.strip() != new_yaml.strip():
+                new_cfg = AppConfig(**new_raw)
+                config_manager.save(new_cfg)
+                init_components(new_cfg)
+                results.append("配置")
+                changes_made = True
+            else:
+                results.append("配置(已是最新)")
 
         if "stats" in data:
             stats_path = stats_tracker.db_path
-            stats_path.parent.mkdir(parents=True, exist_ok=True)
-            stats_path.write_text(data["stats"], encoding="utf-8")
-            stats_tracker._load()
-            results.append("统计数据")
+            current_stats = ""
+            if stats_path.exists():
+                current_stats = stats_path.read_text(encoding="utf-8")
+            
+            if current_stats.strip() != data["stats"].strip():
+                stats_path.parent.mkdir(parents=True, exist_ok=True)
+                stats_path.write_text(data["stats"], encoding="utf-8")
+                stats_tracker._load()
+                results.append("统计数据")
+                changes_made = True
+            else:
+                results.append("统计数据(已是最新)")
 
         if results:
-            return {"status": "ok", "message": f"已从 Gist 拉取并应用{'、'.join(results)}"}
+            msg = f"已从 Gist 拉取：{ '、'.join(results) }"
+            if not changes_made:
+                msg = "Gist 内容与本地完全一致，无需更新。"
+            return {"status": "ok", "message": msg, "changes": changes_made}
         raise HTTPException(status_code=500, detail="Gist 中无有效数据")
     except HTTPException:
         raise
