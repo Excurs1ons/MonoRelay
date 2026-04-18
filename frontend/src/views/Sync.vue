@@ -54,10 +54,19 @@
             <span class="text-dim">最后同步</span>
             <span class="mono">{{ formatDate(gistInfo.updated_at) }}</span>
           </div>
+          <div class="flex justify-between text-xs" v-if="gistInfo.version">
+            <span class="text-dim">当前版本</span>
+            <span class="mono text-xs">{{ gistInfo.version.substring(0, 7) }}</span>
+          </div>
           <div class="flex justify-between text-xs font-medium">
             <span class="text-dim">距离现在</span>
             <span class="text-accent">{{ timeAgo }}</span>
           </div>
+        </div>
+        <div class="mt-3 flex justify-end">
+          <button class="btn btn-ghost btn-xs text-xs" @click="pullSync(true)" :disabled="busy">
+            强制拉取覆盖
+          </button>
         </div>
       </div>
     </div>
@@ -115,6 +124,7 @@ async function fetchGistInfo() {
     const res = await api.getGistInfo()
     if (res.status === 'ok') {
       gistInfo.value = res.info
+      // We'll update the backend getGistInfo to return the latest version too
     }
   } catch (e) { console.error(e) }
 }
@@ -141,19 +151,19 @@ async function findGist() {
 async function pushSync() {
   busy.value = true; action.value = 'push'
   try { 
-    await api.setupSync(token.value, gistId.value); 
-    statusMsg.value = { ok: true, message: t('sync.pushSuccess') }
+    const data = await api.pushSync(); 
+    statusMsg.value = { ok: true, message: data.message || t('sync.pushSuccess') }
     fetchGistInfo()
   }
   catch (e) { statusMsg.value = { ok: false, message: e.message } }
   finally { busy.value = false }
 }
 
-async function pullSync() {
+async function pullSync(force = false) {
   busy.value = true; action.value = 'pull'
   try { 
-    await api.pullSync(); 
-    statusMsg.value = { ok: true, message: t('sync.pullSuccess') }
+    const data = await api.pullSync(token.value, force); 
+    statusMsg.value = { ok: true, message: data.message || t('sync.pullSuccess') }
     fetchGistInfo()
   }
   catch (e) { statusMsg.value = { ok: false, message: e.message } }

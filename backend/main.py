@@ -2542,14 +2542,14 @@ async def api_sync_setup(request: Request):
                 pass
         
         logger.info(f"开始推送: gist_id={sync.gist_id}, content_len={len(content)}")
-        ok = await sync.push(content, stats_content)
+        ok, version = await sync.push(content, stats_content)
         
         if not ok:
             logger.error(f"推送失败，但配置已保存。可稍后手动点击'推送'按钮重试")
-            # 不抛出异常，因为配置已保存成功
             return {"status": "ok", "message": "Gist 同步已配置，但推送完整内容失败，请稍后手动推送", "gist_id": sync.gist_id}
         
-        logger.info(f"推送成功: {sync.gist_id}")
+        sync_storage.last_sync_version = version
+        logger.info(f"推送成功: {sync.gist_id}, version: {version}")
         return {"status": "ok", "message": "Gist 同步已配置", "gist_id": sync.gist_id}
     except HTTPException:
         raise
@@ -2586,23 +2586,26 @@ async def api_sync_push():
             pass
 
     sync = GistSync(token, sc.gist_id)
-    ok = await sync.push(content, stats_content)
+    ok, version = await sync.push(content, stats_content)
     
     if ok:
+        sync_storage.last_sync_version = version
         if sync.gist_id and sync.gist_id != sc.gist_id:
             cfg = config_manager.config.model_copy(deep=True)
             cfg.sync.gist_id = sync.gist_id
             config_manager.save(cfg)
-        return {"status": "ok", "message": "原始配置和统计已推送到 Gist", "gist_id": sync.gist_id}
+        return {"status": "ok", "message": "原始配置和统计已推送到 Gist", "gist_id": sync.gist_id, "version": version}
     raise HTTPException(status_code=500, detail="推送到 Gist 失败")
 
 
 @app.post("/api/sync/pull")
 async def api_sync_pull(request: Request):
-    """从 Gist 拉取原始文本并应用。"""
+    """从 Gist 拉取原始文本并应用，支持版本对比。"""
     sc = config_manager.config.sync
     body = await request.json()
     token = body.get("gist_token", "").strip() or sync_storage.gist_token
+    force = body.get("force", False)  # 支持强制拉取
+
     if not token:
         raise HTTPException(status_code=400, detail="未配置 Gist Token")
     if not sc.gist_id:
@@ -2614,27 +2617,28 @@ async def api_sync_pull(request: Request):
     if not data:
         raise HTTPException(status_code=500, detail="从 Gist 拉取失败")
 
+    new_version = data.get("version", "")
+    last_version = sync_storage.last_sync_version
+    
+    # 如果版本一致且未强制拉取，直接返回
+    if new_version == last_version and not force and last_version != "":
+        return {"status": "ok", "message": "本地已是 Gist 的最新版本", "changes": False, "version": new_version}
+
     results = []
     changes_made = False
     try:
         if "config" in data:
-            # 读取当前原始文本进行对比
             current_content = ""
             if config_manager.config_path.exists():
                 current_content = config_manager.config_path.read_text(encoding="utf-8")
             
             new_content = data["config"]
-            # 兼容不同系统的换行符对比
-            if current_content.replace("\r\n", "\n").strip() != new_content.replace("\r\n", "\n").strip():
-                # 写入原始文本（保留注释）
+            if force or current_content.replace("\r\n", "\n").strip() != new_content.replace("\r\n", "\n").strip():
                 config_manager.config_path.write_text(new_content, encoding="utf-8")
-                # 触发重载
                 config_manager.reload()
                 init_components(config_manager.config)
                 results.append("配置")
                 changes_made = True
-            else:
-                results.append("配置(已是最新)")
 
         if "stats" in data:
             stats_path = stats_tracker.db_path
@@ -2643,21 +2647,24 @@ async def api_sync_pull(request: Request):
                 current_stats = stats_path.read_text(encoding="utf-8")
             
             new_stats = data["stats"]
-            if current_stats.strip() != new_stats.strip():
+            if force or current_stats.strip() != new_stats.strip():
                 stats_path.parent.mkdir(parents=True, exist_ok=True)
                 stats_path.write_text(new_stats, encoding="utf-8")
                 stats_tracker._load()
                 results.append("统计数据")
                 changes_made = True
-            else:
-                results.append("统计数据(已是最新)")
 
-        if results:
+        if changes_made:
+            sync_storage.last_sync_version = new_version
             msg = f"已从 Gist 拉取：{ '、'.join(results) }"
-            if not changes_made:
-                msg = "Gist 内容与本地完全一致，无需更新。"
-            return {"status": "ok", "message": msg, "changes": changes_made}
-        raise HTTPException(status_code=500, detail="Gist 中无有效数据")
+            return {"status": "ok", "message": msg, "changes": True, "version": new_version}
+        
+        # 即使 changes_made 为 False (因为内容刚好一致)，也更新本地版本号
+        sync_storage.last_sync_version = new_version
+        return {"status": "ok", "message": "Gist 内容与本地完全一致，版本号已同步。", "changes": False, "version": new_version}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"应用拉取的数据失败: {e}")
     except HTTPException:
         raise
     except Exception as e:

@@ -128,7 +128,7 @@ export const api = {
   findGist: (token) => request('/api/sync/find-gist', { method: 'POST', body: JSON.stringify({ gist_token: token }) }),
   setupSync: (token, gistId) => request('/api/sync/setup', { method: 'POST', body: JSON.stringify({ gist_token: token, gist_id: gistId || '' }) }),
   pushSync: () => request('/api/sync/push', { method: 'POST' }),
-  pullSync: (token) => request('/api/sync/pull', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
+  pullSync: (token, force = false) => request('/api/sync/pull', { method: 'POST', body: JSON.stringify({ gist_token: token || '', force }) }),
   verifyToken: (token) => request('/api/sync/verify-token', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
   getSyncHistory: () => request('/api/sync/history'),
 

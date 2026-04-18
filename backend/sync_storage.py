@@ -59,5 +59,14 @@ class SyncStorage:
         self._save()
 
     @property
+    def last_sync_version(self) -> str:
+        return self._data.get("last_sync_version", "")
+
+    @last_sync_version.setter
+    def last_sync_version(self, value: str):
+        self._data["last_sync_version"] = value
+        self._save()
+
+    @property
     def has_token(self) -> bool:
         return bool(self._data.get("gist_token", ""))
