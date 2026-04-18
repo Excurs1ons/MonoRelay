@@ -127,6 +127,11 @@ export const api = {
   verifyToken: (token) => request('/api/sync/verify-token', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
   getSyncHistory: () => request('/api/sync/history'),
 
+  // Users (Admin Only)
+  getUsers: () => request('/api/users'),
+  updateUser: (id, data) => request(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id) => request(`/api/users/${id}`, { method: 'DELETE' }),
+
   // Enhanced Features - Analytics
   getAnalyticsOverview: () => request('/api/analytics/overview'),
   getAnalyticsSlowQueries: (limit = 10) => request(`/api/analytics/slow-queries?limit=${limit}`),

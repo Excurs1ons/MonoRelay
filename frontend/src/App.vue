@@ -180,7 +180,7 @@ class="auth-input"
       <!-- Segmented tabs -->
       <nav class="tabs">
         <button
-          v-for="tab in tabs"
+          v-for="tab in filteredTabs"
           :key="tab.path"
           class="tab"
           :class="{ active: route.path === tab.path }"
@@ -198,12 +198,12 @@ class="auth-input"
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore, useLocaleStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, HelpCircle, Info } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, HelpCircle, Info, Users } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -214,6 +214,7 @@ const authError = ref('')
 const serverInfo = ref('')
 const authed = ref(!!authStore.token)
 const isSetupMode = ref(false)
+const userData = ref(null)
 const authMode = ref('key') // 'key' or 'user' or 'sso'
 const ssoEnabled = ref(false)
 const ssoOnly = ref(false)
@@ -240,9 +241,19 @@ const tabs = [
   { path: '/analytics', label: 'common.analytics', icon: BarChart3 },
   { path: '/logs', label: 'common.logs', icon: FileText },
   { path: '/config', label: 'common.config', icon: SlidersHorizontal },
+  { path: '/users', label: '用户', icon: Users, adminOnly: true },
   { path: '/help', label: '帮助', icon: HelpCircle },
   { path: '/about', label: '关于', icon: Info },
 ]
+
+const filteredTabs = computed(() => {
+  return tabs.filter(tab => {
+    if (tab.adminOnly && (!userData.value || !userData.value.is_admin)) {
+      return false
+    }
+    return true
+  })
+})
 
 async function checkSetup() {
 try {
@@ -428,7 +439,14 @@ console.log('fetchInfo: calling api.getInfo()...')
 const data = await api.getInfo()
 console.log('fetchInfo: got data:', data)
 serverInfo.value = `${data.local_ip || '127.0.0.1'}:${data.port || 8787}`
-console.log('fetchInfo: serverInfo set to:', serverInfo.value)
+
+// Fetch user info for admin check
+try {
+  userData.value = await api.getMe()
+} catch (e) {
+  console.log('Failed to fetch user info', e)
+  userData.value = null
+}
 } catch (e) {
 console.error('fetchInfo: error:', e)
 serverInfo.value = 'localhost:8787'
