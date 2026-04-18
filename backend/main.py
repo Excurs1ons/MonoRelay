@@ -271,8 +271,22 @@ async def serve_frontend():
     index = FRONTEND_DIST / "index.html"
     if not index.exists():
         index = FRONTEND_DIR / "index.html"
+    
     if index.exists():
-        return FileResponse(index, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+        # Read and inject a unique build ID to force browser to see it as new
+        content = index.read_text(encoding="utf-8")
+        build_id = str(time.time())
+        if "</body>" in content:
+            content = content.replace("</body>", f"<!-- build-id: {build_id} --></body>")
+        
+        return HTMLResponse(
+            content=content,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     return JSONResponse({"error": "Frontend not found. Run `cd frontend && npm run build` first."}, status_code=404)
 
 
