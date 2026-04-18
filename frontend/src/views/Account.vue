@@ -12,8 +12,11 @@
             <div class="username">{{ user.username }}</div>
             <div class="email">{{ user.email }}</div>
             <div class="badges">
-              <span :class="['badge', user.is_admin ? 'badge-primary' : 'badge-ghost']">
-                {{ user.is_admin ? '管理员' : '普通用户' }}
+              <span v-if="user.is_admin" class="badge badge-admin">
+                <Shield :size="10" class="mr-1" /> 管理员
+              </span>
+              <span v-else class="badge badge-user">
+                <User :size="10" class="mr-1" /> 普通用户
               </span>
               <span class="badge badge-success" v-if="user.sso_provider">
                 已关联 {{ user.sso_provider }}
@@ -72,6 +75,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores'
+import { Shield, User } from 'lucide-vue-next'
 
 const user = ref(null)
 const updating = ref(false)
@@ -197,6 +201,20 @@ onMounted(fetchMe)
 .badge-primary { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
 .badge-ghost { background: rgba(255, 255, 255, 0.05); color: var(--color-text-dim); }
 .badge-success { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+.badge-admin { 
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2)); 
+  color: #a78bfa; 
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+.badge-user { 
+  background: rgba(255, 255, 255, 0.05); 
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-border);
+}
+
+.mr-1 {
+  margin-right: 4px;
+}
 
 .form-group {
   margin-bottom: 14px;
