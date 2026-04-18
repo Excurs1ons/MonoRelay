@@ -65,7 +65,8 @@ class SSOConfig:
 class SSOUser:
     def __init__(self, provider: str, profile: dict, tokens: dict = None):
         self.provider = provider
-        self.provider_id = profile.get("id") or profile.get("sub", "")
+        # Ensure provider_id is a string (GitHub returns numeric IDs)
+        self.provider_id = str(profile.get("id") or profile.get("sub", ""))
         self.username = profile.get("username") or profile.get("login") or profile.get("name", "") or profile.get("email", "").split("@")[0]
         self.email = profile.get("email", "")
         self.name = profile.get("name", "") or profile.get("login", "")
@@ -175,15 +176,30 @@ class OAuthValidator:
                     "code": code,
                     "redirect_uri": redirect_uri,
                 }
-                if code_verifier:
+                # GitHub OAuth standard doesn't use PKCE, sending code_verifier might cause issues with some implementations
+                # although standard says unknown params should be ignored.
+                if code_verifier and provider != OAuthProvider.GITHUB:
                     data["code_verifier"] = code_verifier
-                resp = await AsyncOAuth2Client().post(
-                    "https://github.com/login/oauth/access_token",
-                    data=data,
-                    headers={"Accept": "application/json"},
-                )
-                resp.raise_for_status()
-                return resp.json()
+                    
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        "https://github.com/login/oauth/access_token",
+                        data=data,
+                        headers={"Accept": "application/json"},
+                        timeout=15.0
+                    )
+                    logger.info(f"GitHub token response: status={resp.status_code}, body={resp.text[:500]}")
+                    
+                    if resp.status_code != 200:
+                        logger.error(f"GitHub token exchange failed: {resp.text}")
+                        return None
+                        
+                    res_json = resp.json()
+                    if "error" in res_json:
+                        logger.error(f"GitHub returned error: {res_json.get('error')} - {res_json.get('error_description')}")
+                        return None
+                        
+                    return res_json
             
             elif provider == OAuthProvider.GOOGLE:
                 data = {
@@ -223,18 +239,18 @@ class OAuthValidator:
                     return SSOUser(provider, profile)
             
             elif provider == OAuthProvider.GITHUB:
-                client = AsyncOAuth2Client()
-                resp = await client.get("https://api.github.com/user", headers=headers)
-                resp.raise_for_status()
-                profile = resp.json()
-                
-                email_resp = await client.get("https://api.github.com/user/emails", headers=headers)
-                if email_resp.ok:
-                    emails = email_resp.json()
-                    for e in emails:
-                        if e.get("primary") and e.get("verified"):
-                            profile["email"] = e.get("email")
-                            break
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get("https://api.github.com/user", headers=headers)
+                    resp.raise_for_status()
+                    profile = resp.json()
+                    
+                    email_resp = await client.get("https://api.github.com/user/emails", headers=headers)
+                    if email_resp.status_code == 200:
+                        emails = email_resp.json()
+                        for e in emails:
+                            if e.get("primary") and e.get("verified"):
+                                profile["email"] = e.get("email")
+                                break
                 
                 profile["email"] = profile.get("email") or f"{profile.get('login')}@github.local"
                 return SSOUser(provider, profile)
