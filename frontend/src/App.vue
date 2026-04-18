@@ -217,7 +217,7 @@ import { useRoute } from 'vue-router'
 import { useAuthStore, useLocaleStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, HelpCircle, Info, Users } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, Info, Users, User } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -256,7 +256,7 @@ const tabs = [
   { path: '/logs', label: 'common.logs', icon: FileText },
   { path: '/config', label: 'common.config', icon: SlidersHorizontal },
   { path: '/users', label: '用户', icon: Users, adminOnly: true },
-  { path: '/help', label: '帮助', icon: HelpCircle },
+  { path: '/account', label: '账户', icon: User },
   { path: '/about', label: '关于', icon: Info },
 ]
 
