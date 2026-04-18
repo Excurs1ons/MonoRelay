@@ -33,9 +33,14 @@ class GistSync:
     async def push(self, content: str, stats_content: Optional[str] = None) -> bool:
         """推送配置和统计数据到 Gist。如果 gist_id 为空则创建新的。"""
         try:
-            files = {GIST_FILENAME: {"content": content}}
+            files = {}
+            if content:
+                files[GIST_FILENAME] = {"content": content}
             if stats_content is not None:
                 files[GIST_STATS_FILENAME] = {"content": stats_content}
+
+            if not files:
+                return True
 
             async with httpx.AsyncClient() as client:
                 if not self._gist_id:
