@@ -6,7 +6,13 @@
       <div class="form-group">
         <label>{{ $t('sync.token') }}</label>
         <div class="flex gap-2">
-          <input v-model="token" type="password" :placeholder="$t('sync.tokenPlaceholder')" class="form-input flex-1 mono" />
+          <div class="input-with-toggle flex-1">
+            <input v-model="token" :type="showToken ? 'text' : 'password'" :placeholder="$t('sync.tokenPlaceholder')" class="form-input mono" />
+            <button type="button" class="toggle-btn" @click="showToken = !showToken">
+              <Eye v-if="!showToken" :size="16" />
+              <EyeOff v-else :size="16" />
+            </button>
+          </div>
           <button class="btn btn-ghost" @click="saveToken"><Save :size="14" /></button>
           <button class="btn btn-ghost" @click="verifyToken"><RefreshCw :size="14" /></button>
         </div>
@@ -78,7 +84,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
-import { Save, RefreshCw, Database, FileCode } from 'lucide-vue-next'
+import { Save, RefreshCw, Database, FileCode, Eye, EyeOff } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -91,6 +97,7 @@ const statsSaving = ref(false)
 const statsMsg = ref(null)
 
 const token = ref('')
+const showToken = ref(false)
 const gistId = ref('')
 const busy = ref(false)
 const action = ref('')
@@ -212,6 +219,10 @@ onMounted(() => { fetchConfig(); fetchSyncStatus(); fetchStats() })
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
 .form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
+.input-with-toggle { position: relative; display: flex; flex: 1; }
+.input-with-toggle .form-input { padding-right: 36px; flex: 1; }
+.toggle-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-text-dim); cursor: pointer; padding: 4px; display: flex; align-items: center; }
+.toggle-btn:hover { color: var(--color-text); }
 .form-input:focus { outline: none; border-color: var(--color-accent); }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-sm { font-size: 12px; }
