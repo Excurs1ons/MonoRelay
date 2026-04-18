@@ -2624,7 +2624,8 @@ async def api_sync_pull(request: Request):
                 current_content = config_manager.config_path.read_text(encoding="utf-8")
             
             new_content = data["config"]
-            if current_content.strip() != new_content.strip():
+            # 兼容不同系统的换行符对比
+            if current_content.replace("\r\n", "\n").strip() != new_content.replace("\r\n", "\n").strip():
                 # 写入原始文本（保留注释）
                 config_manager.config_path.write_text(new_content, encoding="utf-8")
                 # 触发重载
