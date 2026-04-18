@@ -1201,6 +1201,41 @@ async def api_update_stats_file(request: Request):
     return {"status": "ok", "message": "统计数据已更新"}
 
 
+@app.get("/api/config/full")
+async def api_get_full_config(request: Request):
+    """Get full configuration object (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Return everything except sensitive secrets if possible
+    cfg = config_manager.config.model_copy(deep=True)
+    return cfg
+
+
+@app.put("/api/config/full")
+async def api_update_full_config(request: Request):
+    """Update full configuration object (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    try:
+        # Validate against Pydantic model
+        new_cfg = AppConfig(**body)
+        
+        # Save to file
+        config_manager.save(new_cfg)
+        
+        # Immediate component reload
+        init_components(new_cfg)
+        
+        return {"status": "ok", "message": "Settings updated"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
+
+
 @app.get("/api/config")
 async def api_get_config():
     """返回原始配置文件内容（保留注释）。"""
