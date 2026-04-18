@@ -176,9 +176,8 @@ class OAuthValidator:
                     "code": code,
                     "redirect_uri": redirect_uri,
                 }
-                # GitHub OAuth standard doesn't use PKCE, sending code_verifier might cause issues with some implementations
-                # although standard says unknown params should be ignored.
-                if code_verifier and provider != OAuthProvider.GITHUB:
+                # GitHub REQUIRES code_verifier if code_challenge was sent in the first step
+                if code_verifier:
                     data["code_verifier"] = code_verifier
                     
                 async with httpx.AsyncClient() as client:
