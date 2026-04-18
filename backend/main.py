@@ -488,29 +488,43 @@ async def api_auth_sso_callback(request: Request):
         return HTMLResponse(content=_build_callback_html(error="Failed to get user info", state=state))
     
     try:
+        cfg = config_manager.config
+        is_admin_configured = sso_user.username in cfg.sso.admin_usernames
+        
         # Find or create user in database
         user = await auth_service.user_manager.get_user_by_sso(sso_user.provider, sso_user.provider_id)
         if not user:
             # Try find by email to link
             existing_user = await auth_service.user_manager.get_user_by_email(sso_user.email)
             if existing_user:
-                user = await auth_service.user_manager.update_user(
-                    existing_user.id, 
-                    sso_provider=sso_user.provider, 
-                    sso_id=sso_user.provider_id
-                )
+                # Update user with SSO info and check admin status
+                update_fields = {
+                    "sso_provider": sso_user.provider,
+                    "sso_id": sso_user.provider_id
+                }
+                if is_admin_configured:
+                    update_fields["is_admin"] = True
+                    
+                user = await auth_service.user_manager.update_user(existing_user.id, **update_fields)
                 logger.info(f"Linked existing user {user.username} to SSO {sso_user.unique_id}")
             else:
                 # Create new user
                 is_first = not await auth_service.has_users()
+                is_admin = is_first or is_admin_configured
+                
                 user = await auth_service.user_manager.create_sso_user(
                     provider=sso_user.provider,
                     sso_id=sso_user.provider_id,
                     username=sso_user.username,
                     email=sso_user.email,
-                    is_admin=is_first
+                    is_admin=is_admin
                 )
-                logger.info(f"Created new SSO user: {user.username}")
+                logger.info(f"Created new SSO user: {user.username} (admin={is_admin})")
+        else:
+            # Existing SSO user, check if we need to upgrade to admin
+            if is_admin_configured and not user.is_admin:
+                user = await auth_service.user_manager.update_user(user.id, is_admin=True)
+                logger.info(f"Upgraded SSO user {user.username} to admin via config")
         
         # Generate local JWT token for MonoRelay using database user_id
         from .auth_utils import create_access_token

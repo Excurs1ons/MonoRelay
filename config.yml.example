@@ -165,3 +165,13 @@ logging:
   db_path: "./data/requests.db"
   max_age_days: 30
   content_preview_length: 200
+
+sso:
+  enabled: false
+  provider: "github"  # github, google, or prismaauth
+  github_client_id: ""
+  github_client_secret: ""
+  # List of SSO usernames to automatically grant admin role upon login/registration
+  admin_usernames:
+    - "your-github-username"
+  sso_only: false  # When true, disables local username/password login

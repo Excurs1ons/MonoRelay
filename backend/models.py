@@ -202,6 +202,7 @@ class SSOConfig(BaseModel):
     local_sso_enabled: bool = False
     local_sso_secret: str = ""
     sso_only: bool = False  # When True, SSO is the only login method (disables local login)
+    admin_usernames: list[str] = Field(default_factory=list)  # List of SSO usernames to grant admin role
 
 
 class AppConfig(BaseModel):
