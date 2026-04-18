@@ -20,10 +20,12 @@
 <!-- Setup mode: First user registration -->
 <div v-if="isSetupMode">
 <p class="auth-subtitle">{{ $t('auth.setupRequired') }}</p>
-<form @submit.prevent="handleRegister">
+<form @submit.prevent="handleRegister" name="register">
 <input
 v-model="registerForm.username"
 type="text"
+name="username"
+autocomplete="username"
 :placeholder="$t('auth.usernamePlaceholder')"
 class="auth-input"
 autofocus
@@ -31,18 +33,24 @@ autofocus
 <input
 v-model="registerForm.email"
 type="email"
+name="email"
+autocomplete="email"
 :placeholder="$t('auth.emailPlaceholder')"
 class="auth-input"
 />
 <input
 v-model="registerForm.password"
 type="password"
+name="password"
+autocomplete="new-password"
 :placeholder="$t('auth.passwordPlaceholder')"
 class="auth-input"
 />
 <input
 v-model="registerForm.confirmPassword"
 type="password"
+name="confirmPassword"
+autocomplete="new-password"
 :placeholder="$t('auth.confirmPasswordPlaceholder')"
 class="auth-input"
 />
@@ -75,10 +83,12 @@ v-if="ssoEnabled"
 </div>
 
 <!-- Access Key Login -->
-<form v-if="authMode === 'key'" @submit.prevent="handleKeyLogin">
+<form v-if="authMode === 'key'" @submit.prevent="handleKeyLogin" name="access-key-login">
 <input
 v-model="inputKey"
 type="password"
+name="access-key"
+autocomplete="current-password"
 :placeholder="$t('auth.placeholder')"
 class="auth-input"
 autofocus
@@ -92,10 +102,12 @@ autofocus
 </form>
 
 <!-- User Login -->
-<form v-else-if="authMode === 'user'" @submit.prevent="handleUserLogin">
+<form v-else-if="authMode === 'user'" @submit.prevent="handleUserLogin" name="login">
 <input
 v-model="loginForm.username"
 type="text"
+name="username"
+autocomplete="username"
 :placeholder="$t('auth.usernamePlaceholder')"
 class="auth-input"
 autofocus
@@ -103,6 +115,8 @@ autofocus
 <input
 v-model="loginForm.password"
 type="password"
+name="password"
+autocomplete="current-password"
 :placeholder="$t('auth.passwordPlaceholder')"
 class="auth-input"
 />

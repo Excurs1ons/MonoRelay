@@ -67,7 +67,6 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
-                headers={"WWW-Authenticate": "Bearer"},
             )
         
         access_token = create_access_token(user.id, config_secret=self.jwt_secret)
