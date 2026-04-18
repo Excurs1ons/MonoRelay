@@ -104,6 +104,10 @@ def init_components(cfg: AppConfig):
     model_router = ModelRouter(cfg)
     auth_service.jwt_secret = cfg.server.jwt_secret or ""
     
+    # Sync gist_id to storage if changed
+    if cfg.sync and cfg.sync.gist_id:
+        sync_storage.gist_id = cfg.sync.gist_id
+
     if cfg.sso and cfg.sso.enabled:
         sso_config = create_sso_config_from_dict(cfg.sso.model_dump())
         if sso_config.is_configured:
@@ -119,6 +123,8 @@ def init_components(cfg: AppConfig):
     for name, pc in cfg.providers.items():
         if pc.enabled:
             key_manager.register_provider(name, pc)
+    
+    logger.info(f"All components reloaded. Registered providers: {list(key_manager._entries.keys())}")
 
 
 @asynccontextmanager
