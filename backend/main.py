@@ -2475,13 +2475,13 @@ async def api_sync_setup(request: Request):
     """配置 Gist 同步，支持 Token 和可选的 gist_id。"""
     try:
         body = await request.json()
-        token = body.get("gist_token", "").strip()
+        token = body.get("gist_token", "")
         gist_id = body.get("gist_id", "").strip()
 
         if not token:
             raise HTTPException(status_code=400, detail="gist_token 不能为空")
 
-        # 清理 Token
+        # 彻底清理 Token：移除所有空白字符（包括换行、空格等）
         token = "".join(token.split())
         
         # 保存 token 到本地存储
