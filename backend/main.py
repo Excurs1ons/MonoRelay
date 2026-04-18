@@ -2621,6 +2621,22 @@ async def api_sync_pull(request: Request):
         raise HTTPException(status_code=500, detail=f"应用拉取的数据失败: {e}")
 
 
+@app.get("/api/sync/gist-info")
+async def api_sync_gist_info(request: Request):
+    """获取 Gist 元数据。"""
+    sc = config_manager.config.sync
+    token = sync_storage.gist_token
+    if not token or not sc.gist_id:
+        return {"status": "error", "message": "Not configured"}
+    
+    from .sync import GistSync
+    sync = GistSync(token, sc.gist_id)
+    info = await sync.get_info()
+    if info:
+        return {"status": "ok", "info": info}
+    return {"status": "error", "message": "Failed to fetch gist info"}
+
+
 @app.post("/api/sync/verify-token")
 async def api_sync_verify_token(request: Request):
     """验证 GitHub Token 是否有效及权限。"""

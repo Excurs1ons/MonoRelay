@@ -151,6 +151,30 @@ class GistSync:
             return False
         return await self.push("", stats_content)
 
+    async def get_info(self) -> Optional[dict]:
+        """获取 Gist 的元数据（创建时间、更新时间）。"""
+        if not self._gist_id:
+            return None
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://api.github.com/gists/{self._gist_id}",
+                    headers=self._headers,
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {
+                        "id": data.get("id"),
+                        "created_at": data.get("created_at"),
+                        "updated_at": data.get("updated_at"),
+                        "description": data.get("description"),
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"获取 Gist 信息失败: {e}")
+            return None
+
     async def get_history(self) -> list[dict]:
         """获取 Gist 提交历史。"""
         if not self._gist_id:

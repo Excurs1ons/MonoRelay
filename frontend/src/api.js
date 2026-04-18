@@ -124,6 +124,7 @@ export const api = {
 
   // Sync
   getSyncStatus: () => request('/api/sync'),
+  getGistInfo: () => request('/api/sync/gist-info'),
   findGist: (token) => request('/api/sync/find-gist', { method: 'POST', body: JSON.stringify({ gist_token: token }) }),
   setupSync: (token, gistId) => request('/api/sync/setup', { method: 'POST', body: JSON.stringify({ gist_token: token, gist_id: gistId || '' }) }),
   pushSync: () => request('/api/sync/push', { method: 'POST' }),
