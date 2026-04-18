@@ -36,6 +36,28 @@
       <div v-if="statusMsg" class="mt-3 p-3 rounded-lg text-sm" :class="statusMsg.ok ? 'toast-success' : 'toast-error'">
         {{ statusMsg.message }}
       </div>
+
+      <!-- Gist Info -->
+      <div v-if="gistInfo" class="mt-4 pt-4 border-t border-dashed border-gray-700/30">
+        <div class="flex items-center gap-2 text-xs text-dim mb-3">
+          <Clock :size="12" />
+          <span>Gist 状态</span>
+        </div>
+        <div class="space-y-2">
+          <div class="flex justify-between text-xs">
+            <span class="text-dim">创建于</span>
+            <span class="mono">{{ formatDate(gistInfo.created_at) }}</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-dim">最后同步</span>
+            <span class="mono">{{ formatDate(gistInfo.updated_at) }}</span>
+          </div>
+          <div class="flex justify-between text-xs font-medium">
+            <span class="text-dim">距离现在</span>
+            <span class="text-accent">{{ timeAgo }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Config Editor -->
@@ -81,10 +103,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
-import { Save, RefreshCw, Database, FileCode, Eye, EyeOff } from 'lucide-vue-next'
+import { Save, RefreshCw, Database, FileCode, Eye, EyeOff, Clock } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -103,6 +125,25 @@ const busy = ref(false)
 const action = ref('')
 const tokenStatus = ref(null)
 const statusMsg = ref(null)
+const gistInfo = ref(null)
+const now = ref(new Date())
+
+let nowTimer = null
+
+const timeAgo = computed(() => {
+  if (!gistInfo.value || !gistInfo.value.updated_at) return '-'
+  const updated = new Date(gistInfo.value.updated_at)
+  const diff = Math.floor((now.value - updated) / 1000)
+  
+  if (diff < 0) return '刚刚'
+  if (diff < 60) return `${diff}秒前`
+  if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
+  
+  const days = Math.floor(diff / 86400)
+  const hours = Math.floor((diff % 86400) / 3600)
+  return `${days}天 ${hours}小时前`
+})
 
 async function fetchConfig() {
   try {
@@ -150,7 +191,19 @@ async function fetchSyncStatus() {
   try {
     const data = await api.getSyncStatus()
     if (data.has_token) token.value = data.token_full || ''
-    if (data.gist_id) gistId.value = data.gist_id
+    if (data.gist_id) {
+      gistId.value = data.gist_id
+      fetchGistInfo()
+    }
+  } catch (e) { console.error(e) }
+}
+
+async function fetchGistInfo() {
+  try {
+    const res = await api.getGistInfo()
+    if (res.status === 'ok') {
+      gistInfo.value = res.info
+    }
   } catch (e) { console.error(e) }
 }
 
@@ -172,7 +225,11 @@ async function verifyToken() {
 async function findGist() {
   try {
     const data = await api.findGist(token.value)
-    if (data.found) { gistId.value = data.gist_id; statusMsg.value = { ok: true, message: `${t('sync.gistFound')}: ${data.gist_id}` } }
+    if (data.found) { 
+      gistId.value = data.gist_id
+      statusMsg.value = { ok: true, message: `${t('sync.gistFound')}: ${data.gist_id}` }
+      fetchGistInfo()
+    }
     else { statusMsg.value = { ok: false, message: data.error || t('sync.gistNotFound') } }
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
 }
@@ -184,6 +241,7 @@ async function pushSync() {
     statusMsg.value = { ok: true, message: data.message || t('sync.pushSuccess') }
     await fetchSyncStatus()
     await fetchConfig()
+    await fetchStats()
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
   finally { busy.value = false }
 }
@@ -193,13 +251,32 @@ async function pullSync() {
   try {
     const data = await api.pullSync(token.value)
     statusMsg.value = { ok: true, message: data.message || t('sync.pullSuccess') }
+    
+    // Refresh everything
     await fetchSyncStatus()
     await fetchConfig()
+    await fetchStats()
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
   finally { busy.value = false }
 }
 
-onMounted(() => { fetchConfig(); fetchSyncStatus(); fetchStats() })
+function formatDate(dateStr) {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleString()
+}
+
+onMounted(() => { 
+  fetchConfig()
+  fetchSyncStatus()
+  fetchStats()
+  nowTimer = setInterval(() => {
+    now.value = new Date()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (nowTimer) clearInterval(nowTimer)
+})
 </script>
 
 <style scoped>
