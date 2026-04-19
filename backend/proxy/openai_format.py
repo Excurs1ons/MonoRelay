@@ -214,7 +214,7 @@ async def handle_chat_completions(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     if provider_cfg.provider_type == "web_reverse":
         return await _handle_web_reverse_chat(
@@ -231,7 +231,7 @@ async def handle_chat_completions(
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/chat/completions")
     headers = _build_headers(provider_cfg, key.key.key)
@@ -279,12 +279,12 @@ async def handle_completions(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/completions")
     headers = _build_headers(provider_cfg, key.key.key)
@@ -335,12 +335,12 @@ async def handle_embeddings(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     headers = _build_headers(provider_cfg, key.key.key)
 
@@ -374,7 +374,7 @@ async def handle_embeddings(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             logger.error(f"Embeddings失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
 async def _stream_chat(
@@ -423,7 +423,7 @@ async def _stream_chat(
                         error_message=error_text,
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
-                    err = json.dumps({"error": {"message": error_text, "status_code": response.status_code}})
+                    err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": response.status_code}})
                     yield f"data: {err}\n\n".encode()
                     yield b"data: [DONE]\n\n"
                     return
@@ -701,7 +701,7 @@ async def _non_stream_chat(
                 error_message=str(e),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
 async def _stream_completion(
@@ -732,7 +732,7 @@ async def _stream_completion(
                         error_message=error_text,
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
-                    err = json.dumps({"error": {"message": error_text, "status_code": response.status_code}})
+                    err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": response.status_code}})
                     yield f"data: {err}\n\n".encode()
                     yield b"data: [DONE]\n\n"
                     return
@@ -858,7 +858,7 @@ async def _non_stream_completion(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             logger.error(f"Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
 async def handle_models_list(config: AppConfig) -> dict:
@@ -908,13 +908,13 @@ async def _handle_web_reverse_chat(
     key = key_manager.select_key(provider_name, key_strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for web_reverse provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for web_reverse provider '{provider_name}'", "type": "no_keys"}}
 
     access_token = key.key.key
     wr_config = provider_cfg.web_reverse
     if not wr_config:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Web reverse config missing for '{provider_name}'", "type": "no_config"}}
+        return {"error": {"message": f"[{provider_name}] Web reverse config missing for '{provider_name}'", "type": "no_config"}}
 
     service = WebReverseService(provider_name, wr_config.model_dump())
     start_time = time.time()
@@ -1012,12 +1012,12 @@ async def handle_audio_transcriptions(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     headers = _build_headers(provider_cfg, key.key.key)
     headers.pop("Content-Type", None)
@@ -1058,7 +1058,7 @@ async def handle_audio_transcriptions(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             logger.error(f"Audio Transcription失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
 async def handle_image_generations(
@@ -1076,12 +1076,12 @@ async def handle_image_generations(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     headers = _build_headers(provider_cfg, key.key.key)
 
@@ -1116,4 +1116,4 @@ async def handle_image_generations(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             logger.error(f"Image Generation失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}

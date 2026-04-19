@@ -39,11 +39,22 @@ class ModelRouter:
             parts = model.rsplit("@", 1)
             if len(parts) == 2:
                 resolved_model = parts[0]
-                explicit_provider = parts[1]
-                # Validate the provider exists
-                if explicit_provider in self.config.providers and self.config.providers[explicit_provider].enabled:
-                    logger.info(f"Model with provider suffix: '{model}' -> model='{resolved_model}', provider='{explicit_provider}'")
-                    return resolved_model, explicit_provider
+                explicit_provider_raw = parts[1]
+                
+                # Normalize requested provider name
+                norm_requested = self._normalize_id(explicit_provider_raw)
+                
+                # Find matching provider in config (normalized)
+                found_provider = None
+                for p_name, pc in self.config.providers.items():
+                    if self._normalize_id(p_name) == norm_requested:
+                        if pc.enabled:
+                            found_provider = p_name
+                        break
+                
+                if found_provider:
+                    logger.info(f"Model with provider suffix: '{model}' -> model='{resolved_model}', provider='{found_provider}'")
+                    return resolved_model, found_provider
 
         # Step 1: Resolve alias
         aliased = self._resolve_alias(model)
@@ -70,7 +81,11 @@ class ModelRouter:
 
     def _resolve_alias(self, model: str) -> Optional[str]:
         aliases = self.config.model_routing.aliases
-        return aliases.get(model)
+        model_norm = self._normalize_id(model)
+        for alias_key, target in aliases.items():
+            if self._normalize_id(alias_key) == model_norm:
+                return target
+        return None
 
     def _resolve_provider_mapping(self, model: str) -> Optional[str]:
         """Match model against provider_mapping fnmatch patterns.
@@ -95,25 +110,35 @@ class ModelRouter:
                 return target
         return model
 
+    def _normalize_id(self, model: str) -> str:
+        """Normalize model ID by lowering case and removing common separators."""
+        return model.lower().replace("-", "").replace("_", "")
+
     def _resolve_provider(self, model: str) -> str:
         """Find the first provider (in config order) that has this model enabled."""
-        # Pass 1: Exact match
+        
+        # Pass 1: Exact match in 'include' list (Sensitive)
         for name, pc in self.config.providers.items():
             if not pc.enabled:
                 continue
             enabled_models = pc.models.get("include", []) if pc.models else []
-            if not enabled_models or model in enabled_models:
+            if model in enabled_models:
                 return name
 
-        # Pass 2: Substring match (either direction)
+        # Pass 2: Insensitive/Normalized match or catch-all
+        model_norm = self._normalize_id(model)
         for name, pc in self.config.providers.items():
             if not pc.enabled:
                 continue
             enabled_models = pc.models.get("include", []) if pc.models else []
+            
+            # If a provider has no include/exclude list, it's a catch-all
             if not enabled_models:
-                return name  # No filter = all models available
+                return name
+                
             for em in enabled_models:
-                if em in model or model in em:
+                em_norm = self._normalize_id(em)
+                if em_norm in model_norm or model_norm in em_norm:
                     return name
 
         # Fallback: first enabled provider
