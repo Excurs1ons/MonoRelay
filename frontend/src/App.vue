@@ -726,7 +726,7 @@ border-color: var(--color-accent);
   gap: 10px;
   font-size: 18px;
   font-weight: 700;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   color: var(--color-text);
   margin: 0;
   position: absolute;
