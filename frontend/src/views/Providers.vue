@@ -16,7 +16,7 @@
             <div class="provider-info">
               <ChevronRight class="provider-arrow" :class="{ expanded: expanded[name] }" :size="16" />
               <span class="badge" :class="getTypeBadgeClass(pc)">
-                {{ pc.provider_type === 'web_reverse' ? '网页反代' : 'API' }}
+                {{ pc.provider_type === 'web_reverse' ? '网页反代' : (pc.provider_type === 'anthropic' ? 'Anthropic' : 'API') }}
               </span>
               <div class="provider-text">
                 <div class="provider-name">{{ name }}</div>
@@ -149,6 +149,7 @@
             <label>{{ $t('providers.type') }}</label>
             <select v-model="editForm.provider_type" class="form-input">
               <option value="api">API</option>
+              <option value="anthropic">Anthropic</option>
               <option value="web_reverse">Web Reverse</option>
             </select>
           </div>
@@ -197,6 +198,7 @@
             <label>{{ $t('providers.type') }}</label>
             <select v-model="addForm.provider_type" class="form-input">
               <option value="api">API</option>
+              <option value="anthropic">Anthropic</option>
               <option value="web_reverse">Web Reverse</option>
             </select>
           </div>
