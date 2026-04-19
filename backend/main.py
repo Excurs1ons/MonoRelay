@@ -860,20 +860,32 @@ async def api_admin_clear_data(request: Request):
 async def api_info():
     """Return server connection info for dashboard."""
     import socket
-    
+    import httpx
+
     cfg = config_manager.config
     public_host = getattr(cfg.server, 'public_host', None) or ""
-    
+
+    local_ip = "127.0.0.1"
     if public_host:
         local_ip = public_host
     else:
+        # Try to get public IP
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("https://api.ipify.org?format=json", timeout=2.0)
+                if resp.status_code == 200:
+                    local_ip = resp.json().get("ip", "127.0.0.1")
+                else:
+                    raise Exception("Failed to get public IP")
         except Exception:
-            local_ip = "127.0.0.1"
+            # Fallback to local IP detection
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                local_ip = "127.0.0.1"
 
     return {
         "local_ip": local_ip,
@@ -881,9 +893,9 @@ async def api_info():
         "port": cfg.server.port,
         "access_key": cfg.server.access_key,
         "access_key_enabled": cfg.server.access_key_enabled,
-        "base_url": f"http://{local_ip}/v1",
+        "turnstile_site_key": cfg.server.turnstile_site_key,
+        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
     }
-
 
 @app.get("/health")
 async def health(turnstile_token: str = ""):

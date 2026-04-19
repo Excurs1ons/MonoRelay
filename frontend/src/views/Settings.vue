@@ -55,7 +55,19 @@
               <label class="text-xs">Secret Key</label>
               <input v-model="config.server.turnstile_secret_key" type="password" class="form-input" placeholder="1x0000000000000000000000000000000AA" />
             </div>
-            <p class="help-text">开启后，登录和注册页面将显示 Cloudflare 人机验证。</p>
+            
+            <div class="help-box">
+              <div class="flex items-center gap-1 mb-1">
+                <HelpCircle :size="12" />
+                <span class="font-semibold">如何获取密钥？</span>
+              </div>
+              <ol class="help-list">
+                <li>访问 <a href="https://dash.cloudflare.com/" target="_blank">Cloudflare 控制台</a></li>
+                <li>进入 <strong>Turnstile</strong> 菜单，点击 <strong>Add Site</strong></li>
+                <li>Domain 填写你的域名或 IP</li>
+                <li>完成后即可获得 Site Key 和 Secret Key</li>
+              </ol>
+            </div>
           </div>
         </div>
         <div class="form-row">
@@ -179,7 +191,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores'
-import { Save, RefreshCw, Eye, EyeOff, X, AlertTriangle, Trash2 } from 'lucide-vue-next'
+import { Save, RefreshCw, Eye, EyeOff, X, AlertTriangle, Trash2, HelpCircle } from 'lucide-vue-next'
 
 const loading = ref(true)
 const saving = ref(false)
@@ -295,6 +307,29 @@ onMounted(fetchFullConfig)
 }
 
 .help-text { font-size: 11px; color: var(--color-text-dim); mt: 4px; }
+
+.help-box {
+  background: rgba(99, 102, 241, 0.05);
+  border: 1px solid rgba(99, 102, 241, 0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+}
+
+.help-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-dim);
+}
+
+.help-list li {
+  margin-bottom: 2px;
+}
+
+.help-list a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
 
 .input-with-toggle { position: relative; display: flex; align-items: center; }
 .input-with-toggle .form-input { padding-right: 36px; }
