@@ -18,7 +18,6 @@
         </h1>
         <div class="header-right">
           <span class="status-dot"></span>
-          <span class="status-text">{{ serverInfo }}</span>
           <button class="btn btn-ghost btn-xs" @click="localeStore.toggle()">
             <Languages :size="14" />
           </button>
