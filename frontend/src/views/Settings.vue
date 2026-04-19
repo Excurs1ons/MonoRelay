@@ -46,7 +46,7 @@
               <span class="slider"></span>
             </label>
           </div>
-          <div v-if="config.server.turnstile_enabled" class="space-y-3 mt-3">
+          <div v-if="config.server && config.server.turnstile_enabled" class="space-y-3 mt-3">
             <div class="form-group">
               <label class="text-xs">Site Key</label>
               <input v-model="config.server.turnstile_site_key" type="text" class="form-input" placeholder="3x00000000000000000000FF" />
@@ -200,7 +200,16 @@ const toast = useToastStore()
 const newAdminName = ref('')
 
 const config = ref({
-  server: { public_host: '', access_key: '', log_level: 'INFO', port: 8787 },
+  server: { 
+    public_host: '', 
+    access_key: '', 
+    access_key_enabled: true,
+    log_level: 'INFO', 
+    port: 8787,
+    turnstile_enabled: false,
+    turnstile_site_key: '',
+    turnstile_secret_key: ''
+  },
   key_selection: { strategy: 'round-robin' },
   tool_calling: { auto_downgrade: true, unsupported_models: [] },
   logging: { enabled: true, max_age_days: 30, content_preview_length: 200 },
