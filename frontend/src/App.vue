@@ -309,10 +309,11 @@ authError.value = e.message || (localeStore.locale === 'zh' ? '注册失败' : '
 }
 }
 function handleLogout() {
-authStore.clearToken()
-inputKey.value = ''
-loginForm.value = { username: '', password: '' }
-registerForm.value = { username: '', email: '', password: '', confirmPassword: '' }
+  authStore.clearToken()
+  inputKey.value = ''
+  loginForm.value = { username: '', password: '' }
+  registerForm.value = { username: '', email: '', password: '', confirmPassword: '' }
+  window.location.href = '/login'
 }
 
 async function fetchInfo() {
