@@ -315,6 +315,26 @@ async def root():
     return await serve_frontend()
 
 
+@app.middleware("http")
+async def catch_all_middleware(request: Request, call_next):
+    path = request.url.path
+    
+    if path.startswith("/api/") or path.startswith("/v1/"):
+        return await call_next(request)
+    
+    response = await call_next(request)
+    
+    if response.status_code == 404 and "." in path.split("/")[-1]:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    
+    return response
+
+
+@app.get("/{full_path:path}")
+async def catch_all(request: Request, full_path: str):
+    return await serve_frontend()
+
+
 @app.get("/api/setup/status")
 async def api_setup_status():
     """Check if initial setup is needed."""

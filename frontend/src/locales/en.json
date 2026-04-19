@@ -47,7 +47,9 @@
     "firstToken": "First Token",
     "streamChunks": "Stream Chunks",
     "noData": "No data available",
-    "provider": "Provider"
+    "provider": "Provider",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "providers": {
     "title": "Provider Management",

@@ -2,12 +2,13 @@
 <Toast />
   <!-- Main app -->
   <div class="app">
-  <div class="bg-layer">
-    <div class="bg-gradient"></div>
-  </div>
-    <div class="container">
-      <!-- Header -->
-      <header class="header">
+    <div class="bg-layer">
+      <div class="bg-gradient"></div>
+    </div>
+
+    <!-- Header - 全屏固定浮层 -->
+    <header class="header">
+      <div class="header-inner">
         <h1>
           <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -18,7 +19,6 @@
         </h1>
         <div class="header-right">
           <span class="status-dot"></span>
-          <span class="status-text">{{ serverInfo }}</span>
           <button class="btn btn-ghost btn-xs" @click="localeStore.toggle()">
             <Languages :size="14" />
           </button>
@@ -26,10 +26,12 @@
             <LogOut :size="14" />
           </button>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <!-- Segmented tabs -->
-      <nav class="tabs">
+    <div class="container" :class="{ 'no-tabs': !authed }">
+      <!-- Segmented tabs - 登录后显示 -->
+      <nav class="tabs" v-if="authed">
         <button
           v-for="tab in filteredTabs"
           :key="tab.path"
@@ -639,184 +641,11 @@ border-color: var(--color-accent);
 .container {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 80px 24px 24px;
   position: relative;
   z-index: 1;
 }
-.header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  margin-bottom: 32px;
-  background: rgba(24, 24, 27, 0.85);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.25),
-    0 4px 16px rgba(0, 0, 0, 0.35);
-}
-
-@media (min-width: 768px) {
-  .header {
-    position: relative;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    margin-bottom: 32px;
-    padding: 16px 24px;
-    background: rgba(24, 24, 27, 0.7);
-  }
-}
-.header h1 {
-  font-size: 20px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.header-logo {
-  width: 24px;
-  height: 24px;
-  color: var(--color-accent);
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-green);
-  display: inline-block;
-  box-shadow: 0 0 8px var(--color-green);
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--color-green); }
-  50% { opacity: 0.6; box-shadow: 0 0 16px var(--color-green); }
-}
-.status-text {
-  font-size: 12px;
-  color: var(--color-text-dim);
-  font-family: var(--font-mono);
-}
-
-.tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  margin-bottom: 32px;
-  background: rgba(24, 24, 27, 0.6);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  padding: 4px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 4px 16px rgba(0, 0, 0, 0.3);
-}
-.tab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 20px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-dim);
-  background: transparent;
-  border: none;
-  transition: all 0.2s;
-  width: 100%;
-  justify-content: center;
-}
-.tab:hover {
-  color: var(--color-text);
-  background: rgba(255,255,255,0.04);
-}
-.tab.active {
-  background: var(--color-accent);
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(249, 115, 22, 0.35);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 8px 16px;
-  border-radius: 8px;
-  border: none;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: var(--font-mono);
-}
-.btn-primary {
-  background: var(--color-accent);
-  color: #fff;
-}
-.btn-primary:hover {
-  background: var(--color-accent-hover);
-  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35);
-}
-.btn-block {
-  width: 100%;
-  justify-content: center;
-  padding: 12px 16px;
-  font-size: 13px;
-}
-.btn-ghost {
-  background: transparent;
-  color: var(--color-text-dim);
-  border: 1px solid var(--color-border);
-}
-.btn-ghost:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-.btn-xs {
-  padding: 6px 12px;
-  font-size: 11px;
-}
-
-@media (max-width: 768px) {
-  .container {
-    padding: 16px;
-  }
-  .header {
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 16px 0;
-    margin-bottom: 20px;
-  }
-  .header h1 {
-    font-size: 18px;
-  }
-  .status-text {
-    display: none;
-  }
-  .header-right {
-    margin-left: auto;
-  }
-  .tabs {
-    margin-bottom: 20px;
-  }
-  .tab {
-    padding: 8px 14px;
-    font-size: 12px;
-  }
+.container.no-tabs {
+  padding-top: 24px;
 }
 </style>
