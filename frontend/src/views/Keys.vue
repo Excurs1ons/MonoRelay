@@ -147,6 +147,7 @@ onMounted(fetchProviders)
 .form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
 .form-input:focus { outline: none; border-color: var(--color-accent); }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.light .modal-overlay { background: rgba(0,0,0,0.3); }
 .modal { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); width: 100%; max-width: 440px; }
 .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 14px; }
 .modal-body { padding: 20px; }
