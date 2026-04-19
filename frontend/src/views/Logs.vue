@@ -176,10 +176,13 @@ tr:last-child td { border-bottom: none; }
 .w-8 { width: 32px; }
 .log-row { cursor: pointer; transition: background 0.15s; }
 .log-row:hover { background: rgba(255,255,255,0.02); }
+.light .log-row:hover { background: rgba(0,0,0,0.03); }
 .row-expanded { background: rgba(255,255,255,0.03); }
+.light .row-expanded { background: rgba(0,0,0,0.05); }
 .expand-icon { display: inline-block; font-size: 10px; color: var(--color-text-dim); transition: transform 0.2s; }
 .expand-icon.rotated { transform: rotate(90deg); }
 .expand-row td { background: rgba(0,0,0,0.2); padding: 0; border-bottom: 1px solid var(--color-border); }
+.light .expand-row td { background: rgba(0,0,0,0.05); }
 .expand-content { padding: 16px 20px; max-height: 400px; overflow-y: auto; }
 .content-block { margin-bottom: 16px; }
 .content-block:last-child { margin-bottom: 0; }
