@@ -260,7 +260,7 @@ def start_foreground(args: argparse.Namespace) -> None:
 
 
 def kill_all_backend_processes() -> None:
-    """强制清理所有 backend.main 进程"""
+    """强制清理所有 MonoRelay 相关的 Python 进程"""
     system = platform.system()
     try:
         if system == "Windows":
@@ -271,7 +271,7 @@ def kill_all_backend_processes() -> None:
             )
             pids = []
             for line in result.stdout.splitlines()[1:]:  # Skip header
-                if "backend.main" in line:
+                if "backend.main" in line or "MonoRelay" in line:
                     parts = line.split(',')
                     if len(parts) >= 2:
                         pid = parts[1].strip('"')
@@ -282,17 +282,29 @@ def kill_all_backend_processes() -> None:
                 subprocess.run(["taskkill", "/F", "/PID", pid],
                                capture_output=True, timeout=5)
         else:
-            # Linux/macOS: pkill -f "python.*backend.main"
+            # Linux/macOS: 查找所有包含 MonoRelay 路径的 Python 进程
             result = subprocess.run(
-                ["pgrep", "-f", "python.*backend.main"],
+                ["ps", "aux"],
                 capture_output=True, text=True, timeout=5,
             )
-            pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            pids = []
+            for line in result.stdout.splitlines():
+                # 匹配包含 MonoRelay 路径的 Python 进程
+                if "python" in line and ("MonoRelay" in line or "backend.main" in line):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pid = parts[1]
+                        if pid.isdigit():
+                            # 排除当前进程
+                            if int(pid) != os.getpid():
+                                pids.append(pid)
             for pid in pids:
-                if pid:
-                    print(f"[*] 清理残留进程 PID={pid}...")
+                print(f"[*] 清理残留进程 PID={pid}...")
+                try:
                     subprocess.run(["kill", "-9", pid],
                                    capture_output=True, timeout=5)
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[!] 清理残留进程时出错: {e}")
 
