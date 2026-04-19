@@ -103,7 +103,12 @@ const copiedOpenAI = ref(false)
 const copiedAnthropic = ref(false)
 
 const openaiUrl = computed(() => serverInfo.value.base_url || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}/v1`)
-const anthropicUrl = computed(() => serverInfo.value.base_url?.replace('/v1', '') || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}`)
+const anthropicUrl = computed(() => {
+  if (serverInfo.value.base_url) {
+    return serverInfo.value.base_url.replace('/v1', '')
+  }
+  return `http://${serverInfo.value.local_ip}:${serverInfo.value.port}`
+})
 
 async function copyToClipboard(text, type) {
   try {
