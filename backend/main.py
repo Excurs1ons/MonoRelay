@@ -297,6 +297,15 @@ async def serve_frontend():
     return JSONResponse({"error": "Frontend not found. Run `cd frontend && npm run build` first."}, status_code=404)
 
 
+# Mount static files BEFORE catch-all routes - order matters!
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+    if (FRONTEND_DIST / "favicon.svg").exists():
+        @app.get("/favicon.svg")
+        async def serve_favicon():
+            return FileResponse(FRONTEND_DIST / "favicon.svg", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
 @app.get("/")
 async def root():
     return await serve_frontend()
@@ -314,14 +323,6 @@ async def catch_all(request: Request, full_path: str):
         
     # Otherwise, serve the frontend index.html for SPA routing
     return await serve_frontend()
-
-
-if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
-    if (FRONTEND_DIST / "favicon.svg").exists():
-        @app.get("/favicon.svg")
-        async def serve_favicon():
-            return FileResponse(FRONTEND_DIST / "favicon.svg", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.get("/api/setup/status")
