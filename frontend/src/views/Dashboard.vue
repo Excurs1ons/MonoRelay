@@ -154,7 +154,11 @@ async function fetch() {
   try {
     rawStats.value = await api.getStats()
     const info = await api.getInfo()
-    serverInfo.value = { local_ip: info.local_ip || '127.0.0.1', port: info.port || 8787 }
+    serverInfo.value = { 
+      local_ip: info.local_ip || '127.0.0.1', 
+      port: info.port || 8787,
+      base_url: info.base_url || ''
+    }
   } catch (e) { console.error(e) }
   finally { loading.value = false }
 }
