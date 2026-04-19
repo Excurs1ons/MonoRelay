@@ -12,6 +12,7 @@ import yaml
 from watchfiles import awatch
 
 from .models import AppConfig
+from .secrets import secrets_manager
 
 logger = logging.getLogger("monorelay.config")
 
@@ -51,6 +52,36 @@ class ConfigManager:
             raw = yaml.safe_load(f)
 
         config = AppConfig(**raw)
+
+        secrets = secrets_manager._db
+        if secrets is None:
+            import asyncio
+            asyncio.run(secrets_manager.init())
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            sso = loop.run_until_complete(secrets_manager.get("sso_client_secret"))
+            if sso:
+                config.sso.client_secret = sso
+            gh = loop.run_until_complete(secrets_manager.get("github_client_secret"))
+            if gh:
+                config.sso.github_client_secret = gh
+            gg = loop.run_until_complete(secrets_manager.get("google_client_secret"))
+            if gg:
+                config.sso.google_client_secret = gg
+            lss = loop.run_until_complete(secrets_manager.get("local_sso_secret"))
+            if lss:
+                config.sso.local_sso_secret = lss
+            jwts = loop.run_until_complete(secrets_manager.get("jwt_secret"))
+            if jwts:
+                config.server.jwt_secret = jwts
+            tss = loop.run_until_complete(secrets_manager.get("turnstile_secret_key"))
+            if tss:
+                config.server.turnstile_secret_key = tss
+        finally:
+            loop.close()
+
         logger.info(f"配置已加载: {self._config_path}")
         logger.info(f"已启用的提供商: {[k for k, v in config.providers.items() if v.enabled]}")
         return config

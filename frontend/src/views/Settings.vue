@@ -269,8 +269,15 @@ async function fetchFullConfig() {
 async function saveConfig() {
   saving.value = true
   try {
-    // We'll need to add updateFullConfig to api.js
-    await api.updateFullConfig(config.value)
+    const secrets = {
+      sso_client_secret: config.value.sso.client_secret,
+      github_client_secret: config.value.sso.github_client_secret,
+      google_client_secret: config.value.sso.google_client_secret,
+      local_sso_secret: config.value.sso.local_sso_secret,
+      jwt_secret: config.value.server.jwt_secret,
+      turnstile_secret_key: config.value.server.turnstile_secret_key,
+    }
+    await api.updateFullConfig({ ...config.value, secrets })
     toast.success('设置已保存并热重载')
   } catch (e) {
     toast.error('保存失败: ' + e.message)

@@ -172,14 +172,15 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8787
     access_key: str = "prisma-relay-change-me"
-    access_key_enabled: bool = True  # When False, API requests must use User/SSO JWT tokens
+    access_key_enabled: bool = True
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     public_host: str = ""
-    jwt_secret: str = ""
     turnstile_enabled: bool = False
     turnstile_site_key: str = ""
-    turnstile_secret_key: str = ""
+
+    jwt_secret: str = Field(default="", exclude=True)
+    turnstile_secret_key: str = Field(default="", exclude=True)
 
 
 class KeySelectionConfig(BaseModel):
@@ -197,16 +198,17 @@ class SSOConfig(BaseModel):
     provider: str = "github"
     prismaauth_url: str = "http://localhost:8080"
     client_id: str = ""
-    client_secret: str = ""
     scopes: list[str] = ["openid", "profile", "email"]
     github_client_id: str = ""
-    github_client_secret: str = ""
     google_client_id: str = ""
-    google_client_secret: str = ""
     local_sso_enabled: bool = False
-    local_sso_secret: str = ""
-    sso_only: bool = False  # When True, SSO is the only login method (disables local login)
-    admin_usernames: list[str] = Field(default_factory=list)  # List of SSO usernames to grant admin role
+    sso_only: bool = False
+    admin_usernames: list[str] = Field(default_factory=list)
+
+    client_secret: str = Field(default="", exclude=True)
+    github_client_secret: str = Field(default="", exclude=True)
+    google_client_secret: str = Field(default="", exclude=True)
+    local_sso_secret: str = Field(default="", exclude=True)
 
 
 class AppConfig(BaseModel):

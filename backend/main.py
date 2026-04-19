@@ -43,6 +43,7 @@ from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
 from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
+from .secrets import secrets_manager
 from .cache import response_cache
 from .usage_tracker import usage_tracker
 from .auth_service import AuthService
@@ -1327,32 +1328,40 @@ async def api_update_stats_file(request: Request):
 
 @app.get("/api/config/full")
 async def api_get_full_config(request: Request):
-    """Get full configuration object (admin only)."""
     user = getattr(request.state, "user", None)
     if not user or not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    # Return everything except sensitive secrets if possible
     cfg = config_manager.config.model_copy(deep=True)
-    return cfg
+    
+    all_secrets = await secrets_manager.get_all()
+    secrets = {}
+    for key in ["sso_client_secret", "github_client_secret", "google_client_secret", "local_sso_secret", "jwt_secret", "turnstile_secret_key"]:
+        secrets[key] = all_secrets.get(key, "")
+    
+    result = cfg.model_dump(mode="json")
+    result["secrets"] = secrets
+    return result
 
 
 @app.put("/api/config/full")
 async def api_update_full_config(request: Request):
-    """Update full configuration object (admin only)."""
     user = getattr(request.state, "user", None)
     if not user or not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     
     body = await request.json()
     try:
-        # Validate against Pydantic model
         new_cfg = AppConfig(**body)
         
-        # Save to file
+        secrets = body.get("secrets", {})
+        for key, value in secrets.items():
+            if value:
+                await secrets_manager.set(key, value)
+            else:
+                await secrets_manager.delete(key)
+
         config_manager.save(new_cfg)
-        
-        # Immediate component reload
         init_components(new_cfg)
         
         return {"status": "ok", "message": "Settings updated"}
