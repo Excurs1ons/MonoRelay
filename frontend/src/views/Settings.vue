@@ -76,7 +76,7 @@
             </label>
           </div>
           <div class="input-with-toggle" v-if="config.server.access_key_enabled">
-            <input v-model="config.server.access_key" :type="showAccessKey ? 'text' : 'password'" class="form-input mono" />
+            <input v-model="config.server.access_key" :type="showAccessKey ? 'text' : 'password'" class="form-input mono" autocomplete="off" />
             <div class="input-actions">
               <button class="toggle-btn" @click="generateRandomKey" title="随机生成">
                 <RefreshCw :size="14" />
@@ -105,7 +105,7 @@
             </div>
             <div class="form-group">
               <label class="text-xs">Secret Key</label>
-              <input v-model="config.server.turnstile_secret_key" type="password" class="form-input" placeholder="1x0000000000000000000000000000000AA" />
+              <input v-model="config.server.turnstile_secret_key" type="password" class="form-input" placeholder="1x0000000000000000000000000000000AA" autocomplete="off" />
             </div>
             
             <div class="help-box">
@@ -199,19 +199,19 @@
         </div>
         <div class="form-group" v-if="config.sso.provider === 'github'">
           <label>GitHub Client ID</label>
-          <input v-model="config.sso.github_client_id" type="text" class="auth-input" placeholder="GitHub OAuth App Client ID" />
+          <input v-model="config.sso.github_client_id" type="text" class="auth-input" placeholder="GitHub OAuth App Client ID" autocomplete="off" />
         </div>
         <div class="form-group" v-if="config.sso.provider === 'github'">
           <label>GitHub Client Secret</label>
-          <input v-model="config.sso.github_client_secret" type="password" class="auth-input" placeholder="GitHub OAuth App Client Secret" />
+          <input v-model="config.sso.github_client_secret" type="password" class="auth-input" placeholder="GitHub OAuth App Client Secret" autocomplete="off" />
         </div>
         <div class="form-group" v-if="config.sso.provider === 'google'">
           <label>Google Client ID</label>
-          <input v-model="config.sso.google_client_id" type="text" class="auth-input" placeholder="Google OAuth Client ID" />
+          <input v-model="config.sso.google_client_id" type="text" class="auth-input" placeholder="Google OAuth Client ID" autocomplete="off" />
         </div>
         <div class="form-group" v-if="config.sso.provider === 'google'">
           <label>Google Client Secret</label>
-          <input v-model="config.sso.google_client_secret" type="password" class="auth-input" placeholder="Google OAuth Client Secret" />
+          <input v-model="config.sso.google_client_secret" type="password" class="auth-input" placeholder="Google OAuth Client Secret" autocomplete="off" />
         </div>
         <div class="form-group" v-if="config.sso.provider === 'prismaauth'">
           <label>PrismaAuth URL</label>
