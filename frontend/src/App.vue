@@ -876,7 +876,7 @@ border-color: var(--color-accent);
   left: 0;
   bottom: 0;
   width: 160px;
-  background: rgba(24, 24, 27, 0.95);
+  background: rgba(24, 24, 27, 0.5);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
   border-right: 1px solid var(--color-border);
