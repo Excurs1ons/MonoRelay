@@ -315,20 +315,6 @@ async def root():
     return await serve_frontend()
 
 
-@app.get("/{full_path:path}")
-async def catch_all(request: Request, full_path: str):
-    # If it's an API or V1 route that wasn't caught, return 404
-    if full_path.startswith("api/") or full_path.startswith("v1/"):
-        return JSONResponse({"error": "Endpoint not found"}, status_code=404)
-    
-    # If it's looking for a file that doesn't exist, also return 404 to avoid serving HTML for missing assets
-    if "." in full_path.split("/")[-1]:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-        
-    # Otherwise, serve the frontend index.html for SPA routing
-    return await serve_frontend()
-
-
 @app.get("/api/setup/status")
 async def api_setup_status():
     """Check if initial setup is needed."""
@@ -2991,6 +2977,12 @@ async def api_webdav_pull(request: Request):
         raise HTTPException(status_code=500, detail=f"WebDAV pull failed: {e}")
 
     return {"status": "ok", "results": results}
+
+
+@app.get("/api/debug/routes")
+async def debug_routes():
+    routes = [r.path for r in app.routes if hasattr(r, 'path')]
+    return {"routes": routes}
 
 
 @app.get("/{full_path:path}")
