@@ -12,6 +12,7 @@ import yaml
 from watchfiles import awatch
 
 from .models import AppConfig
+from .secrets import secrets_manager
 
 logger = logging.getLogger("monorelay.config")
 
@@ -51,6 +52,37 @@ class ConfigManager:
             raw = yaml.safe_load(f)
 
         config = AppConfig(**raw)
+
+        import sqlite3
+        db_path = secrets_manager.db_path
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT key, value FROM secrets")
+                for row in cur.fetchall():
+                    key, value = row["key"], row["value"]
+                    if key == "sso_provider":
+                        config.sso.provider = value
+                    elif key == "github_client_id":
+                        config.sso.github_client_id = value
+                    elif key == "github_client_secret":
+                        config.sso.github_client_secret = value
+                    elif key == "sso_client_secret":
+                        config.sso.client_secret = value
+                    elif key == "google_client_secret":
+                        config.sso.google_client_secret = value
+                    elif key == "local_sso_secret":
+                        config.sso.local_sso_secret = value
+                    elif key == "jwt_secret":
+                        config.server.jwt_secret = value
+                    elif key == "turnstile_secret_key":
+                        config.server.turnstile_secret_key = value
+                conn.close()
+            except Exception as e:
+                logger.warning(f"加载secrets失败: {e}")
+
         logger.info(f"配置已加载: {self._config_path}")
         logger.info(f"已启用的提供商: {[k for k, v in config.providers.items() if v.enabled]}")
         return config

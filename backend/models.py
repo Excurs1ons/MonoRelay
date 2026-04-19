@@ -109,13 +109,14 @@ class ProviderConfig(BaseModel):
     rate_limit_cooldown: int = 60
     timeout: int = 120
     models: dict[str, list[str]] = Field(default_factory=lambda: {"include": [], "exclude": []})
+    remote_models_cache: list[dict] = Field(default_factory=list)  # 缓存的远程模型列表
     headers: dict[str, str] = Field(default_factory=dict)
     cloaking: RequestCloakingConfig = Field(default_factory=RequestCloakingConfig)
     web_reverse: Optional[WebReverseConfig] = None
     test_model: str = ""
     console_url: str = ""
-    cost_per_m_input: float = 0.0  # 每百万输入 Token 费用（USD）
-    cost_per_m_output: float = 0.0  # 每百万输出 Token 费用（USD）
+    cost_per_m_input: float = 0.0
+    cost_per_m_output: float = 0.0
 
 
 class ComplexityConfig(BaseModel):
@@ -171,9 +172,15 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8787
     access_key: str = "prisma-relay-change-me"
+    access_key_enabled: bool = True
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     public_host: str = ""
+    turnstile_enabled: bool = False
+    turnstile_site_key: str = ""
+
+    jwt_secret: str = Field(default="", exclude=True)
+    turnstile_secret_key: str = Field(default="", exclude=True)
 
 
 class KeySelectionConfig(BaseModel):
@@ -186,6 +193,24 @@ class SyncConfig(BaseModel):
     gist_id_stats: str = ""
 
 
+class SSOConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "github"
+    prismaauth_url: str = "http://localhost:8080"
+    client_id: str = ""
+    scopes: list[str] = ["openid", "profile", "email"]
+    github_client_id: str = ""
+    google_client_id: str = ""
+    local_sso_enabled: bool = False
+    sso_only: bool = False
+    admin_usernames: list[str] = Field(default_factory=list)
+
+    client_secret: str = Field(default="", exclude=True)
+    github_client_secret: str = Field(default="", exclude=True)
+    google_client_secret: str = Field(default="", exclude=True)
+    local_sso_secret: str = Field(default="", exclude=True)
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
@@ -194,3 +219,4 @@ class AppConfig(BaseModel):
     tool_calling: ToolCallingConfig = Field(default_factory=ToolCallingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
+    sso: SSOConfig = Field(default_factory=SSOConfig)

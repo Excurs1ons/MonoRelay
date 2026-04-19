@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,56 @@ logger = logging.getLogger("monorelay.sync")
 GIST_FILENAME = "config.yml"
 GIST_STATS_FILENAME = "stats.json"
 GIST_DESCRIPTION = "MonoRelay Configuration"
+
+SECRET_KEYS = {
+    "client_secret",
+    "github_client_secret",
+    "google_client_secret",
+    "local_sso_secret",
+    "jwt_secret",
+    "turnstile_secret_key",
+    "access_key",
+    "sync_token",
+    "gist_token",
+    "webdav_password",
+}
+
+
+def filter_secrets_from_yaml(content: str) -> str:
+    """从 YAML 配置中移除 secrets，只保留下游 API keys。"""
+    lines = content.split("\n")
+    in_secret_block = False
+    skip_count = 0
+    
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        
+        if skip_count > 0:
+            skip_count -= 1
+            continue
+        
+        if not line.startswith(" ") and not line.startswith("\t"):
+            in_secret_block = False
+        
+        is_secret = False
+        for secret_key in SECRET_KEYS:
+            if re.match(rf"^\s*{secret_key}:\s*", line) or re.match(rf"^\s*-\s*{secret_key}:\s*", line):
+                is_secret = True
+                break
+        
+        if is_secret:
+            if ":" in line and not line.strip().endswith(":"):
+                key = line.split(":")[0].strip().replace("-", "").strip()
+                if any(s in key.lower() for s in SECRET_KEYS):
+                    continue
+            indent = len(line) - len(line.lstrip())
+            result.append(" " * indent + "# " + line.strip() + "  # filtered")
+            continue
+            
+        result.append(line)
+    
+    return "\n".join(result)
 
 
 class GistSync:
@@ -30,12 +81,16 @@ class GistSync:
     def gist_id(self) -> str:
         return self._gist_id
 
-    async def push(self, content: str, stats_content: Optional[str] = None) -> bool:
-        """推送配置和统计数据到 Gist。如果 gist_id 为空则创建新的。"""
+    async def push(self, content: str, stats_content: Optional[str] = None) -> tuple[bool, str]:
         try:
-            files = {GIST_FILENAME: {"content": content}}
+            files = {}
+            if content:
+                files[GIST_FILENAME] = {"content": filter_secrets_from_yaml(content)}
             if stats_content is not None:
                 files[GIST_STATS_FILENAME] = {"content": stats_content}
+
+            if not files:
+                return True, ""
 
             async with httpx.AsyncClient() as client:
                 if not self._gist_id:
@@ -53,11 +108,12 @@ class GistSync:
                     if resp.status_code == 201:
                         data = resp.json()
                         self._gist_id = data["id"]
-                        logger.info(f"Gist 已创建: {self._gist_id}")
-                        return True
+                        version = data.get("history", [{}])[0].get("version", "")
+                        logger.info(f"Gist 已创建: {self._gist_id}, version: {version}")
+                        return True, version
                     else:
                         logger.error(f"创建 Gist 失败: {resp.status_code} {resp.text}")
-                        return False
+                        return False, ""
                 else:
                     # 更新已有 Gist
                     resp = await client.patch(
@@ -67,43 +123,19 @@ class GistSync:
                         timeout=15.0,
                     )
                     if resp.status_code == 200:
-                        logger.info(f"Gist 已更新: {self._gist_id}")
-                        return True
+                        data = resp.json()
+                        version = data.get("history", [{}])[0].get("version", "")
+                        logger.info(f"Gist 已更新: {self._gist_id}, version: {version}")
+                        return True, version
                     else:
                         logger.error(f"更新 Gist 失败: {resp.status_code} {resp.text}")
-                        return False
+                        return False, ""
         except Exception as e:
             logger.error(f"Gist 推送异常: {e}")
-            return False
-
-    async def find_gist_by_description(self) -> Optional[str]:
-        """通过描述查找 MonoRelay Configuration 的 Gist。"""
-        try:
-            async with httpx.AsyncClient() as client:
-                page = 1
-                while page <= 3:  # 最多查找前 3 页（30 个 Gist）
-                    resp = await client.get(
-                        f"https://api.github.com/gists?per_page=10&page={page}",
-                        headers=self._headers,
-                        timeout=10.0,
-                    )
-                    if resp.status_code != 200:
-                        break
-                    gists = resp.json()
-                    if not gists:
-                        break
-                    for g in gists:
-                        if g.get("description") == GIST_DESCRIPTION:
-                            logger.info(f"找到 Gist: {g['id']}")
-                            return g["id"]
-                    page += 1
-            return None
-        except Exception as e:
-            logger.error(f"查找 Gist 失败: {e}")
-            return None
+            return False, ""
 
     async def pull(self) -> dict[str, str]:
-        """从 Gist 拉取配置和统计数据。返回包含 'config' 和可选 'stats' 的字典。"""
+        """从 Gist 拉取配置和统计数据。返回字典，包含 'config', 'stats' 和 'version'。"""
         if not self._gist_id:
             logger.error("未配置 gist_id，无法拉取")
             return {}
@@ -127,8 +159,10 @@ class GistSync:
                     if stats_file and "content" in stats_file:
                         result["stats"] = stats_file["content"]
 
+                    result["version"] = data.get("history", [{}])[0].get("version", "")
+
                     if result:
-                        logger.info(f"Gist 已拉取: {self._gist_id}")
+                        logger.info(f"Gist 已拉取: {self._gist_id}, version: {result['version']}")
                     else:
                         logger.error("未找到 Gist 文件")
                     return result
@@ -150,6 +184,31 @@ class GistSync:
             logger.error("未配置 gist_id，无法推送统计")
             return False
         return await self.push("", stats_content)
+
+    async def get_info(self) -> Optional[dict]:
+        """获取 Gist 的元数据（创建时间、更新时间）。"""
+        if not self._gist_id:
+            return None
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://api.github.com/gists/{self._gist_id}",
+                    headers=self._headers,
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {
+                        "id": data.get("id"),
+                        "created_at": data.get("created_at"),
+                        "updated_at": data.get("updated_at"),
+                        "description": data.get("description"),
+                        "version": data.get("history", [{}])[0].get("version", ""),
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"获取 Gist 信息失败: {e}")
+            return None
 
     async def get_history(self) -> list[dict]:
         """获取 Gist 提交历史。"""
