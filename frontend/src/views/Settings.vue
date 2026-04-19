@@ -273,13 +273,14 @@ const saving = ref(false)
 const showAccessKey = ref(false)
 const toast = useToastStore()
 const newAdminName = ref('')
+const adminUsernamesText = ref('')
 
 const config = ref({
-  server: { 
-    public_host: '', 
-    access_key: '', 
+  server: {
+    public_host: '',
+    access_key: '',
     access_key_enabled: true,
-    log_level: 'INFO', 
+    log_level: 'INFO',
     port: 8787,
     turnstile_enabled: false,
     turnstile_site_key: '',
@@ -288,11 +289,10 @@ const config = ref({
   key_selection: { strategy: 'round-robin' },
   tool_calling: { auto_downgrade: true, unsupported_models: [] },
   logging: { enabled: true, max_age_days: 30, content_preview_length: 200 },
-  sso: { 
+  sso: {
     provider: 'github',
-    sso_only: false, 
+    sso_only: false,
     admin_usernames: [],
-    adminUsernamesText: '',
     github_client_id: '',
     github_client_secret: '',
     google_client_id: '',
@@ -307,7 +307,7 @@ async function fetchFullConfig() {
     // We'll need to add a getFullConfig to api.js
     const data = await api.getFullConfig()
     config.value = data
-    adminUsernamesText = (data.sso?.admin_usernames || []).join(',')
+    adminUsernamesText.value = (data.sso?.admin_usernames || []).join(',')
   } catch (e) {
     toast.error('获取配置失败: ' + e.message)
   } finally {
@@ -345,7 +345,7 @@ function generateRandomKey() {
 }
 
 function updateAdminUsernames() {
-  const names = adminUsernamesText.split(',').map(s => s.trim()).filter(s => s)
+  const names = adminUsernamesText.value.split(',').map(s => s.trim()).filter(s => s)
   config.value.sso.admin_usernames = names
 }
 
