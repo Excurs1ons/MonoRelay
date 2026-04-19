@@ -69,11 +69,4 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
-  const token = localStorage.getItem('access_token')
-  if (!token && to.path !== '/') {
-    return '/'
-  }
-})
-
 export default router

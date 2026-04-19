@@ -502,10 +502,16 @@ serverInfo.value = 'localhost:8787'
 }
 
 onMounted(() => {
+const token = localStorage.getItem('access_token')
+if (!token && route.path !== '/') {
+  window.location.href = '/'
+  return
+}
+
 if (authed.value) {
-fetchInfo()
+  fetchInfo()
 } else {
-checkSetup()
+  checkSetup()
 }
 
 // Listen for storage changes (from SSO callback in popup)
