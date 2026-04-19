@@ -19,54 +19,49 @@ MonoRelay 是一个统一的 LLM API 代理服务，支持同时连接多个 LLM
 - 根据模型名称自动选择提供商
 
 ### 3. 密钥管理
-- 安全存储多个 API Key
-- 支持权重配置
+- 安全存储多个 API Key，支持权重、额度、速率限制配置
+- 支持密钥轮询与自动降级
 
-### 4. 请求日志
-- 完整记录每次请求的详细信息
-- 包含：耗时、首字延迟、Token 数量、请求参数、请求/响应内容
+### 4. 请求日志与监控
+- 完整记录每次请求的详细信息（耗时、首字延迟、Token 数量、请求参数）
+- 仪表盘实时统计模型请求排行榜与错误率
 
-### 5. 配置同步
-- 支持 GitHub Gist 同步配置
+### 5. 多用户与权限
+- 支持本地账号系统与 **GitHub OAuth SSO** 登录
+- 完善的用户管理：启用/禁用、权限切换、删除用户
+- 管理员白名单配置（基于 SSO 用户名）
+
+### 6. 配置同步
+- 基于 **GitHub Gist** 的配置同步，支持原始 YAML 文本（保留注释）
+- 版本化管理，支持增量对比与强制覆盖
 
 ---
 
 ## 近期更新
 
-### UI/视觉
-- [x] 按 ociturner 设计文档重制视觉表现
-- [x] 磨砂玻璃效果和 gradient 背景
-- [x] 添加 grain 纹理
+### 认证与安全
+- [x] 完整实现 GitHub SSO 登录流程
+- [x] 增加 **admin_usernames** 白名单，自动映射 SSO 用户为管理员
+- [x] 增加用户管理页面（Users），支持管理员增删改查
+- [x] 支持用户修改个人密码
+- [x] 移除 401 响应的 WWW-Authenticate 头部，防止浏览器弹出原生登录框
 
-### Provider 管理
-- [x] 测试弹窗支持批量测试
-- [x] API Key 编辑窗口显示已存储密钥数量
-- [x] 测试模型下拉框从已启用模型列表选择
+### 全局设置
+- [x] 新增 **Settings** 页面，图形化管理服务器核心参数
+- [x] 支持设置公网 Host、端口、访问密钥、日志保留天数等
+- [x] 支持配置密钥选择策略和工具调用降级
 
-### 模型管理
-- [x] 模型列表缓存到本地配置（持久化）
-- [x] 切换 provider 时自动加载缓存
-- [x] 每个模型 ID 添加 provider 后缀（便于下游区分）
+### 同步系统
+- [x] 同步逻辑重构为“原始文本”模式，**完美保留 config.yml 中的注释和格式**
+- [x] 引入版本号（Commit Hash）对比，支持检测“本地已是最新”
+- [x] 增加“强制拉取覆盖”功能
+- [x] 同步界面显示 Gist 创建/更新时间以及友好的人性化时间差（如：2小时前）
 
-### API 变更
-- [x] `/v1/models` 和 `/api/providers/{name}/models/remote` 改为公开 API
-- [x] 请求处理时解析 provider 后缀映射回原 ID
-
-### 请求日志
-- [x] 添加首字延迟（first_token_ms）
-- [x] 记录完整请求/响应内容（纯文本，非 JSON）
-- [x] 记录请求参数（temperature, top_p, presence_penalty, frequency_penalty, max_tokens）
-- [x] 日志条目支持展开查看详情
-- [x] 耗时/首字延迟 >= 1000ms 时自动转为秒显示
-
-### 密钥管理
-- [x] 添加 Keys 页面入口
-- [x] 删除密钥时提示无法删除最后一个密钥
-- [x] Keys 页面改用全局 Toast 提示
-
-### 其他
-- [x] GitHub Token 输入框添加小眼睛显示/隐藏明文
-- [x] 添加使用指南页面（/help）
+### UI/UX 优化
+- [x] 页面重构：Help 移至 About 页面入口，侧边栏新增“设置”与“账户”
+- [x] 文本框增加字符数与行数统计
+- [x] 增强用户组视觉区分（精美紫色渐变 Admin 标签）
+- [x] 后端 `index.html` 注入动态 build-id 强制刷新浏览器缓存
 
 ---
 
@@ -84,105 +79,40 @@ curl -X POST http://localhost:8787/v1/chat/completions \
   }'
 ```
 
-### 获取模型列表
+---
 
-```bash
-curl http://localhost:8787/v1/models
-```
+## 页面功能映射
 
-### 模型 ID 格式
-
-| 示例 | 说明 |
-|------|------|
-| `gpt-4o@openai` | OpenAI GPT-4o |
-| `claude-sonnet-4@anthropic` | Anthropic Claude Sonnet 4 |
-| `llama-3.1-8b-instant@groq` | Groq Llama |
-| `z-ai/glm4.7@nvidia` | NVIDIA NIM GLM |
-| `minimax-m2.5-free@opencode` | OpenCode Zen 免费模型 |
+| 页面 | 权限 | 功能说明 |
+|------|------|------|
+| **Dashboard** | 所有用户 | 总览统计、模型使用排行榜、快速状态检查 |
+| **Providers** | 管理员 | 添加/编辑/测试/删除提供商及其 API Key |
+| **Keys** | 管理员 | 集中管理所有提供商的密钥状态 |
+| **Models** | 管理员 | 远程模型获取、本地模型别名与白名单管理 |
+| **Logs** | 管理员 | 完整请求审计、详情展开、参数查看 |
+| **Settings** | 管理员 | **(New)** 服务器核心配置、鉴权设置、策略配置 |
+| **Users** | 管理员 | **(New)** 用户列表、权限切换、账户状态控制 |
+| **Config** | 管理员 | YAML 源码编辑、Gist 备份与恢复 |
+| **Account** | 所有用户 | **(New)** 个人资料查看、密码修改 |
+| **Help** | 所有用户 | 完整使用指南与 API 参考 |
 
 ---
 
-## 免费模型推荐
+## 配置说明 (config.yml)
 
-### Groq
-- **官网**: groq.com
-- **Base URL**: `https://api.groq.com/openai/v1`
-- **免费模型**: llama-3.1-8b-instant, gemma2-9b-it
+```yaml
+server:
+  port: 8787
+  access_key: "your-access-key" # 用于 API 调用
+  public_host: "relay.example.com" # 可选，对外展示地址
 
-### OpenRouter
-- **官网**: openrouter.ai
-- **Base URL**: `https://openrouter.ai/api/v1`
-- **免费模型**: 多种免费模型可选
-
-### NVIDIA NIM
-- **官网**: build.nvidia.com
-- **Base URL**: `https://integrate.api.nvidia.com/v1`
-- **免费模型**: llama-3.1-8b-instant, nemotron-4-340b
-
-### OpenCode Zen
-- **官网**: opencode.ai/zen
-- **Base URL**: `https://opencode.ai/zen/v1`
-- **免费模型**:
-  - `big-pickle` - OpenCode 独家，完全免费
-  - `minimax-m2.5-free`
-  - `trinity-large-preview-free`
-  - `nemotron-3-super-free`
-  - `kimi-k2.5-free`, `glm-4.7-free` 等
-
----
-
-## 本地部署
-
-```bash
-# 启动服务
-./start.sh
-
-# 或使用 Python
-python3 start.py --bg
-
-# 重启
-python3 start.py --restart
-
-# 停止
-python3 start.py --stop
+sso:
+  enabled: true
+  provider: "github"
+  github_client_id: "..."
+  github_client_secret: "..."
+  admin_usernames: ["YourGitHubUser"] # 指定管理员
 ```
 
 默认端口: **8787**
-
----
-
-## 配置说明
-
-配置文件位于 `config.yml`，主要配置项：
-
-- `server.access_key`: API 访问密钥
-- `server.jwt_secret`: JWT 密钥
-- `providers`: 各提供商配置
-- `model_routing`: 模型路由规则
-
----
-
-## 页面功能
-
-| 页面 | 功能 |
-|------|------|
-| Dashboard | 总览统计、模型排行榜 |
-| Providers | 添加/编辑提供商、测试连接 |
-| Keys | 密钥管理 |
-| Models | 模型列表管理、批量启用 |
-| Logs | 请求日志、详情查看 |
-| Analytics | 数据分析 |
-| Config | 系统配置、GitHub 同步 |
-| Help | 使用指南 |
-
----
-
-## 更新日志
-
-### vRecent
-- 添加使用指南页面
-- 请求日志显示参数详情
-- 时间显示优化（自动转换秒）
-- Token 明文显示小眼睛
-- 模型列表不再添加 @provider 后缀（便于测试）
-- /v1/models 和远程模型列表保持 @provider 后缀（便于下游区分）
+默认访问路径: `http://localhost:8787`

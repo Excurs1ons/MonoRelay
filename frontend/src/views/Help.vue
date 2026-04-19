@@ -20,49 +20,32 @@ const sections = [
       <p>MonoRelay 是一个统一的 LLM API 代理服务，支持同时连接多个 LLM 提供商（如 OpenAI、Anthropic、Groq、NVIDIA、OpenRouter 等），通过单一的 OpenAI 兼容接口对外提供服务。</p>
       <p><strong>核心功能：</strong></p>
       <ul>
-        <li>多提供商统一管理 - 一个入口访问所有模型</li>
-        <li>自动路由 - 根据模型名称自动选择提供商</li>
-        <li>密钥管理 - 安全存储多个 API Key</li>
-        <li>请求日志 - 完整记录每次请求的详细信息</li>
-        <li>配置同步 - 支持 GitHub Gist 同步配置</li>
+        <li><strong>多提供商统一管理</strong> - 一个入口访问所有模型，支持权重、额度与速率限制。</li>
+        <li><strong>自动路由与别名</strong> - 根据模型名称自动选择提供商，支持通过别名（如 balanced, fast）调用。</li>
+        <li><strong>多用户与 SSO</strong> - 支持本地账号及 GitHub OAuth 登录，拥有完善的权限控制。</li>
+        <li><strong>请求日志审计</strong> - 完整记录每次请求的参数、内容、耗时、首字延迟及 Token 消耗。</li>
+        <li><strong>智能同步</strong> - 基于 GitHub Gist 的配置同步，完美保留注释，支持版本管理。</li>
       </ul>
     `
   },
   {
-    id: 'quickstart',
-    title: '2. 快速开始',
+    id: 'auth',
+    title: '2. 身份验证与权限',
     content: `
-      <p><strong>步骤 1：启动服务</strong></p>
-      <pre class="code-block"># Linux/macOS
-./start.sh
-
-# 或使用 Python
-python3 start.py --bg</pre>
+      <p><strong>登录方式</strong></p>
+      <ul>
+        <li><strong>本地账号</strong>: 首次启动时注册的第一个用户自动成为管理员。</li>
+        <li><strong>GitHub SSO</strong>: 在“设置”或配置文件中配置 GitHub OAuth 凭据后，可使用 GitHub 一键登录。</li>
+      </ul>
       
-      <p>服务启动后访问 <code>http://localhost:8787</code></p>
+      <p><strong>管理员配置</strong></p>
+      <p>在配置文件 <code>config.yml</code> 或“设置”页面中的 <code>admin_usernames</code> 列表中添加 GitHub 用户名，该用户登录后将自动获得管理员权限。</p>
       
-      <p><strong>步骤 2：添加 Provider</strong></p>
-      <ol>
-        <li>进入 <strong>Providers</strong> 页面</li>
-        <li>点击 <strong>Add Provider</strong> 按钮</li>
-        <li>填写配置信息：
-          <ul>
-            <li><code>Name</code>: 提供商名称（如 openai, anthropic, groq）</li>
-            <li><code>Base URL</code>: API 端点 URL</li>
-            <li><code>API Key</code>: 提供商的 API 密钥</li>
-          </ul>
-        </li>
-        <li>点击保存</li>
-      </ol>
-      
-      <p><strong>步骤 3：添加模型</strong></p>
-      <ol>
-        <li>进入 <strong>Models</strong> 页面</li>
-        <li>选择要启用的 Provider</li>
-        <li>点击 <strong>Fetch Remote Models</strong> 获取可用模型</li>
-        <li>勾选要启用的模型</li>
-        <li>点击保存</li>
-      </ol>
+      <p><strong>权限说明</strong></p>
+      <ul>
+        <li><strong>普通用户</strong>: 可查看仪表盘、使用 API、修改个人密码。</li>
+        <li><strong>管理员</strong>: 拥有完整权限，包括管理 Provider、查看日志、管理用户、修改系统设置等。</li>
+      </ul>
     `
   },
   {
@@ -80,120 +63,47 @@ python3 start.py --bg</pre>
     "messages": [{"role": "user", "content": "Hello!"}]
   }'</pre>
       
-      <p><strong>获取模型列表</strong></p>
-      <pre class="code-block">curl http://localhost:8787/v1/models</pre>
-      
-      <p><strong>访问密钥</strong></p>
-      <p>在 <strong>Config</strong> 页面设置 <code>Access Key</code>，用于验证 API 请求。</p>
+      <p><strong>访问密钥 (Access Key)</strong></p>
+      <p>在 <strong>Settings</strong> 页面设置 <code>Access Key</code>。这是用于 API 鉴权的 Bearer Token，与登录 UI 的账号密码无关。</p>
       
       <p><strong>模型 ID 格式</strong></p>
-      <p>使用 <code>模型名@提供商名</code> 格式指定模型，例如：</p>
+      <p>使用 <code>模型名@提供商名</code> 格式显式指定，或直接使用模型名（依赖路由规则）：</p>
       <ul>
-        <li><code>gpt-4o@openai</code> - OpenAI GPT-4o</li>
-        <li><code>claude-sonnet-4@anthropic</code> - Anthropic Claude Sonnet 4</li>
-        <li><code>llama-3.1-8b-instant@groq</code> - Groq Llama</li>
-        <li><code>z-ai/glm4.7@nvidia</code> - NVIDIA NIM GLM</li>
+        <li><code>gpt-4o@openai</code> - 指定使用 OpenAI 的 GPT-4o</li>
+        <li><code>claude-3-5-sonnet@openrouter</code> - 使用 OpenRouter 提供的 Claude</li>
+        <li><code>balanced</code> - 路由别名，指向预配置的具体模型</li>
       </ul>
     `
   },
   {
-    id: 'provider-setup',
-    title: '4. Provider 配置指南',
+    id: 'sync',
+    title: '4. 配置同步 (Gist)',
     content: `
-      <p><strong>Groq (免费额度)</strong></p>
+      <p><strong>特性</strong></p>
       <ul>
-        <li>官网: <a href="https://groq.com" target="_blank">groq.com</a></li>
-        <li>注册后获取 API Key</li>
-        <li>Base URL: <code>https://api.groq.com/openai/v1</code></li>
-        <li>免费模型: llama-3.1-8b-instant, llama3-8b-8192, gemma2-9b-it 等</li>
+        <li><strong>保留注释</strong>: 与旧版不同，现在的同步系统直接操作原始 YAML，你的所有手动注释都会被保留。</li>
+        <li><strong>版本化</strong>: 系统会记录每次同步的版本号，支持检测本地是否已是最新。</li>
+        <li><strong>强制覆盖</strong>: 如果本地配置损坏或想彻底同步 Gist，可使用“强制拉取覆盖”按钮。</li>
       </ul>
       
-      <p><strong>OpenRouter (聚合多提供商)</strong></p>
-      <ul>
-        <li>官网: <a href="https://openrouter.ai" target="_blank">openrouter.ai</a></li>
-        <li>注册后获取 API Key</li>
-        <li>Base URL: <code>https://openrouter.ai/api/v1</code></li>
-        <li>支持数百种模型，包括免费模型</li>
-      </ul>
-      
-      <p><strong>NVIDIA NIM (免费额度)</strong></p>
-      <ul>
-        <li>官网: <a href="https://build.nvidia.com" target="_blank">build.nvidia.com</a></li>
-        <li>注册后获取 API Key</li>
-        <li>Base URL: <code>https://integrate.api.nvidia.com/v1</code></li>
-        <li>免费模型: llama-3.1-8b-instant, nemotron-4-340b 等</li>
-      </ul>
-      
-      <p><strong>OpenCode Zen (免费模型)</strong></p>
-      <ul>
-        <li>官网: <a href="https://opencode.ai/zen" target="_blank">opencode.ai/zen</a></li>
-        <li>注册后获取 API Key（或使用 GitHub Copilot 免费访问）</li>
-        <li>Base URL: <code>https://opencode.ai/zen/v1</code></li>
-        <li><strong>免费模型</strong>（无需充值）:
-          <ul>
-            <li>big-pickle - OpenCode 独家模型，完全免费</li>
-            <li>minimax-m2.5-free - MiniMax 免费模型</li>
-            <li>trinity-large-preview-free - 免费预览版</li>
-            <li>nemotron-3-super-free - NVIDIA 免费模型</li>
-            <li>kimi-k2.5-free, glm-4.7-free 等</li>
-          </ul>
-        </li>
-        <li>付费模型: gpt-5.x, claude-opus-4, glm-5.1 等</li>
-      </ul>
-      
-      <p><strong>DeepSeek</strong></p>
-      <ul>
-        <li>官网: <a href="https://deepseek.com" target="_blank">deepseek.com</a></li>
-        <li>注册后获取 API Key</li>
-        <li>Base URL: <code>https://api.deepseek.com/v1</code></li>
-      </ul>
+      <p><strong>设置步骤</strong></p>
+      <ol>
+        <li>在 GitHub 创建一个 <strong>Fine-grained Personal Access Token</strong>，并勾选 <strong>Gists (Read & Write)</strong> 权限。</li>
+        <li>在 Config 或 Settings 页面填入 Token。</li>
+        <li>点击 <strong>Push</strong> 将当前配置备份到云端。</li>
+      </ol>
     `
   },
   {
-    id: 'features',
-    title: '5. 核心功能',
+    id: 'global-settings',
+    title: '5. 系统设置',
     content: `
-      <p><strong>请求日志</strong></p>
-      <p>在 <strong>Logs</strong> 页面查看所有 API 请求记录，包括：</p>
+      <p><strong>全局设置页面提供以下功能：</strong></p>
       <ul>
-        <li>请求时间、模型、提供商</li>
-        <li>状态码、耗时、首字延迟</li>
-        <li>Token 数量</li>
-        <li>请求参数 (temperature, top_p 等)</li>
-        <li>请求/响应内容预览</li>
-      </ul>
-      
-      <p><strong>模型管理</strong></p>
-      <p>在 <strong>Models</strong> 页面：</p>
-      <ul>
-        <li>查看各 Provider 的可用模型</li>
-        <li>批量启用/禁用模型</li>
-        <li>模型列表本地缓存，切换 Provider 时自动加载</li>
-      </ul>
-      
-      <p><strong>密钥管理</strong></p>
-      <p>在 <strong>Keys</strong> 页面：</p>
-      <ul>
-        <li>查看各 Provider 的密钥数量</li>
-        <li>删除不再使用的密钥</li>
-        <li>无法删除最后一个密钥（安全保护）</li>
-      </ul>
-      
-      <p><strong>配置同步</strong></p>
-      <p>在 <strong>Config</strong> 页面：</p>
-      <ul>
-        <li>配置 GitHub Token 和 Gist ID</li>
-        <li><strong>Push</strong>: 将本地配置推送到 GitHub Gist</li>
-        <li><strong>Pull</strong>: 从 GitHub Gist 拉取配置</li>
-        <li>实现多设备配置同步</li>
-      </ul>
-      
-      <p><strong>数据分析</strong></p>
-      <p>在 <strong>Analytics</strong> 页面：</p>
-      <ul>
-        <li>总请求数、Token 消耗</li>
-        <li>按 Provider/模型统计</li>
-        <li>平均延迟、首字延迟分析</li>
+        <li><strong>公网 Host</strong>: 设置后，页面上显示的测试 curl 脚本将自动使用该域名。</li>
+        <li><strong>工具降级</strong>: 开启后，系统会自动为不支持 Tool Calling 的模型进行兼容转换。</li>
+        <li><strong>日志清理</strong>: 可配置请求日志的保留天数，系统将自动定期清理过期数据。</li>
+        <li><strong>强制 SSO</strong>: 开启后将隐藏本地登录入口，仅允许 OAuth 登录。</li>
       </ul>
     `
   },
@@ -201,58 +111,17 @@ python3 start.py --bg</pre>
     id: 'troubleshooting',
     title: '6. 常见问题',
     content: `
-      <p><strong>Q: 请求返回 401 错误？</strong></p>
-      <p>A: 检查 Access Key 是否正确，或在 Config 页面重新设置。</p>
+      <p><strong>Q: 修改了 config.yml 但页面没变化？</strong></p>
+      <p>A: 系统支持热重载，但如果通过外部编辑器修改，可能需要几秒钟同步。建议直接在 <strong>Config</strong> 页面编辑并保存。</p>
       
-      <p><strong>Q: 模型列表为空？</strong></p>
-      <p>A: 在 Models 页面点击对应 Provider 的 "Fetch Remote Models" 按钮获取模型列表。</p>
+      <p><strong>Q: GitHub 登录成功后是普通用户？</strong></p>
+      <p>A: 请检查 <code>admin_usernames</code> 中是否正确填入了你的 GitHub 用户名（注意大小写）。</p>
       
-      <p><strong>Q: 请求超时？</strong></p>
-      <p>A: 检查 Provider 的 API 是否可用，或在 Provider 设置中增加 timeout 值。</p>
+      <p><strong>Q: 页面显示旧版样式？</strong></p>
+      <p>A: 请使用 <code>Ctrl + F5</code> 强制刷新。我们在后端增加了 build-id 注入逻辑，通常刷新一次即可看到最新版。</p>
       
-      <p><strong>Q: 如何查看请求日志？</strong></p>
-      <p>A: 进入 Logs 页面，点击日志条目可展开查看详细内容和请求参数。</p>
-      
-      <p><strong>Q: 模型 ID 为什么要加 @provider 后缀？</strong></p>
-      <p>A: 用于区分不同 Provider 提供的相同模型。例如 gpt-4o@openai 和 gpt-4o@nvidia 是不同的模型。</p>
-      
-      <p><strong>Q: 服务启动失败？</strong></p>
-      <p>A: 检查端口 8787 是否被占用，或查看 data/server.log 日志文件排查错误。</p>
-    `
-  },
-  {
-    id: 'deployment',
-    title: '7. 部署',
-    content: `
-      <p><strong>开发模式</strong></p>
-      <pre class="code-block"># 启动后端
-python3 -m backend.main
-
-# 或使用启动脚本
-./start.sh
-
-# 前端开发服务器
-cd frontend
-npm run dev</pre>
-      
-      <p><strong>Docker 部署</strong></p>
-      <pre class="code-block">docker compose up -d</pre>
-      
-      <p><strong>端口配置</strong></p>
-      <pre class="code-block"># 默认端口 8787
-python3 start.py --port 9000
-
-# 查看帮助
-python3 start.py --help</pre>
-      
-      <p><strong>配置说明</strong></p>
-      <p>配置文件位于项目根目录 <code>config.yml</code>，可配置：</p>
-      <ul>
-        <li>Server: 端口、访问密钥、JWT 密钥</li>
-        <li>Providers: 各提供商的配置</li>
-        <li>Model Routing: 模型路由规则</li>
-        <li>SSO: OAuth 配置</li>
-      </ul>
+      <p><strong>Q: 如何找回 Access Key？</strong></p>
+      <p>A: 管理员进入 <strong>Settings</strong> 页面，点击 Access Key 旁边的眼睛图标即可查看。</p>
     `
   }
 ]
@@ -281,7 +150,7 @@ python3 start.py --help</pre>
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius, 10px);
-  padding: 20px;
+  padding: 24px;
 }
 
 .help-section-title {
@@ -293,33 +162,34 @@ python3 start.py --help</pre>
 
 .help-section-content {
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.8;
   color: var(--color-text);
 }
 
 .help-section-content p {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .help-section-content ul,
 .help-section-content ol {
   margin: 12px 0;
-  padding-left: 24px;
+  padding-left: 20px;
 }
 
 .help-section-content li {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .code-block {
   background: var(--color-bg-input);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  padding: 12px;
+  padding: 14px;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12px;
   overflow-x: auto;
-  margin: 12px 0;
+  margin: 14px 0;
+  line-height: 1.5;
 }
 
 .help-section-content a {
@@ -333,5 +203,6 @@ python3 start.py --help</pre>
 
 .help-section-content strong {
   font-weight: 600;
+  color: var(--color-accent);
 }
 </style>
