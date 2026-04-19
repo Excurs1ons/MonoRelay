@@ -656,9 +656,7 @@ border-color: var(--color-accent);
   left: 0;
   right: 0;
   height: 56px;
-  background: rgba(24, 24, 27, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(24, 24, 27, 0.95);
   border-bottom: 1px solid var(--color-border);
   z-index: 100;
 }
