@@ -136,7 +136,7 @@ class RequestLogger:
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
