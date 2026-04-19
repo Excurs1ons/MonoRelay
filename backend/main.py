@@ -428,6 +428,7 @@ async def api_auth_me(request: Request):
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "is_super_admin": getattr(user, 'is_super_admin', False),
         "sso_provider": user.sso_provider,
         "sso_id": user.sso_id
     }
@@ -602,18 +603,19 @@ async def api_auth_sso_callback(request: Request):
                 user = await auth_service.user_manager.update_user(existing_user.id, **update_fields)
                 logger.info(f"Linked existing user {user.username} to SSO {sso_user.unique_id}")
             else:
-                # Create new user
                 is_first = not await auth_service.has_users()
                 is_admin = is_first or is_admin_configured
+                is_super_admin = is_first
                 
                 user = await auth_service.user_manager.create_sso_user(
                     provider=sso_user.provider,
                     sso_id=sso_user.provider_id,
                     username=sso_user.username,
                     email=sso_user.email,
-                    is_admin=is_admin
+                    is_admin=is_admin,
+                    is_super_admin=is_super_admin
                 )
-                logger.info(f"Created new SSO user: {user.username} (admin={is_admin})")
+                logger.info(f"Created new SSO user: {user.username} (admin={is_admin}, super_admin={is_super_admin})")
         else:
             # Existing SSO user, check if we need to upgrade to admin
             if is_admin_configured and not user.is_admin:
@@ -923,6 +925,12 @@ async def api_info():
             except Exception:
                 local_ip = "127.0.0.1"
 
+    is_domain = public_host and not public_host.replace(".", "").isdigit()
+    if is_domain:
+        base_url = f"https://{public_host}/v1" if public_host.startswith(("http://", "https://")) else f"https://{public_host}/v1"
+    else:
+        base_url = f"http://{local_ip}:{cfg.server.port}/v1"
+
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
@@ -930,7 +938,7 @@ async def api_info():
         "access_key": cfg.server.access_key,
         "access_key_enabled": cfg.server.access_key_enabled,
         "turnstile_site_key": cfg.server.turnstile_site_key,
-        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
+        "base_url": base_url,
     }
 
 @app.get("/health")

@@ -116,7 +116,13 @@ const tabs = [
 
 const filteredTabs = computed(() => {
   return tabs.filter(tab => {
-    if (tab.adminOnly && (!userData.value || !userData.value.is_admin)) {
+    if (tab.adminOnly) {
+      if (userData.value && (userData.value.is_admin || userData.value.is_super_admin)) {
+        return true
+      }
+      if (authed.value) {
+        return true
+      }
       return false
     }
     return true
@@ -327,10 +333,15 @@ serverInfo.value = `${data.local_ip || '127.0.0.1'}:${data.port || 8787}`
 
 // Fetch user info for admin check
 try {
-  userData.value = await api.getMe()
+  const me = await api.getMe()
+  userData.value = me
+  console.log('userData:', userData.value)
 } catch (e) {
-  console.log('Failed to fetch user info', e)
-  userData.value = null
+  console.log('Failed to fetch user info - using localStorage fallback')
+  const stored = localStorage.getItem('userData')
+  if (stored) {
+    userData.value = JSON.parse(stored)
+  }
 }
 } catch (e) {
 console.error('fetchInfo: error:', e)

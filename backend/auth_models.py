@@ -21,6 +21,7 @@ class User(BaseModel):
     email: str
     is_active: bool = True
     is_admin: bool = False
+    is_super_admin: bool = False
     sso_provider: Optional[str] = None
     sso_id: Optional[str] = None
     created_at: datetime
@@ -81,6 +82,7 @@ class UserManager:
                 password_hash TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 is_admin INTEGER DEFAULT 0,
+                is_super_admin INTEGER DEFAULT 0,
                 sso_provider TEXT,
                 sso_id TEXT,
                 created_at REAL NOT NULL,
@@ -88,6 +90,11 @@ class UserManager:
             )
             """
         )
+        
+        try:
+            await self._db.execute("ALTER TABLE users ADD COLUMN is_super_admin INTEGER DEFAULT 0")
+        except Exception:
+            pass
         
         # Check for missing columns (migration for existing users)
         cursor = await self._db.execute("PRAGMA table_info(users)")
@@ -160,7 +167,7 @@ class UserManager:
             last_login=datetime.fromtimestamp(row["last_login"]) if row["last_login"] else None
         )
     
-    async def create_user(self, user_data: UserCreate, is_admin: bool = False) -> User:
+    async def create_user(self, user_data: UserCreate, is_admin: bool = False, is_super_admin: bool = False) -> User:
         """Create a new user."""
         if not self._db:
             await self.init()
@@ -171,8 +178,8 @@ class UserManager:
         try:
             cursor = await self._db.execute(
                 """
-                INSERT INTO users (username, email, password_hash, is_active, is_admin, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, email, password_hash, is_active, is_admin, is_super_admin, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_data.username,
@@ -180,6 +187,7 @@ class UserManager:
                     password_hash,
                     1,
                     1 if is_admin else 0,
+                    1 if is_super_admin else 0,
                     created_at
                 )
             )
@@ -201,22 +209,21 @@ class UserManager:
                 raise ValueError(f"Email '{user_data.email}' already exists")
             raise ValueError(f"User already exists: {e}")
     
-    async def create_sso_user(self, provider: str, sso_id: str, username: str, email: str, is_admin: bool = False) -> User:
+    async def create_sso_user(self, provider: str, sso_id: str, username: str, email: str, is_admin: bool = False, is_super_admin: bool = False) -> User:
         """Create a new user from SSO data."""
         if not self._db:
             await self.init()
         
-        # Use a random string as password hash for SSO users since they don't have a local password
         password_hash = "SSO:" + secrets.token_hex(32)
         created_at = time.time()
         
         try:
             cursor = await self._db.execute(
                 """
-                INSERT INTO users (username, email, password_hash, is_active, is_admin, sso_provider, sso_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, email, password_hash, is_active, is_admin, is_super_admin, sso_provider, sso_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (username, email, password_hash, 1, 1 if is_admin else 0, provider, sso_id, created_at)
+                (username, email, password_hash, 1, 1 if is_admin else 0, 1 if is_super_admin else 0, provider, sso_id, created_at)
             )
             await self._db.commit()
             
