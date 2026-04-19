@@ -47,7 +47,9 @@
     "firstToken": "首字延迟",
     "streamChunks": "流式块数",
     "noData": "暂无数据",
-    "provider": "提供商"
+    "provider": "提供商",
+    "copy": "复制",
+    "copied": "已复制"
   },
   "providers": {
     "title": "提供商管理",

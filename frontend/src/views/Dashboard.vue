@@ -1,6 +1,34 @@
 <template>
   <div v-if="loading" class="loading"><div class="spinner"></div></div>
   <template v-else>
+    <!-- API 地址卡片 -->
+    <div class="api-cards">
+      <div class="api-card">
+        <div class="api-card-header">
+          <span class="api-card-title">OpenAI API</span>
+          <button class="btn-copy" @click="copyToClipboard(openaiUrl)" :class="{ copied: copiedOpenAI }">
+            <Copy :size="14" v-if="!copiedOpenAI" />
+            <Check :size="14" v-else />
+            {{ copiedOpenAI ? $t('dashboard.copied') : $t('dashboard.copy') }}
+          </button>
+        </div>
+        <div class="api-url">{{ openaiUrl }}</div>
+        <div class="api-hint">/v1/chat/completions</div>
+      </div>
+      <div class="api-card">
+        <div class="api-card-header">
+          <span class="api-card-title">Anthropic API</span>
+          <button class="btn-copy" @click="copyToClipboard(anthropicUrl)" :class="{ copied: copiedAnthropic }">
+            <Copy :size="14" v-if="!copiedAnthropic" />
+            <Check :size="14" v-else />
+            {{ copiedAnthropic ? $t('dashboard.copied') : $t('dashboard.copy') }}
+          </button>
+        </div>
+        <div class="api-url">{{ anthropicUrl }}</div>
+        <div class="api-hint">/v1/messages (开发中)</div>
+      </div>
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-header">
@@ -62,10 +90,31 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@/api'
-import { TrendingUp, AlertTriangle, ArrowLeftRight, BarChart3, Zap, Clock } from 'lucide-vue-next'
+import { TrendingUp, AlertTriangle, ArrowLeftRight, BarChart3, Zap, Clock, Copy, Check } from 'lucide-vue-next'
 
 const loading = ref(true)
 const rawStats = ref(null)
+const serverInfo = ref({ local_ip: '127.0.0.1', port: 8787 })
+const copiedOpenAI = ref(false)
+const copiedAnthropic = ref(false)
+
+const openaiUrl = computed(() => serverInfo.value.base_url || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}/v1`)
+const anthropicUrl = computed(() => serverInfo.value.base_url?.replace('/v1', '') || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}`)
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    if (text.includes('/v1') && !text.includes('anthropic')) {
+      copiedOpenAI.value = true
+      setTimeout(() => copiedOpenAI.value = false, 2000)
+    } else {
+      copiedAnthropic.value = true
+      setTimeout(() => copiedAnthropic.value = false, 2000)
+    }
+  } catch (e) {
+    console.error('Copy failed:', e)
+  }
+}
 let timer = null
 
 const stats = computed(() => {
@@ -98,7 +147,11 @@ function formatToken(n) {
 }
 
 async function fetch() {
-  try { rawStats.value = await api.getStats() } catch (e) { console.error(e) }
+  try {
+    rawStats.value = await api.getStats()
+    const info = await api.getInfo()
+    serverInfo.value = { local_ip: info.local_ip || '127.0.0.1', port: info.port || 8787 }
+  } catch (e) { console.error(e) }
   finally { loading.value = false }
 }
 
@@ -107,6 +160,16 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>
+.api-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.api-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 16px; transition: all 0.2s; }
+.api-card:hover { border-color: var(--color-accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.api-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.api-card-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.btn-copy { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); font-size: 11px; cursor: pointer; transition: all 0.15s; }
+.btn-copy:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.btn-copy.copied { border-color: var(--color-green); color: var(--color-green); }
+.api-url { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; color: var(--color-accent); word-break: break-all; margin-bottom: 6px; }
+.api-hint { font-size: 11px; color: var(--color-text-dim); }
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .stat-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 16px; transition: all 0.2s; }
 .stat-card:hover { border-color: var(--color-accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
