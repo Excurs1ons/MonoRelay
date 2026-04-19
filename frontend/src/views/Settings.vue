@@ -1,8 +1,54 @@
 <template>
   <div class="settings-page">
+    <style>
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-card);
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--color-accent);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--color-accent-hover);
+    }
+    .btn-danger {
+      background: #ef4444;
+      border-color: #ef4444;
+      color: #fff;
+    }
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+    @media (max-width: 600px) {
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+    </style>
     <div class="flex-between mb-4">
       <h2 class="section-title">系统设置</h2>
-      <button class="btn btn-primary" :disabled="saving" @click="saveConfig">
+      <button class="btn btn-primary" :disabled="saving" @click="saveConfig" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid #fff3;background:var(--color-accent,#f97316);color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;">
         <Save :size="14" class="mr-1" />
         {{ saving ? '正在保存...' : '保存设置' }}
       </button>
@@ -176,20 +222,15 @@
           <p class="help-text">开启后将禁用普通的用户名密码登录。</p>
         </div>
         <div class="form-group">
-          <label>管理员名单 (GitHub 用户名)</label>
-          <div class="tag-input-container">
-            <div class="tag" v-for="(name, index) in config.sso.admin_usernames" :key="index">
-              {{ name }}
-              <X :size="10" class="tag-close" @click="removeAdmin(index)" />
-            </div>
-            <input 
-              v-model="newAdminName" 
-              type="text" 
-              class="tag-input" 
-              placeholder="按回车添加..." 
-              @keydown.enter="addAdmin"
-            />
-          </div>
+          <label>管理员名单 (GitHub 用户名, 以逗号分隔)</label>
+          <input 
+            v-model="adminUsernamesText" 
+            type="text" 
+            class="input" 
+            placeholder="username1,username2,username3"
+            @blur="updateAdminUsernames"
+          />
+          <p class="help-text">当前管理员: {{ config.sso.admin_usernames?.join(', ') || '(无)' }}</p>
         </div>
       </div>
     </div>
@@ -205,10 +246,10 @@
             <h4 class="font-medium text-sm mb-1">清空所有数据</h4>
             <p class="text-xs text-dim">此操作将删除所有用户、密钥、日志和配置文件。MonoRelay 将恢复到初始状态并自动停止。</p>
           </div>
-          <button class="btn btn-danger" @click="confirmClearData">
-            <Trash2 :size="14" class="mr-1" />
-            立即清空
-          </button>
+<button class="btn btn-danger" @click="confirmClearData" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid #ef4444;background:#ef4444;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;">
+        <Trash2 :size="14" class="mr-1" />
+        清空数据
+      </button>
         </div>
       </div>
     </div>
@@ -245,6 +286,7 @@ const config = ref({
     provider: 'github',
     sso_only: false, 
     admin_usernames: [],
+    adminUsernamesText: '',
     github_client_id: '',
     github_client_secret: '',
     google_client_id: '',
@@ -259,6 +301,7 @@ async function fetchFullConfig() {
     // We'll need to add a getFullConfig to api.js
     const data = await api.getFullConfig()
     config.value = data
+    adminUsernamesText = (data.sso?.admin_usernames || []).join(',')
   } catch (e) {
     toast.error('获取配置失败: ' + e.message)
   } finally {
@@ -284,6 +327,11 @@ async function saveConfig() {
   } finally {
     saving.value = false
   }
+}
+
+function updateAdminUsernames() {
+  const names = adminUsernamesText.split(',').map(s => s.trim()).filter(s => s)
+  config.value.sso.admin_usernames = names
 }
 
 function addAdmin() {
@@ -454,7 +502,24 @@ input:checked + .slider:before { transform: translateX(14px); }
 }
 .danger-text { flex: 1; min-width: 0; }
 @media (max-width: 600px) {
-  .danger-content { flex-direction: column; align-items: stretch; }
+  .settings-page {
+    padding: 0;
+  }
+  .page-content {
+    overflow-x: hidden;
+  }
+  .settings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card {
+    overflow-x: hidden;
+  }
+  .danger-content { 
+    flex-direction: column; 
+    align-items: stretch; 
+  }
   .danger-text { margin-bottom: 12px; }
 }
 </style>

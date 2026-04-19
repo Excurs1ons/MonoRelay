@@ -9,6 +9,7 @@
           <option :value="100">100</option>
         </select>
         <button class="btn btn-ghost" @click="fetchLogs">{{ $t('logs.refresh') }}</button>
+        <button class="btn btn-ghost" style="color:#ef4444" @click="clearLogs">清空</button>
       </div>
     </div>
 
@@ -102,6 +103,14 @@ async function fetchLogs() {
     logs.value = data.logs || data || []
   } catch (e) { console.error(e) }
   finally { loading.value = false }
+}
+
+async function clearLogs() {
+  if (!confirm('确定清空所有请求日志？')) return
+  try {
+    await api.clearLogs()
+    logs.value = []
+  } catch (e) { console.error(e) }
 }
 
 function toggleExpand(id) {

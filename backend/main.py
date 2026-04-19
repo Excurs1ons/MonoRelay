@@ -1109,6 +1109,18 @@ async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
     return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
+@app.post("/api/stats/reset")
+async def api_stats_reset():
+    stats_tracker.reset()
+    return api_response(message="统计数据已清空")
+
+
+@app.post("/api/logs/clear")
+async def api_logs_clear():
+    await request_logger.clear_all()
+    return api_response(message="请求日志已清空")
+
+
 @app.get("/api/stats/file")
 async def api_stats_file():
     """返回 stats.json 原始内容。"""

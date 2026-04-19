@@ -29,6 +29,11 @@
       </div>
     </div>
 
+    <div class="flex-between mb-4">
+      <h2 class="section-title">统计</h2>
+      <button class="btn btn-ghost" style="color:#ef4444" @click="resetStats">清空统计数据</button>
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-header">
@@ -153,6 +158,14 @@ async function fetch() {
     serverInfo.value = { local_ip: info.local_ip || '127.0.0.1', port: info.port || 8787 }
   } catch (e) { console.error(e) }
   finally { loading.value = false }
+}
+
+async function resetStats() {
+  if (!confirm('确定清空所有统计数据？')) return
+  try {
+    await api.resetStats()
+    await fetch()
+  } catch (e) { console.error(e) }
 }
 
 onMounted(() => { fetch(); timer = setInterval(fetch, 30000) })

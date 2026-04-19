@@ -94,6 +94,8 @@ export const api = {
 
   // Logs
   getLogs: (limit = 50) => request(`/api/logs?limit=${limit}`),
+  clearLogs: () => request('/api/logs/clear', { method: 'POST' }),
+  resetStats: () => request('/api/stats/reset', { method: 'POST' }),
 
   // Config
   getConfig: () => request('/api/config'),
