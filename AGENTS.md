@@ -13,13 +13,18 @@ Configurable LLM API relay server built with **Python 3.12 + FastAPI**. Supports
 # Create virtual environment and install deps
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-# Run server (default port 8787)
+# Run server (default port 8787) - 需要在项目根目录执行
 python -m backend.main
 python -m backend.main --config /path/to/config.yml --port 9000
 
 # One-click start (auto-creates venv, installs deps, starts server)
-./start.sh          # Linux/macOS
+./start.sh          # Linux/macOS前台运行
 .\start.ps1         # Windows
+
+# 后台运行 (必须使用，否则前端静态资源404)
+./start-bg.sh       # 后台启动
+./start-bg.sh stop # 停止
+./start-bg.sh restart # 重启
 ```
 
 ### Docker
