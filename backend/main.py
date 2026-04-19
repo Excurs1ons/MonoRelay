@@ -905,7 +905,18 @@ async def api_info():
 
     local_ip = "127.0.0.1"
     if public_host:
-        local_ip = public_host
+        # Remove protocol from public_host for local_ip
+        clean_host = public_host
+        if clean_host.startswith("http://"):
+            clean_host = clean_host[7:]
+        elif clean_host.startswith("https://"):
+            clean_host = clean_host[8:]
+        # Remove port if present
+        if ":" in clean_host and "/" not in clean_host.split(":")[1]:
+            clean_host = clean_host.split(":")[0]
+        # Remove trailing slash
+        clean_host = clean_host.rstrip("/")
+        local_ip = clean_host
     else:
         # Try to get public IP
         try:
@@ -928,12 +939,13 @@ async def api_info():
     base_url = f"http://{local_ip}:{cfg.server.port}/v1"
     if public_host:
         if public_host.startswith("http"):
-            base_url = f"{public_host.rstrip('/')}/v1"
+            clean_url = public_host.rstrip("/")
+            if not clean_url.endswith("/v1"):
+                clean_url = f"{clean_url}/v1"
+            base_url = clean_url
         elif "." in public_host and not any(c.isdigit() for c in public_host.split('.')[-1]):
-            # Likely a domain name, not an IP, assume HTTPS and no port
             base_url = f"https://{public_host.rstrip('/')}/v1"
         else:
-            # Likely an IP or local hostname
             base_url = f"http://{public_host.rstrip('/')}:{cfg.server.port}/v1"
 
     return {
