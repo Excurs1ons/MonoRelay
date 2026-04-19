@@ -315,17 +315,32 @@ async def root():
     return await serve_frontend()
 
 
+@app.middleware("http")
+async def catch_all_middleware(request: Request, call_next):
+    """
+    Handle unmatched API routes - let FastAPI try to match them first.
+    Only handle non-API routes as fallback.
+    """
+    path = request.url.path
+    
+    # For API/v1 routes, just pass through - FastAPI will handle 404 if no match
+    if path.startswith("/api/") or path.startswith("/v1/"):
+        return await call_next(request)
+    
+    # For non-API routes, the catch-all handler will serve frontend
+    response = await call_next(request)
+    
+    # If frontend returned 404 for a non-existent file, convert to JSON 404
+    if response.status_code == 404 and "." in path.split("/")[-1]:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    
+    return response
+
+
 @app.get("/{full_path:path}")
 async def catch_all(request: Request, full_path: str):
-    # If it's an API or V1 route that wasn't caught, return 404
-    if full_path.startswith("api/") or full_path.startswith("v1/"):
-        return JSONResponse({"error": "Endpoint not found"}, status_code=404)
-    
-    # If it's looking for a file that doesn't exist, also return 404 to avoid serving HTML for missing assets
-    if "." in full_path.split("/")[-1]:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-        
-    # Otherwise, serve the frontend index.html for SPA routing
+    # Only handle non-API routes - API routes handled by other endpoints
+    # This serves frontend index.html for SPA routing
     return await serve_frontend()
 
 
