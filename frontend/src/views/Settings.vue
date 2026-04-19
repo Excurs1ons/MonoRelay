@@ -22,15 +22,21 @@
           <p class="help-text">用于生成对外展示的 API 地址，留空则自动检测。</p>
         </div>
         <div class="form-group">
-          <label>访问密钥 (Access Key)</label>
-          <div class="input-with-toggle">
+          <div class="flex-between mb-2">
+            <label class="m-0">访问密钥 (Access Key)</label>
+            <label class="switch">
+              <input type="checkbox" v-model="config.server.access_key_enabled" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="input-with-toggle" v-if="config.server.access_key_enabled">
             <input v-model="config.server.access_key" :type="showAccessKey ? 'text' : 'password'" class="form-input mono" />
             <button class="toggle-btn" @click="showAccessKey = !showAccessKey">
               <Eye v-if="!showAccessKey" :size="14" />
               <EyeOff v-else :size="14" />
             </button>
           </div>
-          <p class="help-text">用于 API 鉴权。修改后请同步更新客户端配置。</p>
+          <p class="help-text">用于 API 鉴权。关闭后只能使用登录 Token 进行 API 调用。</p>
         </div>
         <div class="form-row">
           <div class="form-group flex-1">

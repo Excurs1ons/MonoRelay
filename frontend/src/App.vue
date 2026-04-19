@@ -68,6 +68,7 @@ class="auth-input"
 <!-- Toggle between access key and user login (hidden in sso_only mode) -->
 <div v-if="!ssoOnly" class="auth-toggle">
 <button
+v-if="accessKeyEnabled"
 :class="['auth-toggle-btn', { active: authMode === 'key' }]"
 @click="authMode = 'key'"
 >{{ $t('auth.accessKey') || 'Access Key' }}</button>
@@ -230,6 +231,7 @@ const authed = computed(() => !!authStore.token)
 const isSetupMode = ref(false)
 const userData = ref(null)
 const authMode = ref('key') // 'key' or 'user' or 'sso'
+const accessKeyEnabled = ref(true)
 const ssoEnabled = ref(false)
 const ssoOnly = ref(false)
 const ssoLoading = ref(false)
@@ -280,9 +282,15 @@ const ssoStatus = await api.getSSOStatus()
 ssoEnabled.value = ssoStatus.enabled
 ssoOnly.value = ssoStatus.sso_only || false
 
+// Check if access key is enabled
+const info = await api.getInfo()
+accessKeyEnabled.value = info.access_key_enabled !== false
+
 // If SSO-only mode, auto-select SSO login
 if (ssoOnly.value && ssoEnabled.value) {
 authMode.value = 'sso'
+} else if (!accessKeyEnabled.value && authMode.value === 'key') {
+  authMode.value = 'user'
 }
 
 // Only check for SSO token if NOT already logged in
