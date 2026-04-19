@@ -12,7 +12,10 @@
             <div class="username">{{ user.username }}</div>
             <div class="email">{{ user.email }}</div>
             <div class="badges">
-              <span v-if="user.is_admin" class="badge badge-admin">
+              <span v-if="user.is_super_admin" class="badge badge-super">
+                <Shield :size="10" class="mr-1" /> 超级管理员
+              </span>
+              <span v-else-if="user.is_admin" class="badge badge-admin">
                 <Shield :size="10" class="mr-1" /> 管理员
               </span>
               <span v-else class="badge badge-user">
@@ -190,12 +193,15 @@ onMounted(fetchMe)
   gap: 8px;
 }
 
-.badge {
-  display: inline-flex;
-  padding: 2px 8px;
-  border-radius: 4px;
+.badge { 
+  padding: 3px 8px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 500;
+  border: 1px solid var(--color-border);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .badge-primary { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
@@ -205,6 +211,17 @@ onMounted(fetchMe)
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2)); 
   color: #a78bfa; 
   border: 1px solid rgba(139, 92, 246, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-super { 
+  background: linear-gradient(135deg, rgba(251, 146, 60, 0.3), rgba(239, 68, 68, 0.3)); 
+  color: #fb923c; 
+  border: 1px solid rgba(251, 146, 60, 0.5);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .badge-user { 
   background: rgba(255, 255, 255, 0.05); 

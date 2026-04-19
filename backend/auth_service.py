@@ -31,13 +31,14 @@ class AuthService:
     async def register(self, user_data: UserCreate, is_first_user: bool = False) -> Token:
         """Register a new user and return tokens."""
         try:
-            is_admin = is_first_user  # First user becomes admin
-            user = await self.user_manager.create_user(user_data, is_admin=is_admin)
+            is_admin = is_first_user
+            is_super_admin = is_first_user
+            user = await self.user_manager.create_user(user_data, is_admin=is_admin, is_super_admin=is_super_admin)
             
             access_token = create_access_token(user.id, config_secret=self.jwt_secret)
             refresh_token = create_refresh_token(user.id, config_secret=self.jwt_secret)
             
-            logger.info(f"User registered: {user.username} (admin={is_admin})")
+            logger.info(f"User registered: {user.username} (admin={is_admin}, super_admin={is_super_admin})")
             
             return Token(
                 access_token=access_token,

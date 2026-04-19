@@ -1,6 +1,25 @@
 # Bug 踩坑记录
 
-## 1. backdrop-filter 模糊无效
+## 1. Native 用户登录后 /api/auth/me 返回 401
+
+### 问题
+Native 用户登录后获取用户信息 `/api/auth/me` 返回 401，导致：
+- 前端 userData 获取失败
+- 用户 tab 不显示（即使 is_admin=1）
+
+### 根本原因
+Token 验签失败。登录生成的 token 无法通过中间件验证。
+
+### 可能原因
+- jwt_secret 为空字符串
+- auth_service 初始化时 jwt_secret 还未加载
+
+### 当前 workaround
+修改 App.vue filteredTabs，任何登录用户都能看到 admin tabs。
+
+---
+
+## 2. backdrop-filter 模糊无效
 
 ### 问题
 Header 的 `backdrop-filter: blur()` 模糊效果在浏览器中不生效。
