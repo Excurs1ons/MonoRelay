@@ -177,6 +177,9 @@ class ServerConfig(BaseModel):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     public_host: str = ""
     jwt_secret: str = ""
+    turnstile_enabled: bool = False
+    turnstile_site_key: str = ""
+    turnstile_secret_key: str = ""
 
 
 class KeySelectionConfig(BaseModel):

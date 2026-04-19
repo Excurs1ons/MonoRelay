@@ -38,6 +38,26 @@
           </div>
           <p class="help-text">用于 API 鉴权。关闭后只能使用登录 Token 进行 API 调用。</p>
         </div>
+        <div class="form-group border-t pt-4 mt-4">
+          <div class="flex-between mb-2">
+            <label class="m-0">Cloudflare Turnstile 验证</label>
+            <label class="switch">
+              <input type="checkbox" v-model="config.server.turnstile_enabled" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div v-if="config.server.turnstile_enabled" class="space-y-3 mt-3">
+            <div class="form-group">
+              <label class="text-xs">Site Key</label>
+              <input v-model="config.server.turnstile_site_key" type="text" class="form-input" placeholder="3x00000000000000000000FF" />
+            </div>
+            <div class="form-group">
+              <label class="text-xs">Secret Key</label>
+              <input v-model="config.server.turnstile_secret_key" type="password" class="form-input" placeholder="1x0000000000000000000000000000000AA" />
+            </div>
+            <p class="help-text">开启后，登录和注册页面将显示 Cloudflare 人机验证。</p>
+          </div>
+        </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label>日志级别</label>
@@ -133,6 +153,25 @@
         </div>
       </div>
     </div>
+
+    <!-- Danger Zone -->
+    <div class="mt-8 pt-8 border-t border-red-900/30">
+      <h3 class="text-red-500 font-semibold mb-4 flex items-center gap-2">
+        <AlertTriangle :size="18" /> 危险区域
+      </h3>
+      <div class="card border-red-900/50 bg-red-950/10">
+        <div class="flex-between">
+          <div>
+            <h4 class="font-medium text-sm mb-1">清空所有数据</h4>
+            <p class="text-xs text-dim">此操作将删除所有用户、密钥、日志和配置文件。MonoRelay 将恢复到初始状态并自动停止。</p>
+          </div>
+          <button class="btn btn-danger" @click="confirmClearData">
+            <Trash2 :size="14" class="mr-1" />
+            立即清空
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -140,7 +179,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores'
-import { Save, RefreshCw, Eye, EyeOff, X } from 'lucide-vue-next'
+import { Save, RefreshCw, Eye, EyeOff, X, AlertTriangle, Trash2 } from 'lucide-vue-next'
 
 const loading = ref(true)
 const saving = ref(false)
@@ -192,6 +231,26 @@ function addAdmin() {
 
 function removeAdmin(index) {
   config.value.sso.admin_usernames.splice(index, 1)
+}
+
+async function confirmClearData() {
+  const code = Math.floor(1000 + Math.random() * 9000)
+  const input = prompt(`警告：此操作将永久删除所有本地数据！\n请输入验证码 [ ${code} ] 并点击确定以继续：`)
+  
+  if (input === String(code)) {
+    try {
+      // We'll need to add clearAllData to api.js
+      await api.clearAllData()
+      toast.success('数据已清空，服务正在关闭...')
+      setTimeout(() => {
+        window.location.href = '/'
+      }, 2000)
+    } catch (e) {
+      toast.error('清空失败: ' + e.message)
+    }
+  } else if (input !== null) {
+    toast.error('验证码错误')
+  }
 }
 
 onMounted(fetchFullConfig)
@@ -285,4 +344,16 @@ input:checked + .slider:before { transform: translateX(14px); }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.btn-danger {
+  background: #ef4444;
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #dc2626;
+}
+.text-red-500 { color: #ef4444; }
+.border-red-900\/30 { border-color: rgba(127, 29, 29, 0.3); }
+.border-red-900\/50 { border-color: rgba(127, 29, 29, 0.5); }
+.bg-red-950\/10 { background-color: rgba(69, 10, 10, 0.1); }
 </style>

@@ -316,10 +316,41 @@ async def api_setup_status():
     }
 
 
+async def verify_turnstile(token: str) -> bool:
+    """Verify Cloudflare Turnstile token."""
+    cfg = config_manager.config.server
+    if not cfg.turnstile_enabled or not cfg.turnstile_secret_key:
+        return True
+    
+    if not token:
+        return False
+        
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                data={
+                    "secret": cfg.turnstile_secret_key,
+                    "response": token,
+                },
+                timeout=10.0
+            )
+            data = resp.json()
+            return data.get("success", False)
+    except Exception as e:
+        logger.error(f"Turnstile verification error: {e}")
+        return False
+
+
 @app.post("/api/auth/register")
 async def api_auth_register(request: Request):
     """Register a new user account."""
     body = await request.json()
+    
+    # Verify Turnstile
+    if not await verify_turnstile(body.get("turnstile_token", "")):
+        raise HTTPException(status_code=400, detail="Turnstile verification failed")
+        
     user_data = UserCreate(
         username=body.get("username"),
         email=body.get("email"),
@@ -335,6 +366,11 @@ async def api_auth_register(request: Request):
 async def api_auth_login(request: Request):
     """Login with username and password."""
     body = await request.json()
+    
+    # Verify Turnstile
+    if not await verify_turnstile(body.get("turnstile_token", "")):
+        raise HTTPException(status_code=400, detail="Turnstile verification failed")
+        
     login_data = UserLogin(
         username=body.get("username"),
         password=body.get("password")
@@ -775,6 +811,51 @@ async def api_delete_user(user_id: int, request: Request):
     return {"success": success}
 
 
+@app.post("/api/admin/clear-data")
+async def api_admin_clear_data(request: Request):
+    """Clear all local data and reset system (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    logger.warning(f"SYSTEM RESET INITIATED BY {user.username}")
+    
+    try:
+        import os
+        import shutil
+        from pathlib import Path
+        
+        data_dir = Path("./data")
+        config_file = Path("./config.yml")
+        
+        # 1. Close database connections first
+        await auth_service.user_manager.close()
+        
+        # 2. Delete data directory contents
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
+            data_dir.mkdir(exist_ok=True)
+            logger.info("Data directory cleared")
+            
+        # 3. Reset config file to example if exists
+        if config_file.exists():
+            example = Path("./config.yml.example")
+            if example.exists():
+                shutil.copy(example, config_file)
+            else:
+                config_file.unlink()
+            logger.info("Config file reset")
+            
+        # 4. Schedule self-termination
+        import signal
+        os.kill(os.getpid(), signal.SIGINT)
+        
+        return {"status": "ok", "message": "System reset initiated"}
+    except Exception as e:
+        logger.error(f"Reset failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/info")
 async def api_info():
     """Return server connection info for dashboard."""
@@ -805,7 +886,11 @@ async def api_info():
 
 
 @app.get("/health")
-async def health():
+async def health(turnstile_token: str = ""):
+    # Verify Turnstile if enabled (for key-based access or just general protection)
+    if not await verify_turnstile(turnstile_token):
+         raise HTTPException(status_code=400, detail="Turnstile verification failed")
+         
     return {
         "status": "ok",
         "providers": {

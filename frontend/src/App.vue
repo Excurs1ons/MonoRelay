@@ -54,6 +54,7 @@ autocomplete="new-password"
 :placeholder="$t('auth.confirmPasswordPlaceholder')"
 class="auth-input"
 />
+<div v-if="turnstileSiteKey" class="cf-turnstile mt-4 mb-2" :data-sitekey="turnstileSiteKey" data-callback="onTurnstileVerify" data-expired-callback="onTurnstileExpired" data-theme="dark"></div>
 <transition name="slide-down">
 <p v-if="authError" class="auth-error">{{ authError }}</p>
 </transition>
@@ -121,6 +122,7 @@ autocomplete="current-password"
 :placeholder="$t('auth.passwordPlaceholder')"
 class="auth-input"
 />
+<div v-if="turnstileSiteKey" class="cf-turnstile mt-4 mb-2" :data-sitekey="turnstileSiteKey" data-callback="onTurnstileVerify" data-expired-callback="onTurnstileExpired" data-theme="dark"></div>
 <transition name="slide-down">
 <p v-if="loginError" class="auth-error">{{ $t('auth.invalid') }}</p>
 </transition>
@@ -232,10 +234,23 @@ const isSetupMode = ref(false)
 const userData = ref(null)
 const authMode = ref('key') // 'key' or 'user' or 'sso'
 const accessKeyEnabled = ref(true)
+const turnstileSiteKey = ref('')
+const turnstileToken = ref('')
 const ssoEnabled = ref(false)
 const ssoOnly = ref(false)
 const ssoLoading = ref(false)
 let ssoPopup = null
+
+// Turnstile verify callback
+window.onTurnstileVerify = (token) => {
+  console.log('Turnstile verified')
+  turnstileToken.value = token
+}
+
+window.onTurnstileExpired = () => {
+  console.log('Turnstile expired')
+  turnstileToken.value = ''
+}
 
 const loginForm = ref({
 username: '',
@@ -285,6 +300,19 @@ ssoOnly.value = ssoStatus.sso_only || false
 // Check if access key is enabled
 const info = await api.getInfo()
 accessKeyEnabled.value = info.access_key_enabled !== false
+turnstileSiteKey.value = info.turnstile_site_key || ''
+
+if (turnstileSiteKey.value) {
+  // Inject Turnstile script
+  if (!document.getElementById('turnstile-script')) {
+    const script = document.createElement('script')
+    script.id = 'turnstile-script'
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
+    script.async = true
+    script.defer = true
+    document.head.appendChild(script)
+  }
+}
 
 // If SSO-only mode, auto-select SSO login
 if (ssoOnly.value && ssoEnabled.value) {
@@ -397,8 +425,9 @@ loginError.value = false
 setAccessKey(inputKey.value)
 setToken('')
 try {
-await api.health()
-authStore.setToken(inputKey.value)
+    await api.health(turnstileToken.value)
+    authStore.setToken(inputKey.value)
+
 fetchInfo()
 } catch {
 loginError.value = true
@@ -408,7 +437,7 @@ loginError.value = true
 async function handleUserLogin() {
 loginError.value = false
 try {
-const result = await api.login(loginForm.value.username, loginForm.value.password)
+const result = await api.login(loginForm.value.username, loginForm.value.password, turnstileToken.value)
 setToken(result.access_token)
 authStore.setToken(result.access_token)
 fetchInfo()
@@ -434,7 +463,8 @@ try {
 const result = await api.register(
 registerForm.value.username,
 registerForm.value.email,
-registerForm.value.password
+registerForm.value.password,
+turnstileToken.value
 )
 setToken(result.access_token)
 authStore.setToken(result.access_token)
