@@ -1114,6 +1114,15 @@ async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
     return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
+@app.get("/api/logs/{log_id}")
+async def api_log_detail(log_id: int):
+    logs = await request_logger.get_recent_requests(1000)
+    log = next((l for l in logs if l.get('id') == log_id), None)
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+    return api_response(data=log)
+
+
 @app.post("/api/stats/reset")
 async def api_stats_reset():
     stats_tracker.reset()
