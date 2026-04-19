@@ -698,16 +698,16 @@ border-color: var(--color-accent);
   right: 0;
   height: 56px;
   background: rgba(24, 24, 27, 0.5);
-  -webkit-backdrop-filter: blur(8px) saturate(100%);
-  backdrop-filter: blur(8px) saturate(100%);
+  -webkit-backdrop-filter: blur(5px) saturate(100%);
+  backdrop-filter: blur(5px) saturate(100%);
   border-bottom: 1px solid var(--color-border);
   z-index: 100;
 }
 
 .light .header {
   background: rgba(255, 255, 255, 0.1);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
 }
 
 .header-inner {
@@ -865,7 +865,7 @@ border-color: var(--color-accent);
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: transparent;
   z-index: 99;
 }
 
