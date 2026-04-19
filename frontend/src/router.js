@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useAuthStore } from '@/stores'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -70,12 +69,10 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
-  const authStore = useAuthStore()
-  if (!authStore.token && to.path !== '/') {
-    window.location.href = '/'
-  } else {
-    next()
+router.beforeEach((to) => {
+  const token = localStorage.getItem('access_token')
+  if (!token && to.path !== '/') {
+    return '/'
   }
 })
 
