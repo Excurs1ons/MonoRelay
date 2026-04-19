@@ -595,6 +595,7 @@ async def _stream_messages(
                         key_label=key.key.label, status_code=response.status_code,
                         latency_ms=round(elapsed * 1000, 2), streaming=True,
                         error_message=error_text,
+                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
                     event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": "upstream_error"}})
@@ -655,6 +656,7 @@ async def _stream_messages(
                 streaming=True,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
@@ -674,6 +676,7 @@ async def _stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
                 error_message=str(e),
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}})
@@ -699,6 +702,7 @@ async def _non_stream_messages(
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=resp.text,
+                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
                 )
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
@@ -728,6 +732,8 @@ async def _non_stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                response_full=json.dumps(result, ensure_ascii=False) if result else None,
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
