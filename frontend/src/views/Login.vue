@@ -34,14 +34,19 @@
       <div v-else>
         <p class="auth-subtitle">{{ $t('auth.subtitle') }}</p>
 
-        <div v-if="!ssoOnly" class="auth-toggle">
-          <button v-if="accessKeyEnabled" :class="['auth-toggle-btn', { active: authMode === 'key' }]" @click="authMode = 'key'">{{ $t('auth.accessKey') || 'Access Key' }}</button>
-          <button :class="['auth-toggle-btn', { active: authMode === 'user' }]" @click="authMode = 'user'">{{ $t('auth.userLogin') || 'User Login' }}</button>
+        <div v-if="!ssoOnly && accessKeyEnabled" class="auth-toggle">
+          <button :class="['auth-toggle-btn', { active: authMode === 'key' }]" @click="authMode = 'key'">{{ $t('auth.accessKey') || 'Access Key' }}</button>
+          <button :class="['auth-toggle-btn', { active: authMode === 'user' }]" @click="authMode = 'user'">Native</button>
           <button v-if="ssoEnabled" :class="['auth-toggle-btn', { active: authMode === 'sso' }]" @click="authMode = 'sso'">SSO</button>
         </div>
 
         <form v-if="authMode === 'key'" @submit.prevent="handleKeyLogin">
-          <input v-model="inputKey" type="password" name="access-key" autocomplete="current-password" :placeholder="$t('auth.placeholder')" class="auth-input" autofocus />
+          <div class="input-with-btn">
+            <input v-model="inputKey" type="password" name="access-key" autocomplete="current-password" :placeholder="$t('auth.placeholder')" class="auth-input" autofocus />
+            <button type="button" class="input-btn-icon" @click="inputKey = generateKey()" title="生成随机Key">
+              <RefreshCw :size="16" />
+            </button>
+          </div>
           <transition name="slide-down">
             <p v-if="loginError" class="auth-error">{{ $t('auth.invalid') }}</p>
           </transition>
@@ -94,7 +99,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore, useLocaleStore, useToastStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { Languages } from 'lucide-vue-next'
+import { Languages, RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -156,6 +161,10 @@ async function handleKeyLogin() {
     authStore.setToken(inputKey.value)
     router.push('/dashboard')
   } catch { loginError.value = true }
+}
+
+function generateKey() {
+  return [8, 13, 8, 13, 8, 13, 8, 13].map(x => x.toString(36)).join('-').toUpperCase()
 }
 
 async function handleUserLogin() {
@@ -227,6 +236,10 @@ onMounted(checkSetup)
 .auth-input { width: 100%; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 14px; font-family: var(--font-mono); transition: border-color 0.15s, box-shadow 0.15s; margin-bottom: 14px; }
 .auth-input:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15); }
 .auth-input::placeholder { color: var(--color-text-dim); opacity: 0.6; }
+.input-with-btn { display: flex; gap: 8px; margin-bottom: 14px; }
+.input-with-btn .auth-input { margin-bottom: 0; flex: 1; }
+.input-btn-icon { display: flex; align-items: center; justify-content: center; width: 46px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-text); cursor: pointer; }
+.input-btn-icon:hover { border-color: var(--color-accent); }
 .auth-error { font-size: 12px; color: var(--color-red); margin-bottom: 14px; }
 .auth-footer { margin-top: 24px; display: flex; justify-content: center; }
 .lang-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); font-size: 12px; cursor: pointer; transition: all 0.15s; font-family: var(--font-mono); }

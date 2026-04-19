@@ -77,12 +77,18 @@
           </div>
           <div class="input-with-toggle" v-if="config.server.access_key_enabled">
             <input v-model="config.server.access_key" :type="showAccessKey ? 'text' : 'password'" class="form-input mono" />
-            <button class="toggle-btn" @click="showAccessKey = !showAccessKey">
-              <Eye v-if="!showAccessKey" :size="14" />
-              <EyeOff v-else :size="14" />
-            </button>
+            <div class="input-actions">
+              <button class="toggle-btn" @click="generateRandomKey" title="随机生成">
+                <RefreshCw :size="14" />
+              </button>
+              <button class="toggle-btn" @click="showAccessKey = !showAccessKey">
+                <Eye v-if="!showAccessKey" :size="14" />
+                <EyeOff v-else :size="14" />
+              </button>
+            </div>
           </div>
-          <p class="help-text">用于 API 鉴权。关闭后只能使用登录 Token 进行 API 调用。</p>
+          <p v-if="!config.server.access_key" class="help-text" style="color:#f59e0b">首次使用，请复制并妥善保管此 Key！</p>
+          <p v-else class="help-text">用于 API 鉴权的密码。</p>
         </div>
         <div class="form-group border-t pt-4 mt-4">
           <div class="flex-between mb-2">
@@ -329,6 +335,15 @@ async function saveConfig() {
   }
 }
 
+function generateRandomKey() {
+  const guid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+  config.value.server.access_key = guid
+}
+
 function updateAdminUsernames() {
   const names = adminUsernamesText.split(',').map(s => s.trim()).filter(s => s)
   config.value.sso.admin_usernames = names
@@ -433,16 +448,24 @@ onMounted(fetchFullConfig)
 }
 
 .input-with-toggle { position: relative; display: flex; align-items: center; }
-.input-with-toggle .form-input { padding-right: 36px; }
-.toggle-btn {
+.input-with-toggle .form-input { padding-right: 72px; }
+.input-actions {
   position: absolute;
   right: 8px;
+  display: flex;
+  gap: 4px;
+}
+.toggle-btn {
   background: none;
   border: none;
   color: var(--color-text-dim);
   cursor: pointer;
   display: flex;
   align-items: center;
+  padding: 4px;
+}
+.toggle-btn:hover {
+  color: var(--color-accent);
 }
 
 .flex-1 { flex: 1; }
