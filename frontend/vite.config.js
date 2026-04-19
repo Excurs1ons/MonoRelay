@@ -12,6 +12,9 @@ export default defineConfig({
       include: resolve(__dirname, 'src/locales/**'),
     }),
   ],
+  define: {
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

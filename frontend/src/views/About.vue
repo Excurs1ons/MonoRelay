@@ -9,6 +9,7 @@
           <div class="logo-text">
             <h3>MonoRelay</h3>
             <p class="version">统一 LLM API 代理服务</p>
+            <p class="build-info">Build: {{ buildTime }}</p>
           </div>
         </div>
         <p class="desc">
@@ -79,6 +80,7 @@ import { api } from '@/api'
 import { CheckCircle, Github, Bug, HelpCircle } from 'lucide-vue-next'
 
 const providers = ref([])
+const buildTime = new Date(__BUILD_TIME__).toLocaleString()
 
 onMounted(async () => {
   try {
@@ -149,6 +151,14 @@ onMounted(async () => {
   color: var(--color-text-dim);
   font-size: 13px;
   margin: 0;
+}
+
+.build-info {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  opacity: 0.6;
+  font-family: 'SF Mono', monospace;
+  margin-top: 2px;
 }
 
 .desc {
