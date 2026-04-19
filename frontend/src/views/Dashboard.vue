@@ -18,14 +18,14 @@
       <div class="api-card">
         <div class="api-card-header">
           <span class="api-card-title">Anthropic API</span>
-          <button class="btn-copy" @click="copyToClipboard(anthropicUrl)" :class="{ copied: copiedAnthropic }">
+          <button class="btn-copy" @click="copyToClipboard(anthropicUrl, 'anthropic')" :class="{ copied: copiedAnthropic }">
             <Copy :size="14" v-if="!copiedAnthropic" />
             <Check :size="14" v-else />
             {{ copiedAnthropic ? $t('dashboard.copied') : $t('dashboard.copy') }}
           </button>
         </div>
         <div class="api-url">{{ anthropicUrl }}</div>
-        <div class="api-hint">/v1/messages (开发中)</div>
+        <div class="api-hint">/v1/messages</div>
       </div>
     </div>
 
@@ -101,15 +101,15 @@ const copiedAnthropic = ref(false)
 const openaiUrl = computed(() => serverInfo.value.base_url || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}/v1`)
 const anthropicUrl = computed(() => serverInfo.value.base_url?.replace('/v1', '') || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}`)
 
-async function copyToClipboard(text) {
+async function copyToClipboard(text, type) {
   try {
     await navigator.clipboard.writeText(text)
-    if (text.includes('/v1') && !text.includes('anthropic')) {
-      copiedOpenAI.value = true
-      setTimeout(() => copiedOpenAI.value = false, 2000)
-    } else {
+    if (type === 'anthropic') {
       copiedAnthropic.value = true
       setTimeout(() => copiedAnthropic.value = false, 2000)
+    } else {
+      copiedOpenAI.value = true
+      setTimeout(() => copiedOpenAI.value = false, 2000)
     }
   } catch (e) {
     console.error('Copy failed:', e)
