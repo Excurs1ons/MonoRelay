@@ -2,12 +2,13 @@
 <Toast />
   <!-- Main app -->
   <div class="app">
-  <div class="bg-layer">
-    <div class="bg-gradient"></div>
-  </div>
-    <div class="container">
-      <!-- Header -->
-      <header class="header">
+    <div class="bg-layer">
+      <div class="bg-gradient"></div>
+    </div>
+
+    <!-- Header - 全屏固定浮层 -->
+    <header class="header">
+      <div class="header-inner">
         <h1>
           <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -25,8 +26,10 @@
             <LogOut :size="14" />
           </button>
         </div>
-      </header>
+      </div>
+    </header>
 
+    <div class="container">
       <!-- Segmented tabs -->
       <nav class="tabs">
         <button
@@ -638,38 +641,31 @@ border-color: var(--color-accent);
 .container {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 80px 24px 24px;
   position: relative;
   z-index: 1;
 }
 .header {
-  position: sticky;
+  position: fixed;
   top: 0;
-  z-index: 50;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: rgba(24, 24, 27, 0.75);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.2);
+}
+.header-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 16px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  margin-bottom: 32px;
-  background: rgba(24, 24, 27, 0.85);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.25),
-    0 4px 16px rgba(0, 0, 0, 0.35);
-}
-
-@media (min-width: 768px) {
-  .header {
-    position: relative;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    margin-bottom: 32px;
-    padding: 16px 24px;
-    background: rgba(24, 24, 27, 0.7);
-  }
 }
 .header h1 {
   font-size: 20px;
@@ -713,6 +709,7 @@ border-color: var(--color-accent);
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin-bottom: 32px;
+  margin-top: 72px;
   background: rgba(24, 24, 27, 0.6);
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
