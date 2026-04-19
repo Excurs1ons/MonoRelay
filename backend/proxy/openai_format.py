@@ -15,6 +15,7 @@ from ..models import AppConfig
 from ..router import ModelRouter
 from ..stats import StatsTracker, estimate_cost, extract_token_usage
 from ..web_reverse.chatgpt import WebReverseService
+from .anthropic_format import handle_messages, handle_openai_to_anthropic
 from .streaming import stream_openai_response, extract_stream_usage
 
 logger = logging.getLogger("monorelay.openai_proxy")
@@ -220,6 +221,11 @@ async def handle_chat_completions(
             body, provider_cfg, key_manager, provider_name,
             resolved_model, original_model, request_logger, config.key_selection.strategy,
             stats_tracker,
+        )
+
+    if provider_cfg.provider_type == "anthropic":
+        return await handle_openai_to_anthropic(
+            body, config, key_manager, router, request_logger, stats_tracker,
         )
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
