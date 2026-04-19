@@ -923,6 +923,17 @@ async def api_info():
             except Exception:
                 local_ip = "127.0.0.1"
 
+    base_url = f"http://{local_ip}:{cfg.server.port}/v1"
+    if public_host:
+        if public_host.startswith("http"):
+            base_url = f"{public_host.rstrip('/')}/v1"
+        elif "." in public_host and not any(c.isdigit() for c in public_host.split('.')[-1]):
+            # Likely a domain name, not an IP, assume HTTPS and no port
+            base_url = f"https://{public_host.rstrip('/')}/v1"
+        else:
+            # Likely an IP or local hostname
+            base_url = f"http://{public_host.rstrip('/')}:{cfg.server.port}/v1"
+
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
@@ -930,7 +941,7 @@ async def api_info():
         "access_key": cfg.server.access_key,
         "access_key_enabled": cfg.server.access_key_enabled,
         "turnstile_site_key": cfg.server.turnstile_site_key,
-        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
+        "base_url": base_url,
     }
 
 @app.get("/health")
