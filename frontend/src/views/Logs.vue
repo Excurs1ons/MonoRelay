@@ -47,45 +47,55 @@
                 <td class="text-right">{{ log.input_tokens || '-' }}</td>
                 <td class="text-right">{{ log.output_tokens || '-' }}</td>
               </tr>
-              <tr v-if="expanded[log.id]" class="expand-row">
-                <td colspan="9">
-                  <div class="expand-content">
-                    <div v-if="log.temperature || log.top_p || log.presence_penalty || log.frequency_penalty || log.max_tokens" class="params-block">
-                      <div class="content-label">参数</div>
-                      <div class="params-grid">
-                        <span v-if="log.temperature">temperature: {{ log.temperature }}</span>
-                        <span v-if="log.top_p">top_p: {{ log.top_p }}</span>
-                        <span v-if="log.presence_penalty">presence_penalty: {{ log.presence_penalty }}</span>
-                        <span v-if="log.frequency_penalty">frequency_penalty: {{ log.frequency_penalty }}</span>
-                        <span v-if="log.max_tokens">max_tokens: {{ log.max_tokens }}</span>
-                      </div>
-                    </div>
-                    <div v-if="log.request_preview" class="content-block">
-                      <div class="content-label">Request</div>
-                      <pre class="content-text">{{ log.request_preview }}</pre>
-                    </div>
-                    <div v-if="log.response_preview" class="content-block">
-                      <div class="content-label">Response</div>
-                      <pre class="content-text">{{ log.response_preview }}</pre>
-                    </div>
-                     <div v-if="log.error_message" class="content-block">
-                       <div class="content-label">Error</div>
-                       <pre class="content-text error-text">{{ log.error_message }}</pre>
-                       <div v-if="log.error_type" class="error-meta">
-                         <span class="error-meta-item">Type: {{ log.error_type }}</span>
-                         <span v-if="log.error_code" class="error-meta-item">Code: {{ log.error_code }}</span>
-                       </div>
-                       <div v-if="log.error_details" class="content-block" style="margin-top: 12px;">
-                         <div class="content-label">Error Details</div>
-                         <pre class="content-text">{{ log.error_details }}</pre>
+               <tr v-if="expanded[log.id]" class="expand-row">
+                 <td colspan="9">
+                   <div class="expand-content">
+                     <div v-if="log.temperature || log.top_p || log.presence_penalty || log.frequency_penalty || log.max_tokens" class="params-block">
+                       <div class="content-label">参数</div>
+                       <div class="params-grid">
+                         <span v-if="log.temperature">temperature: {{ log.temperature }}</span>
+                         <span v-if="log.top_p">top_p: {{ log.top_p }}</span>
+                         <span v-if="log.presence_penalty">presence_penalty: {{ log.presence_penalty }}</span>
+                         <span v-if="log.frequency_penalty">frequency_penalty: {{ log.frequency_penalty }}</span>
+                         <span v-if="log.max_tokens">max_tokens: {{ log.max_tokens }}</span>
                        </div>
                      </div>
-                    <div v-if="!log.request_preview && !log.response_preview && !log.error_message" class="text-dim text-sm">
-                      无详细内容
-                    </div>
-                  </div>
-                </td>
-              </tr>
+                     <div v-if="log.request_preview || (fullContent[log.id]?.request_full)" class="content-block">
+                       <div class="content-label">
+                         Request
+                         <button v-if="fullContent[log.id]?.request_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullRequest = !fullContent[log.id].showFullRequest">
+                           {{ fullContent[log.id].showFullRequest ? '显示预览' : '显示完整' }}
+                         </button>
+                       </div>
+                       <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullRequest) ? (fullContent[log.id].request_full || log.request_preview) : log.request_preview }}</pre>
+                     </div>
+                     <div v-if="log.response_preview || (fullContent[log.id]?.response_full)" class="content-block">
+                       <div class="content-label">
+                         Response
+                         <button v-if="fullContent[log.id]?.response_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullResponse = !fullContent[log.id].showFullResponse">
+                           {{ fullContent[log.id].showFullResponse ? '显示预览' : '显示完整' }}
+                         </button>
+                       </div>
+                       <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || log.response_preview) : log.response_preview }}</pre>
+                     </div>
+                      <div v-if="log.error_message" class="content-block">
+                        <div class="content-label">Error</div>
+                        <pre class="content-text error-text">{{ log.error_message }}</pre>
+                        <div v-if="log.error_type" class="error-meta">
+                          <span class="error-meta-item">Type: {{ log.error_type }}</span>
+                          <span v-if="log.error_code" class="error-meta-item">Code: {{ log.error_code }}</span>
+                        </div>
+                        <div v-if="log.error_details" class="content-block" style="margin-top: 12px;">
+                          <div class="content-label">Error Details</div>
+                          <pre class="content-text">{{ log.error_details }}</pre>
+                        </div>
+                      </div>
+                     <div v-if="!log.request_preview && !log.response_preview && !log.error_message" class="text-dim text-sm">
+                       无详细内容
+                     </div>
+                   </div>
+                 </td>
+               </tr>
             </template>
           </tbody>
         </table>
@@ -103,6 +113,7 @@ const loading = ref(true)
 const logs = ref([])
 const limit = ref(50)
 const expanded = ref({})
+const fullContent = ref({})
 
 async function fetchLogs() {
   loading.value = true
@@ -121,8 +132,23 @@ async function clearLogs() {
   } catch (e) { console.error(e) }
 }
 
+async function loadFullContent(id) {
+  if (fullContent.value[id]) return
+  try {
+    const data = await api.getLogDetail(id)
+    fullContent.value[id] = {
+      ...data,
+      showFullRequest: !!log.value.find(l => l.id === id)?.error_message,
+      showFullResponse: !!log.value.find(l => l.id === id)?.error_message
+    }
+  } catch (e) { console.error(e) }
+}
+
 function toggleExpand(id) {
   expanded.value[id] = !expanded.value[id]
+  if (expanded.value[id] && !fullContent.value[id]) {
+    loadFullContent(id)
+  }
 }
 
 function formatTime(ts) {
@@ -186,7 +212,9 @@ tr:last-child td { border-bottom: none; }
 .expand-content { padding: 16px 20px; max-height: 400px; overflow-y: auto; }
 .content-block { margin-bottom: 16px; }
 .content-block:last-child { margin-bottom: 0; }
-.content-label { font-size: 11px; font-weight: 600; color: var(--color-accent); text-transform: uppercase; margin-bottom: 8px; }
+.content-label { font-size: 11px; font-weight: 600; color: var(--color-accent); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); cursor: pointer; transition: all 0.15s; }
+.content-toggle:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .params-block { margin-bottom: 16px; }
 .params-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .params-grid span { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }

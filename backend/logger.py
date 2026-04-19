@@ -37,6 +37,8 @@ class RequestLogger:
                 estimated_cost REAL,
                 request_preview TEXT,
                 response_preview TEXT,
+                request_full TEXT,
+                response_full TEXT,
                 error_message TEXT,
                 error_type TEXT,
                 error_code TEXT,
@@ -84,6 +86,12 @@ class RequestLogger:
                 await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
             except Exception:
                 pass
+        # 迁移：添加完整请求/响应字段
+        for col in ["request_full TEXT", "response_full TEXT"]:
+            try:
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
+            except Exception:
+                pass
         await self._db.commit()
         logger.info(f"Request logger initialized with database at {self.db_path}")
 
@@ -104,6 +112,8 @@ class RequestLogger:
         estimated_cost: Optional[float] = None,
         request_preview: Optional[str] = None,
         response_preview: Optional[str] = None,
+        request_full: Optional[str] = None,
+        response_full: Optional[str] = None,
         error_message: Optional[str] = None,
         error_type: Optional[str] = None,
         error_code: Optional[str] = None,
@@ -124,9 +134,9 @@ class RequestLogger:
             INSERT INTO requests (
                 timestamp, model, provider, key_label, status_code, latency_ms,
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
-                response_preview, error_message, error_type, error_code, error_details,
+                response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
@@ -141,6 +151,8 @@ class RequestLogger:
                 estimated_cost,
                 request_preview,
                 response_preview,
+                request_full,
+                response_full,
                 error_message,
                 error_type,
                 error_code,
