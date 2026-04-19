@@ -12,7 +12,7 @@
         <button class="btn btn-ghost btn-xs hamburger-btn" @click="mobileMenuOpen = !mobileMenuOpen">
           <Menu :size="20" />
         </button>
-        <h1 class="header-title">
+        <h1 class="header-title" @click="$router.push('/dashboard')">
           <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
             <path d="M2 17l10 5 10-5"/>
@@ -732,6 +732,12 @@ border-color: var(--color-accent);
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.header-title:hover {
+  opacity: 0.8;
 }
 
 .header-logo {
@@ -761,14 +767,18 @@ border-color: var(--color-accent);
   top: 100%;
   right: 0;
   margin-top: 8px;
-  background: var(--color-bg-card);
+  background: rgba(24, 24, 27, 0.5);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 4px;
   min-width: 80px;
   z-index: 101;
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+.light .locale-dropdown {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .locale-option {
