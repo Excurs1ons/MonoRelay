@@ -34,10 +34,10 @@
     </header>
 
     <!-- Mobile Menu Overlay -->
-    <div class="mobile-menu-overlay" v-if="mobileMenuOpen" @click="mobileMenuOpen = false"></div>
+    <div class="mobile-menu-overlay" v-show="mobileMenuOpen" @click="mobileMenuOpen = false"></div>
 
     <!-- Mobile Menu -->
-    <div class="mobile-menu" :class="{ open: mobileMenuOpen }" v-if="authed">
+    <div class="mobile-menu" :class="{ open: mobileMenuOpen }" v-show="authed">
       <nav class="mobile-tabs">
         <button
           v-for="tab in filteredTabs"
@@ -884,6 +884,18 @@ border-color: var(--color-accent);
 
   .tabs {
     display: none;
+  }
+
+  .header h1 {
+    font-size: 16px;
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+
+  .btn-ghost.btn-xs {
+    padding: 6px 8px;
   }
 }
 </style>
