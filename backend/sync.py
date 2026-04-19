@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,56 @@ logger = logging.getLogger("monorelay.sync")
 GIST_FILENAME = "config.yml"
 GIST_STATS_FILENAME = "stats.json"
 GIST_DESCRIPTION = "MonoRelay Configuration"
+
+SECRET_KEYS = {
+    "client_secret",
+    "github_client_secret",
+    "google_client_secret",
+    "local_sso_secret",
+    "jwt_secret",
+    "turnstile_secret_key",
+    "access_key",
+    "sync_token",
+    "gist_token",
+    "webdav_password",
+}
+
+
+def filter_secrets_from_yaml(content: str) -> str:
+    """从 YAML 配置中移除 secrets，只保留下游 API keys。"""
+    lines = content.split("\n")
+    in_secret_block = False
+    skip_count = 0
+    
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        
+        if skip_count > 0:
+            skip_count -= 1
+            continue
+        
+        if not line.startswith(" ") and not line.startswith("\t"):
+            in_secret_block = False
+        
+        is_secret = False
+        for secret_key in SECRET_KEYS:
+            if re.match(rf"^\s*{secret_key}:\s*", line) or re.match(rf"^\s*-\s*{secret_key}:\s*", line):
+                is_secret = True
+                break
+        
+        if is_secret:
+            if ":" in line and not line.strip().endswith(":"):
+                key = line.split(":")[0].strip().replace("-", "").strip()
+                if any(s in key.lower() for s in SECRET_KEYS):
+                    continue
+            indent = len(line) - len(line.lstrip())
+            result.append(" " * indent + "# " + line.strip() + "  # filtered")
+            continue
+            
+        result.append(line)
+    
+    return "\n".join(result)
 
 
 class GistSync:
@@ -31,11 +82,10 @@ class GistSync:
         return self._gist_id
 
     async def push(self, content: str, stats_content: Optional[str] = None) -> tuple[bool, str]:
-        """推送配置和统计数据到 Gist。返回 (是否成功, 版本号)。"""
         try:
             files = {}
             if content:
-                files[GIST_FILENAME] = {"content": content}
+                files[GIST_FILENAME] = {"content": filter_secrets_from_yaml(content)}
             if stats_content is not None:
                 files[GIST_STATS_FILENAME] = {"content": stats_content}
 
