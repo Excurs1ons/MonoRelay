@@ -171,9 +171,9 @@
       <h3 class="text-red-500 font-semibold mb-4 flex items-center gap-2">
         <AlertTriangle :size="18" /> 危险区域
       </h3>
-      <div class="card border-red-900/50 bg-red-950/10">
-        <div class="flex-between">
-          <div>
+      <div class="card border-red-900/50 bg-red-950/10 danger-card">
+        <div class="danger-content">
+          <div class="danger-text">
             <h4 class="font-medium text-sm mb-1">清空所有数据</h4>
             <p class="text-xs text-dim">此操作将删除所有用户、密钥、日志和配置文件。MonoRelay 将恢复到初始状态并自动停止。</p>
           </div>
@@ -400,4 +400,17 @@ input:checked + .slider:before { transform: translateX(14px); }
 .border-red-900\/30 { border-color: rgba(127, 29, 29, 0.3); }
 .border-red-900\/50 { border-color: rgba(127, 29, 29, 0.5); }
 .bg-red-950\/10 { background-color: rgba(69, 10, 10, 0.1); }
+
+.danger-card { padding: 16px 20px; }
+.danger-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.danger-text { flex: 1; min-width: 0; }
+@media (max-width: 600px) {
+  .danger-content { flex-direction: column; align-items: stretch; }
+  .danger-text { margin-bottom: 12px; }
+}
 </style>
