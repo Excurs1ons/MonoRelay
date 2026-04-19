@@ -171,7 +171,7 @@ class LoggingConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8787
-    access_key: str = "prisma-relay-change-me"
+    access_key: str = ""
     access_key_enabled: bool = True
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])

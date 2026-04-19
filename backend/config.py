@@ -53,6 +53,11 @@ class ConfigManager:
 
         config = AppConfig(**raw)
 
+        if not config.server.access_key:
+            import uuid
+            config.server.access_key = str(uuid.uuid4())
+            logger.warning(f"已生成随机 access_key")
+
         import sqlite3
         db_path = secrets_manager.db_path
         if db_path.exists():
