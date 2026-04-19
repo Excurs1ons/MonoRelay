@@ -820,20 +820,20 @@ border-color: var(--color-accent);
   position: fixed;
   top: 56px;
   left: 0;
-  right: 0;
+  bottom: 0;
+  width: 280px;
   background: rgba(24, 24, 27, 0.95);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
   z-index: 100;
-  max-height: calc(100vh - 56px);
   overflow-y: auto;
-  transform: translateY(-100%);
+  transform: translateX(-100%);
   transition: transform 0.3s ease;
 }
 
 .mobile-menu.open {
-  transform: translateY(0);
+  transform: translateX(0);
 }
 
 .mobile-tabs {
