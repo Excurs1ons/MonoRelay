@@ -12,21 +12,25 @@
         <button class="btn btn-ghost btn-xs hamburger-btn" @click="mobileMenuOpen = !mobileMenuOpen">
           <Menu :size="20" />
         </button>
-        <h1>
+        <h1 class="header-title">
           <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
             <path d="M2 17l10 5 10-5"/>
             <path d="M2 12l10 5 10-5"/>
           </svg>
           MonoRelay
+          <span class="status-dot"></span>
         </h1>
         <div class="header-right">
-          <span class="status-dot"></span>
+          <div class="locale-dropdown" v-if="localeDropdownOpen">
+            <button class="locale-option" @click="localeStore.set('zh'); localeDropdownOpen = false">中文</button>
+            <button class="locale-option" @click="localeStore.set('en'); localeDropdownOpen = false">EN</button>
+          </div>
           <button class="btn btn-ghost btn-xs" @click="themeStore.toggle()">
             <Sun :size="14" v-if="themeStore.isDark" />
             <Moon :size="14" v-else />
           </button>
-          <button class="btn btn-ghost btn-xs" @click="localeStore.toggle()">
+          <button class="btn btn-ghost btn-xs" @click="localeDropdownOpen = !localeDropdownOpen">
             <Languages :size="14" />
           </button>
         </div>
@@ -87,6 +91,7 @@ const localeStore = useLocaleStore()
 const themeStore = useThemeStore()
 const inputKey = ref('')
 const mobileMenuOpen = ref(false)
+const localeDropdownOpen = ref(false)
 const loginError = ref(false)
 const authError = ref('')
 const serverInfo = ref('')
@@ -698,6 +703,13 @@ border-color: var(--color-accent);
   border-bottom: 1px solid var(--color-border);
   z-index: 100;
 }
+
+.light .header {
+  background: rgba(255, 255, 255, 0.3);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
+}
+
 .header-inner {
   max-width: 1120px;
   margin: 0 auto;
@@ -707,7 +719,8 @@ border-color: var(--color-accent);
   justify-content: space-between;
   padding: 0 24px;
 }
-.header h1 {
+
+.header-title {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -716,23 +729,64 @@ border-color: var(--color-accent);
   font-family: var(--font-mono);
   color: var(--color-text);
   margin: 0;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
+
 .header-logo {
   width: 24px;
   height: 24px;
   color: var(--color-accent);
 }
+
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
 }
+
 .status-dot {
   width: 8px;
   height: 8px;
   background: var(--color-green);
   border-radius: 50%;
   animation: pulse 2s ease-in-out infinite;
+  margin-left: 8px;
+}
+
+.locale-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 80px;
+  z-index: 101;
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
+}
+
+.locale-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.locale-option:hover {
+  background: var(--color-bg-input);
 }
 .btn {
   display: inline-flex;
@@ -821,7 +875,7 @@ border-color: var(--color-accent);
   top: 56px;
   left: 0;
   bottom: 0;
-  width: 280px;
+  width: 160px;
   background: rgba(24, 24, 27, 0.95);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
@@ -830,6 +884,12 @@ border-color: var(--color-accent);
   overflow-y: auto;
   transform: translateX(-100%);
   transition: transform 0.3s ease;
+}
+
+.light .mobile-menu {
+  background: rgba(255, 255, 255, 0.95);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
 }
 
 .mobile-menu.open {
@@ -886,7 +946,7 @@ border-color: var(--color-accent);
     display: none;
   }
 
-  .header h1 {
+  .header-title {
     font-size: 16px;
   }
 

@@ -68,10 +68,18 @@
                       <div class="content-label">Response</div>
                       <pre class="content-text">{{ log.response_preview }}</pre>
                     </div>
-                    <div v-if="log.error_message" class="content-block">
-                      <div class="content-label">Error</div>
-                      <pre class="content-text error-text">{{ log.error_message }}</pre>
-                    </div>
+                     <div v-if="log.error_message" class="content-block">
+                       <div class="content-label">Error</div>
+                       <pre class="content-text error-text">{{ log.error_message }}</pre>
+                       <div v-if="log.error_type" class="error-meta">
+                         <span class="error-meta-item">Type: {{ log.error_type }}</span>
+                         <span v-if="log.error_code" class="error-meta-item">Code: {{ log.error_code }}</span>
+                       </div>
+                       <div v-if="log.error_details" class="content-block" style="margin-top: 12px;">
+                         <div class="content-label">Error Details</div>
+                         <pre class="content-text">{{ log.error_details }}</pre>
+                       </div>
+                     </div>
                     <div v-if="!log.request_preview && !log.response_preview && !log.error_message" class="text-dim text-sm">
                       无详细内容
                     </div>
