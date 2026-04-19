@@ -523,7 +523,7 @@ async def handle_messages(
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
 
     if provider_cfg.provider_type == "api":
         return await handle_anthropic_to_openai(
@@ -533,7 +533,7 @@ async def handle_messages(
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
     if not key:
         stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"No available keys for provider '{provider_name}'", "type": "no_keys"}}
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = f"{provider_cfg.base_url}/v1/messages"
     headers = {
@@ -597,7 +597,7 @@ async def _stream_messages(
                         error_message=error_text,
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
-                    event_data = json.dumps({"type": "error", "error": {"message": error_text, "type": "upstream_error"}})
+                    event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": "upstream_error"}})
                     yield f"event: error\ndata: {event_data}\n\n".encode()
                     return
 
@@ -676,7 +676,7 @@ async def _stream_messages(
                 error_message=str(e),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            event_data = json.dumps({"type": "error", "error": {"message": str(e), "type": "proxy_error"}})
+            event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}})
             yield f"event: error\ndata: {event_data}\n\n".encode()
 
 
@@ -742,4 +742,4 @@ async def _non_stream_messages(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             logger.error(f"Anthropic失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            return {"error": {"message": str(e), "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
