@@ -138,6 +138,34 @@
       <div class="card">
         <h3 class="card-title">SSO 高级设置</h3>
         <div class="form-group">
+          <label>SSO Provider</label>
+          <select v-model="config.sso.provider" class="auth-input">
+            <option value="github">GitHub</option>
+            <option value="google">Google</option>
+            <option value="prismaauth">PrismaAuth</option>
+          </select>
+        </div>
+        <div class="form-group" v-if="config.sso.provider === 'github'">
+          <label>GitHub Client ID</label>
+          <input v-model="config.sso.github_client_id" type="text" class="auth-input" placeholder="GitHub OAuth App Client ID" />
+        </div>
+        <div class="form-group" v-if="config.sso.provider === 'github'">
+          <label>GitHub Client Secret</label>
+          <input v-model="config.sso.github_client_secret" type="password" class="auth-input" placeholder="GitHub OAuth App Client Secret" />
+        </div>
+        <div class="form-group" v-if="config.sso.provider === 'google'">
+          <label>Google Client ID</label>
+          <input v-model="config.sso.google_client_id" type="text" class="auth-input" placeholder="Google OAuth Client ID" />
+        </div>
+        <div class="form-group" v-if="config.sso.provider === 'google'">
+          <label>Google Client Secret</label>
+          <input v-model="config.sso.google_client_secret" type="password" class="auth-input" placeholder="Google OAuth Client Secret" />
+        </div>
+        <div class="form-group" v-if="config.sso.provider === 'prismaauth'">
+          <label>PrismaAuth URL</label>
+          <input v-model="config.sso.prismaauth_url" type="text" class="auth-input" placeholder="http://localhost:8080" />
+        </div>
+        <div class="form-group">
           <div class="flex-between mb-2">
             <label class="m-0">强制 SSO 登录</label>
             <label class="switch">
@@ -213,7 +241,16 @@ const config = ref({
   key_selection: { strategy: 'round-robin' },
   tool_calling: { auto_downgrade: true, unsupported_models: [] },
   logging: { enabled: true, max_age_days: 30, content_preview_length: 200 },
-  sso: { sso_only: false, admin_usernames: [] }
+  sso: { 
+    provider: 'github',
+    sso_only: false, 
+    admin_usernames: [],
+    github_client_id: '',
+    github_client_secret: '',
+    google_client_id: '',
+    google_client_secret: '',
+    prismaauth_url: 'http://localhost:8080'
+  }
 })
 
 async function fetchFullConfig() {
