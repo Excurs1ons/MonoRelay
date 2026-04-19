@@ -38,6 +38,9 @@ class RequestLogger:
                 request_preview TEXT,
                 response_preview TEXT,
                 error_message TEXT,
+                error_type TEXT,
+                error_code TEXT,
+                error_details TEXT,
                 streaming INTEGER DEFAULT 0,
                 temperature REAL,
                 top_p REAL,
@@ -75,6 +78,12 @@ class RequestLogger:
                 await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
             except Exception:
                 pass
+        # 迁移：添加错误详情字段
+        for col in ["error_type TEXT", "error_code TEXT", "error_details TEXT"]:
+            try:
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
+            except Exception:
+                pass
         await self._db.commit()
         logger.info(f"Request logger initialized with database at {self.db_path}")
 
@@ -96,6 +105,9 @@ class RequestLogger:
         request_preview: Optional[str] = None,
         response_preview: Optional[str] = None,
         error_message: Optional[str] = None,
+        error_type: Optional[str] = None,
+        error_code: Optional[str] = None,
+        error_details: Optional[str] = None,
         streaming: bool = False,
         first_token_ms: Optional[float] = None,
         temperature: Optional[float] = None,
@@ -112,9 +124,9 @@ class RequestLogger:
             INSERT INTO requests (
                 timestamp, model, provider, key_label, status_code, latency_ms,
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
-                response_preview, error_message, streaming, temperature, top_p,
-                presence_penalty, frequency_penalty, max_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_preview, error_message, error_type, error_code, error_details,
+                streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
@@ -130,6 +142,9 @@ class RequestLogger:
                 request_preview,
                 response_preview,
                 error_message,
+                error_type,
+                error_code,
+                error_details,
                 1 if streaming else 0,
                 temperature,
                 top_p,
