@@ -134,9 +134,25 @@ def kill_port(port: int) -> None:
                 subprocess.run(["kill", "-9", old_pid],
                                capture_output=True, timeout=5)
             time.sleep(0.5)
+            # 验证进程是否真的被终止
+            if system == "Windows":
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {old_pid}"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if str(old_pid) in result.stdout:
+                    raise RuntimeError(f"无法终止进程 PID={old_pid}")
+            else:
+                try:
+                    os.kill(int(old_pid), 0)
+                    raise RuntimeError(f"进程 PID={old_pid} 仍在运行")
+                except ProcessLookupError:
+                    pass
             print("[*] 旧进程已终止")
-        except Exception:
-            print("[!] 无法终止旧进程，继续启动")
+        except Exception as e:
+            print(f"[x] 无法终止旧进程: {e}")
+            print("[x] 请手动终止进程后重试")
+            sys.exit(1)
 
 
 def write_pid(pid: int) -> None:
@@ -207,7 +223,7 @@ def stop_server() -> bool:
         return True
     except Exception as e:
         print(f"[x] 停止失败: {e}")
-        return False
+        sys.exit(1)
 
 
 # ── 核心启动 ──────────────────────────────────────────────────────────
@@ -219,6 +235,10 @@ def start_foreground(args: argparse.Namespace) -> None:
     ensure_config()
     ensure_venv()
     ensure_deps()
+    
+    # 强制清理所有残留进程
+    kill_all_backend_processes()
+    
     kill_port(args.port)
 
     print()
@@ -239,6 +259,44 @@ def start_foreground(args: argparse.Namespace) -> None:
     os.execv(str(py), cmd)  # 替换当前进程，不产生额外子进程
 
 
+def kill_all_backend_processes() -> None:
+    """强制清理所有 backend.main 进程"""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            # Windows: taskkill /F /IM python.exe /FI "IMAGENAME eq backend.main"
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq python.exe", "/FO", "CSV"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = []
+            for line in result.stdout.splitlines()[1:]:  # Skip header
+                if "backend.main" in line:
+                    parts = line.split(',')
+                    if len(parts) >= 2:
+                        pid = parts[1].strip('"')
+                        if pid.isdigit():
+                            pids.append(pid)
+            for pid in pids:
+                print(f"[*] 清理残留进程 PID={pid}...")
+                subprocess.run(["taskkill", "/F", "/PID", pid],
+                               capture_output=True, timeout=5)
+        else:
+            # Linux/macOS: pkill -f "python.*backend.main"
+            result = subprocess.run(
+                ["pgrep", "-f", "python.*backend.main"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            for pid in pids:
+                if pid:
+                    print(f"[*] 清理残留进程 PID={pid}...")
+                    subprocess.run(["kill", "-9", pid],
+                                   capture_output=True, timeout=5)
+    except Exception as e:
+        print(f"[!] 清理残留进程时出错: {e}")
+
+
 def start_background(args: argparse.Namespace) -> None:
     banner("MonoRelay 后台启动")
 
@@ -253,6 +311,10 @@ def start_background(args: argparse.Namespace) -> None:
     ensure_config()
     ensure_venv()
     ensure_deps()
+    
+    # 强制清理所有残留进程
+    kill_all_backend_processes()
+    
     kill_port(args.port)
 
     py = venv_python()
