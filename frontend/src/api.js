@@ -57,13 +57,13 @@ export { getToken, setToken, clearToken, getAccessKey, setAccessKey, request }
 export const api = {
   // Auth
   checkSetupStatus: () => request('/api/setup/status'),
-  register: (username, email, password) => request('/api/auth/register', {
+  register: (username, email, password, turnstileToken = '') => request('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ username, email, password })
+    body: JSON.stringify({ username, email, password, turnstile_token: turnstileToken })
   }),
-  login: (username, password) => request('/api/auth/login', {
+  login: (username, password, turnstileToken = '') => request('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
   }),
   getMe: () => request('/api/auth/me'),
   changePassword: (oldPassword, newPassword) => request('/api/auth/change-password', {
@@ -85,7 +85,7 @@ export const api = {
 
   // Info & Health
   getInfo: () => request('/api/info'),
-  health: () => request('/health'),
+  health: (turnstileToken = '') => request('/health' + (turnstileToken ? `?turnstile_token=${turnstileToken}` : '')),
 
   // Stats
   getStats: () => request('/api/stats'),
@@ -100,6 +100,7 @@ export const api = {
   updateConfig: (body) => request('/api/config', { method: 'PUT', body: JSON.stringify(body) }),
   getFullConfig: () => request('/api/config/full'),
   updateFullConfig: (body) => request('/api/config/full', { method: 'PUT', body: JSON.stringify(body) }),
+  clearAllData: () => request('/api/admin/clear-data', { method: 'POST' }),
 
   // Providers
   getProviders: () => request('/api/providers'),
