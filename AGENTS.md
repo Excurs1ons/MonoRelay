@@ -162,6 +162,7 @@ main (stable / release-ready)
 - **Feature-level changes**: create `feat/xxx` branch, PR to `dev`
 - **Clean commits**: Use semantic commit messages (`feat:`, `fix:`, `chore:`, `docs:`)
 - **No Co-authored-by**: Do not add AI attribution footers to commits
+- **ALWAYS test before commit**: Verify the fix works locally or on server before pushing
 
 ### Auto-Merge
 
