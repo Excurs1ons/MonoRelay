@@ -330,11 +330,6 @@ async def catch_all_middleware(request: Request, call_next):
     return response
 
 
-@app.get("/{full_path:path}")
-async def catch_all(request: Request, full_path: str):
-    return await serve_frontend()
-
-
 @app.get("/api/setup/status")
 async def api_setup_status():
     """Check if initial setup is needed."""
