@@ -230,7 +230,7 @@
             placeholder="username1,username2,username3"
             @blur="updateAdminUsernames"
           />
-          <p class="help-text">当前管理员: {{ config.sso.admin_usernames?.join(', ') || '(无)' }}</p>
+          <p class="help-text">当前管理员: {{ config.sso?.admin_usernames?.join(', ') || '(无)' }}</p>
         </div>
       </div>
     </div>
