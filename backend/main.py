@@ -187,21 +187,25 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
     if path.startswith("/v1/") or path.startswith("/api/"):
-        # Public endpoints that don't require authentication
         public_endpoints = [
+            "/",
+            "/favicon.svg",
+            "/health",
+            "/api/setup/status",
+            "/api/auth/sso/status",
             "/api/auth/login",
             "/api/auth/register",
+            "/api/auth/refresh",
             "/api/auth/sso/login",
             "/api/auth/sso/callback",
-            "/api/auth/sso/status",
+            "/api/auth/sso/test-popup",
             "/api/info",
-            "/api/setup/status",
-            "/api/providers/",
+            "/api/providers",
+            "/api/models/pricing",
             "/api/logs",
             "/v1/models",
         ]
 
-        # Use exact match or prefix for some, but be careful with /api/auth/
         is_public = any(path == ep or (ep.endswith("/") and path.startswith(ep)) for ep in public_endpoints)
         
         # Get token from headers
