@@ -136,10 +136,11 @@ async function loadFullContent(id) {
   if (fullContent.value[id]) return
   try {
     const data = await api.getLogDetail(id)
+    const logEntry = logs.value.find(l => l.id === id)
     fullContent.value[id] = {
       ...data,
-      showFullRequest: !!log.value.find(l => l.id === id)?.error_message,
-      showFullResponse: !!log.value.find(l => l.id === id)?.error_message
+      showFullRequest: !!logEntry?.error_message,
+      showFullResponse: !!logEntry?.error_message
     }
   } catch (e) { console.error(e) }
 }
