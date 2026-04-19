@@ -105,12 +105,23 @@ def init_components(cfg: AppConfig):
     model_router = ModelRouter(cfg)
     auth_service.jwt_secret = cfg.server.jwt_secret or ""
     
-    # Sync gist_id to storage if changed
     if cfg.sync and cfg.sync.gist_id:
         sync_storage.gist_id = cfg.sync.gist_id
 
     if cfg.sso and cfg.sso.enabled:
-        sso_config = create_sso_config_from_dict(cfg.sso.model_dump())
+        sso_dump = {
+            "enabled": cfg.sso.enabled,
+            "provider": cfg.sso.provider,
+            "prismaauth_url": cfg.sso.prismaauth_url,
+            "client_id": cfg.sso.client_id,
+            "client_secret": cfg.sso.client_secret,
+            "scopes": cfg.sso.scopes,
+            "github_client_id": cfg.sso.github_client_id,
+            "github_client_secret": cfg.sso.github_client_secret,
+            "google_client_id": cfg.sso.google_client_id,
+            "google_client_secret": cfg.sso.google_client_secret,
+        }
+        sso_config = create_sso_config_from_dict(sso_dump)
         if sso_config.is_configured:
             sso_validator = OAuthValidator(sso_config)
             logger.info(f"SSO enabled with provider: {sso_config.provider}")
@@ -1360,6 +1371,9 @@ async def api_update_full_config(request: Request):
                 await secrets_manager.set(key, value)
             else:
                 await secrets_manager.delete(key)
+        
+        if body.get("sso", {}).get("provider"):
+            await secrets_manager.set("sso_provider", body["sso"]["provider"])
 
         config_manager.save(new_cfg)
         init_components(new_cfg)
