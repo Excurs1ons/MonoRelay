@@ -1,7 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/Login.vue'),
+  },
   {
     path: '/dashboard',
     name: 'Dashboard',
@@ -67,6 +73,13 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach((to) => {
+  const token = localStorage.getItem('access_token')
+  if (!token && to.path !== '/' && to.path !== '/login') {
+    return '/login'
+  }
 })
 
 export default router
