@@ -228,11 +228,13 @@ async def auth_middleware(request: Request, call_next):
                     return response
 
         # Fallback to access_key authentication (for backward compatibility)
-        access_key = config_manager.config.server.access_key
-        if token == access_key:
-            request.state.client_id = token[:16] if len(token) >= 16 else token
-            response = await call_next(request)
-            return response
+        # ONLY if enabled in config
+        if config_manager.config.server.access_key_enabled:
+            access_key = config_manager.config.server.access_key
+            if token == access_key:
+                request.state.client_id = token[:16] if len(token) >= 16 else token
+                response = await call_next(request)
+                return response
 
         if is_public:
             response = await call_next(request)
@@ -797,6 +799,7 @@ async def api_info():
         "host": cfg.server.host,
         "port": cfg.server.port,
         "access_key": cfg.server.access_key,
+        "access_key_enabled": cfg.server.access_key_enabled,
         "base_url": f"http://{local_ip}/v1",
     }
 
