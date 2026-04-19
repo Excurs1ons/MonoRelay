@@ -64,9 +64,10 @@
         </form>
 
         <form v-if="authMode === 'sso' && !ssoLoading" @submit.prevent="handleSSOLogin">
-          <p class="auth-sso-hint">{{ localeStore.locale === 'zh' ? '使用SSO单点登录' : 'Sign in with SSO' }}</p>
+          <p class="auth-sso-hint">{{ ssoProviderText }}</p>
           <button type="submit" class="btn btn-primary btn-block">
-            {{ localeStore.locale === 'zh' ? '使用SSO登录' : 'Login with SSO' }}
+            <component :is="ssoProviderIcon" :size="16" class="mr-1" />
+            {{ ssoProviderButtonText }}
           </button>
         </form>
 
@@ -94,12 +95,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore, useLocaleStore, useToastStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { Languages, RefreshCw } from 'lucide-vue-next'
+import { Languages, RefreshCw, Github, Chrome } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -117,6 +118,7 @@ const turnstileToken = ref('')
 const ssoEnabled = ref(false)
 const ssoOnly = ref(false)
 const ssoLoading = ref(false)
+const ssoProvider = ref('github')
 let ssoPopup = null
 
 window.onTurnstileVerify = (token) => { turnstileToken.value = token }
@@ -125,6 +127,39 @@ window.onTurnstileExpired = () => { turnstileToken.value = '' }
 const loginForm = ref({ username: '', password: '' })
 const registerForm = ref({ username: '', email: '', password: '', confirmPassword: '' })
 
+const ssoProviderIcon = computed(() => {
+  switch (ssoProvider.value) {
+    case 'github':
+      return Github
+    case 'google':
+      return Chrome
+    default:
+      return Github
+  }
+})
+
+const ssoProviderText = computed(() => {
+  switch (ssoProvider.value) {
+    case 'github':
+      return localeStore.locale === 'zh' ? '使用 GitHub 账号登录' : 'Sign in with GitHub'
+    case 'google':
+      return localeStore.locale === 'zh' ? '使用 Google 账号登录' : 'Sign in with Google'
+    default:
+      return localeStore.locale === 'zh' ? '使用 SSO 单点登录' : 'Sign in with SSO'
+  }
+})
+
+const ssoProviderButtonText = computed(() => {
+  switch (ssoProvider.value) {
+    case 'github':
+      return localeStore.locale === 'zh' ? 'GitHub 登录' : 'Login with GitHub'
+    case 'google':
+      return localeStore.locale === 'zh' ? 'Google 登录' : 'Login with Google'
+    default:
+      return localeStore.locale === 'zh' ? 'SSO 登录' : 'Login with SSO'
+  }
+})
+
 async function checkSetup() {
   try {
     const status = await api.checkSetupStatus()
@@ -132,6 +167,7 @@ async function checkSetup() {
     const ssoStatus = await api.getSSOStatus()
     ssoEnabled.value = ssoStatus.enabled
     ssoOnly.value = ssoStatus.sso_only || false
+    ssoProvider.value = ssoStatus.provider || 'github'
     const info = await api.getInfo()
     accessKeyEnabled.value = info.access_key_enabled !== false
     turnstileSiteKey.value = info.turnstile_site_key || ''
@@ -141,7 +177,7 @@ async function checkSetup() {
       script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
       script.async = true
       script.defer = true
-      document.head.appendChild(script)
+      script.head.appendChild(script)
     }
     if (ssoOnly.value && ssoEnabled.value) authMode.value = 'sso'
     else if (!accessKeyEnabled.value && authMode.value === 'key') authMode.value = 'user'
@@ -266,6 +302,7 @@ onMounted(checkSetup)
 .btn-primary { background: var(--color-accent); color: #fff; }
 .btn-primary:hover { background: var(--color-accent-hover); box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35); }
 .btn-block { width: 100%; justify-content: center; padding: 12px 16px; font-size: 13px; }
+.mr-1 { margin-right: 4px; }
 .mt-4 { margin-top: 16px; }
 .mb-2 { margin-bottom: 8px; }
 </style>

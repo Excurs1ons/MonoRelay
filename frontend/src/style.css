@@ -3,6 +3,7 @@
 @variant dark (&:where(.dark, .dark *));
 
 @theme {
+  /* Dark theme (default) */
   --color-bg: #09090b;
   --color-bg-card: rgba(24, 24, 27, 0.1);
   --color-bg-input: #27272a;
@@ -42,6 +43,47 @@
   --gradient-start: rgba(249, 115, 22, 0.12);
   --gradient-mid: rgba(219, 39, 119, 0.08);
   --gradient-end: rgba(124, 58, 237, 0.1);
+}
+
+/* Light theme */
+.light {
+  --color-bg: #ffffff;
+  --color-bg-card: rgba(255, 255, 255, 0.8);
+  --color-bg-input: #f5f5f4;
+  --color-border: rgba(0, 0, 0, 0.1);
+  --color-border-strong: rgba(0, 0, 0, 0.15);
+  --color-text: #18181b;
+  --color-text-dim: #71717a;
+  --color-accent: #f97316;
+  --color-accent-hover: #ea580c;
+  --color-accent-soft: rgba(249, 115, 22, 0.1);
+  --color-accent-pink: #ec4899;
+  --color-accent-purple: #8b5cf6;
+  --color-green: #16a34a;
+  --color-red: #dc2626;
+  --color-yellow: #d97706;
+  --color-orange: #ea580c;
+  --color-primary: #f97316;
+  --color-primary-hover: #ea580c;
+  --color-code: #f5f5f4;
+  --color-surface-50: #fafaf9;
+  --color-surface-100: #f5f5f4;
+  --color-surface-200: #e7e5e4;
+  --color-surface-300: #d6d3d1;
+  --color-surface-400: #a8a29e;
+  --color-surface-500: #78716c;
+  --color-surface-600: #57534e;
+  --color-surface-700: #44403c;
+  --color-surface-800: #292524;
+  --color-surface-900: #1c1917;
+  --color-surface-950: #0c0a09;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-info: #2563eb;
+  --gradient-start: rgba(249, 115, 22, 0.08);
+  --gradient-mid: rgba(219, 39, 119, 0.05);
+  --gradient-end: rgba(124, 58, 237, 0.06);
 }
 
 html {

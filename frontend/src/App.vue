@@ -9,6 +9,9 @@
     <!-- Header - 全屏固定浮层 -->
     <header class="header">
       <div class="header-inner">
+        <button class="btn btn-ghost btn-xs hamburger-btn" @click="mobileMenuOpen = !mobileMenuOpen">
+          <Menu :size="20" />
+        </button>
         <h1>
           <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -19,15 +22,35 @@
         </h1>
         <div class="header-right">
           <span class="status-dot"></span>
+          <button class="btn btn-ghost btn-xs" @click="themeStore.toggle()">
+            <Sun :size="14" v-if="themeStore.isDark" />
+            <Moon :size="14" v-else />
+          </button>
           <button class="btn btn-ghost btn-xs" @click="localeStore.toggle()">
             <Languages :size="14" />
-          </button>
-          <button class="btn btn-ghost btn-xs" @click="handleLogout">
-            <LogOut :size="14" />
           </button>
         </div>
       </div>
     </header>
+
+    <!-- Mobile Menu Overlay -->
+    <div class="mobile-menu-overlay" v-if="mobileMenuOpen" @click="mobileMenuOpen = false"></div>
+
+    <!-- Mobile Menu -->
+    <div class="mobile-menu" :class="{ open: mobileMenuOpen }" v-if="authed">
+      <nav class="mobile-tabs">
+        <button
+          v-for="tab in filteredTabs"
+          :key="tab.path"
+          class="mobile-tab"
+          :class="{ active: route.path === tab.path }"
+          @click="$router.push(tab.path); mobileMenuOpen = false"
+        >
+          <component :is="tab.icon" :size="18" />
+          {{ tab.label.startsWith('common.') ? $t(tab.label) : tab.label }}
+        </button>
+      </nav>
+    </div>
 
     <div class="container" :class="{ 'no-tabs': !authed }">
       <!-- Segmented tabs - 登录后显示 -->
@@ -53,15 +76,17 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { useAuthStore, useLocaleStore } from '@/stores'
+import { useAuthStore, useLocaleStore, useThemeStore } from '@/stores'
 import Toast from '@/components/Toast.vue'
 import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, Info, Users, User, Settings } from 'lucide-vue-next'
+import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, Info, Users, User, Settings, Sun, Moon, Menu } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
 const localeStore = useLocaleStore()
+const themeStore = useThemeStore()
 const inputKey = ref('')
+const mobileMenuOpen = ref(false)
 const loginError = ref(false)
 const authError = ref('')
 const serverInfo = ref('')
@@ -772,5 +797,93 @@ border-color: var(--color-accent);
   background: var(--color-accent);
   color: #fff;
   border-color: var(--color-accent);
+}
+
+/* Mobile Menu */
+.hamburger-btn {
+  display: none;
+}
+
+.mobile-menu-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+}
+
+.mobile-menu {
+  display: none;
+  position: fixed;
+  top: 56px;
+  left: 0;
+  right: 0;
+  background: rgba(24, 24, 27, 0.95);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--color-border);
+  z-index: 100;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+  transform: translateY(-100%);
+  transition: transform 0.3s ease;
+}
+
+.mobile-menu.open {
+  transform: translateY(0);
+}
+
+.mobile-tabs {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.mobile-tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-dim);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.mobile-tab:hover {
+  color: var(--color-text);
+  background: var(--color-bg-card);
+}
+
+.mobile-tab.active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+}
+
+@media (max-width: 768px) {
+  .hamburger-btn {
+    display: inline-flex;
+  }
+
+  .mobile-menu-overlay {
+    display: block;
+  }
+
+  .mobile-menu {
+    display: block;
+  }
+
+  .tabs {
+    display: none;
+  }
 }
 </style>

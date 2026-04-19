@@ -31,7 +31,6 @@
 
     <div class="flex-between mb-4">
       <h2 class="section-title">统计</h2>
-      <button class="btn btn-ghost" style="color:#ef4444" @click="resetStats">清空统计数据</button>
     </div>
 
     <div class="stats-grid">
