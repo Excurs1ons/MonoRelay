@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores'
 
 const routes = [
-  { path: '/', redirect: '/dashboard' },
+  { path: '/', redirect: '/login' },
   {
     path: '/login',
     name: 'Login',
