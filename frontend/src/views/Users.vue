@@ -243,4 +243,14 @@ onMounted(async () => {
 .overflow-hidden {
   overflow: hidden;
 }
+
+@media (max-width: 600px) {
+  .users-page {
+    padding: 0;
+  }
+  .users-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
 </style>

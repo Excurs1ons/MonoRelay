@@ -159,6 +159,13 @@ class RequestLogger:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def clear_all(self):
+        if not self._db:
+            return
+        await self._db.execute("DELETE FROM requests")
+        await self._db.commit()
+        logger.info("All request logs cleared")
+
     async def get_stats_summary(self) -> dict:
         if not self._db:
             return {"total_requests": 0, "total_cost": 0.0, "avg_latency_ms": 0.0}
