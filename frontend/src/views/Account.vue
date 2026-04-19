@@ -70,19 +70,34 @@
           {{ updating ? '正在保存...' : '修改密码' }}
         </button>
       </div>
+
+      <!-- Logout Card -->
+      <div class="card danger-card">
+        <h3 class="card-title danger-title">危险操作</h3>
+        <button 
+          class="btn btn-danger" 
+          @click="handleLogout"
+        >
+          <LogOut :size="14" class="mr-1" />
+          注销登录
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '@/api'
-import { useToastStore } from '@/stores'
-import { Shield, User } from 'lucide-vue-next'
+import { useAuthStore, useToastStore } from '@/stores'
+import { Shield, User, LogOut } from 'lucide-vue-next'
 
 const user = ref(null)
 const updating = ref(false)
 const toast = useToastStore()
+const authStore = useAuthStore()
+const router = useRouter()
 
 const pwdForm = ref({
   oldPassword: '',
@@ -125,7 +140,12 @@ async function changePassword() {
   }
 }
 
-onMounted(fetchMe)
+  onMounted(fetchMe)
+
+  function handleLogout() {
+    authStore.clearToken()
+    router.push('/login')
+  }
 </script>
 
 <style scoped>
@@ -284,5 +304,28 @@ onMounted(fetchMe)
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.danger-card {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.danger-title {
+  color: #ef4444;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.mr-1 {
+  margin-right: 4px;
 }
 </style>

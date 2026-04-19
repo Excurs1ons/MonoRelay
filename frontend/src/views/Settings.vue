@@ -246,6 +246,18 @@
       <h3 class="text-red-500 font-semibold mb-4 flex items-center gap-2">
         <AlertTriangle :size="18" /> 危险区域
       </h3>
+      <div class="card border-red-900/50 bg-red-950/10 danger-card mb-4">
+        <div class="danger-content">
+          <div class="danger-text">
+            <h4 class="font-medium text-sm mb-1">清空统计数据</h4>
+            <p class="text-xs text-dim">此操作将删除所有请求统计、模型使用数据和费用估算。</p>
+          </div>
+          <button class="btn btn-danger" @click="confirmClearStats" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid #ef4444;background:#ef4444;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;">
+            <Trash2 :size="14" class="mr-1" />
+            清空统计
+          </button>
+        </div>
+      </div>
       <div class="card border-red-900/50 bg-red-950/10 danger-card">
         <div class="danger-content">
           <div class="danger-text">
@@ -378,6 +390,16 @@ async function confirmClearData() {
     }
   } else if (input !== null) {
     toast.error('验证码错误')
+  }
+}
+
+async function confirmClearStats() {
+  if (!confirm('确定清空所有统计数据？')) return
+  try {
+    await api.resetStats()
+    toast.success('统计数据已清空')
+  } catch (e) {
+    toast.error('清空失败: ' + e.message)
   }
 }
 
