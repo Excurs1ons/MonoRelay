@@ -1,0 +1,258 @@
+<template>
+<Toast />
+<div class="auth-screen">
+  <div class="bg-layer">
+    <div class="bg-gradient"></div>
+    <div class="bg-grain"></div>
+  </div>
+  <transition name="fade" appear>
+    <div class="auth-card">
+      <div class="auth-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <h1 class="auth-title">MonoRelay</h1>
+
+      <div v-if="isSetupMode">
+        <p class="auth-subtitle">{{ $t('auth.setupRequired') }}</p>
+        <form @submit.prevent="handleRegister">
+          <input v-model="registerForm.username" type="text" name="username" autocomplete="username" :placeholder="$t('auth.usernamePlaceholder')" class="auth-input" autofocus />
+          <input v-model="registerForm.email" type="email" name="email" autocomplete="email" :placeholder="$t('auth.emailPlaceholder')" class="auth-input" />
+          <input v-model="registerForm.password" type="password" name="password" autocomplete="new-password" :placeholder="$t('auth.passwordPlaceholder')" class="auth-input" />
+          <input v-model="registerForm.confirmPassword" type="password" name="confirmPassword" autocomplete="new-password" :placeholder="$t('auth.confirmPasswordPlaceholder')" class="auth-input" />
+          <div v-if="turnstileSiteKey" class="cf-turnstile mt-4 mb-2" :data-sitekey="turnstileSiteKey" data-callback="onTurnstileVerify" data-expired-callback="onTurnstileExpired" data-theme="dark"></div>
+          <transition name="slide-down">
+            <p v-if="authError" class="auth-error">{{ authError }}</p>
+          </transition>
+          <button type="submit" class="btn btn-primary btn-block">{{ $t('auth.register') }}</button>
+        </form>
+      </div>
+
+      <div v-else>
+        <p class="auth-subtitle">{{ $t('auth.subtitle') }}</p>
+
+        <div v-if="!ssoOnly" class="auth-toggle">
+          <button v-if="accessKeyEnabled" :class="['auth-toggle-btn', { active: authMode === 'key' }]" @click="authMode = 'key'">{{ $t('auth.accessKey') || 'Access Key' }}</button>
+          <button :class="['auth-toggle-btn', { active: authMode === 'user' }]" @click="authMode = 'user'">{{ $t('auth.userLogin') || 'User Login' }}</button>
+          <button v-if="ssoEnabled" :class="['auth-toggle-btn', { active: authMode === 'sso' }]" @click="authMode = 'sso'">SSO</button>
+        </div>
+
+        <form v-if="authMode === 'key'" @submit.prevent="handleKeyLogin">
+          <input v-model="inputKey" type="password" name="access-key" autocomplete="current-password" :placeholder="$t('auth.placeholder')" class="auth-input" autofocus />
+          <transition name="slide-down">
+            <p v-if="loginError" class="auth-error">{{ $t('auth.invalid') }}</p>
+          </transition>
+          <button type="submit" class="btn btn-primary btn-block">{{ $t('auth.submit') }}</button>
+        </form>
+
+        <form v-else-if="authMode === 'user'" @submit.prevent="handleUserLogin">
+          <input v-model="loginForm.username" type="text" name="username" autocomplete="username" :placeholder="$t('auth.usernamePlaceholder')" class="auth-input" autofocus />
+          <input v-model="loginForm.password" type="password" name="password" autocomplete="current-password" :placeholder="$t('auth.passwordPlaceholder')" class="auth-input" />
+          <div v-if="turnstileSiteKey" class="cf-turnstile mt-4 mb-2" :data-sitekey="turnstileSiteKey" data-callback="onTurnstileVerify" data-expired-callback="onTurnstileExpired" data-theme="dark"></div>
+          <transition name="slide-down">
+            <p v-if="loginError" class="auth-error">{{ $t('auth.invalid') }}</p>
+          </transition>
+          <button type="submit" class="btn btn-primary btn-block">{{ $t('auth.login') }}</button>
+        </form>
+
+        <form v-if="authMode === 'sso' && !ssoLoading" @submit.prevent="handleSSOLogin">
+          <p class="auth-sso-hint">{{ localeStore.locale === 'zh' ? '使用SSO单点登录' : 'Sign in with SSO' }}</p>
+          <button type="submit" class="btn btn-primary btn-block">
+            {{ localeStore.locale === 'zh' ? '使用SSO登录' : 'Login with SSO' }}
+          </button>
+        </form>
+
+        <div v-if="ssoLoading" class="auth-sso-loading">
+          <div class="auth-sso-spinner">
+            <div class="auth-sso-spinner-ring"></div>
+            <div class="auth-sso-spinner-ring"></div>
+            <div class="auth-sso-spinner-ring"></div>
+          </div>
+          <p class="auth-sso-loading-text">{{ localeStore.locale === 'zh' ? '正在跳转SSO登录...' : 'Redirecting to SSO...' }}</p>
+          <p class="auth-sso-loading-hint">{{ localeStore.locale === 'zh' ? '请在新窗口中完成登录' : 'Complete login in the popup window' }}</p>
+          <div class="auth-sso-dots"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="auth-footer">
+          <button class="lang-btn" @click="localeStore.toggle()">
+            <Languages :size="14" />
+            {{ localeStore.locale === 'zh' ? 'EN' : '中文' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+</div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore, useLocaleStore, useToastStore } from '@/stores'
+import Toast from '@/components/Toast.vue'
+import { api, setAccessKey, setToken } from '@/api'
+import { Languages } from 'lucide-vue-next'
+
+const router = useRouter()
+const authStore = useAuthStore()
+const localeStore = useLocaleStore()
+const toast = useToastStore()
+
+const inputKey = ref('')
+const loginError = ref(false)
+const authError = ref('')
+const isSetupMode = ref(false)
+const authMode = ref('key')
+const accessKeyEnabled = ref(true)
+const turnstileSiteKey = ref('')
+const turnstileToken = ref('')
+const ssoEnabled = ref(false)
+const ssoOnly = ref(false)
+const ssoLoading = ref(false)
+let ssoPopup = null
+
+window.onTurnstileVerify = (token) => { turnstileToken.value = token }
+window.onTurnstileExpired = () => { turnstileToken.value = '' }
+
+const loginForm = ref({ username: '', password: '' })
+const registerForm = ref({ username: '', email: '', password: '', confirmPassword: '' })
+
+async function checkSetup() {
+  try {
+    const status = await api.checkSetupStatus()
+    isSetupMode.value = status.needs_setup
+    const ssoStatus = await api.getSSOStatus()
+    ssoEnabled.value = ssoStatus.enabled
+    ssoOnly.value = ssoStatus.sso_only || false
+    const info = await api.getInfo()
+    accessKeyEnabled.value = info.access_key_enabled !== false
+    turnstileSiteKey.value = info.turnstile_site_key || ''
+    if (turnstileSiteKey.value && !document.getElementById('turnstile-script')) {
+      const script = document.createElement('script')
+      script.id = 'turnstile-script'
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
+      script.async = true
+      script.defer = true
+      document.head.appendChild(script)
+    }
+    if (ssoOnly.value && ssoEnabled.value) authMode.value = 'sso'
+    else if (!accessKeyEnabled.value && authMode.value === 'key') authMode.value = 'user'
+  } catch (e) {
+    isSetupMode.value = false
+    ssoEnabled.value = false
+    ssoOnly.value = false
+  }
+}
+
+async function handleKeyLogin() {
+  loginError.value = false
+  setAccessKey(inputKey.value)
+  setToken('')
+  try {
+    await api.health(turnstileToken.value)
+    authStore.setToken(inputKey.value)
+    router.push('/dashboard')
+  } catch { loginError.value = true }
+}
+
+async function handleUserLogin() {
+  loginError.value = false
+  try {
+    const result = await api.login(loginForm.value.username, loginForm.value.password, turnstileToken.value)
+    setToken(result.access_token)
+    authStore.setToken(result.access_token)
+    router.push('/dashboard')
+  } catch (e) { loginError.value = true }
+}
+
+async function handleRegister() {
+  authError.value = ''
+  if (registerForm.value.password !== registerForm.value.confirmPassword) {
+    authError.value = localeStore.locale === 'zh' ? '两次输入的密码不一致' : 'Passwords do not match'
+    return
+  }
+  if (registerForm.value.password.length < 8) {
+    authError.value = localeStore.locale === 'zh' ? '密码长度至少8位' : 'Password must be at least 8 characters'
+    return
+  }
+  try {
+    const result = await api.register(registerForm.value.username, registerForm.value.email, registerForm.value.password, turnstileToken.value)
+    setToken(result.access_token)
+    authStore.setToken(result.access_token)
+    isSetupMode.value = false
+    router.push('/dashboard')
+  } catch (e) { authError.value = e.message || 'Registration failed' }
+}
+
+async function handleSSOLogin() {
+  ssoLoading.value = true
+  loginError.value = false
+  try {
+    const result = await api.getSSOLoginUrl(window.location.origin)
+    ssoPopup = window.open(result.login_url, 'SSO Login', 'width=500,height=600,scrollbars=yes,resizable=yes')
+    if (!ssoPopup) { ssoLoading.value = false; loginError.value = 'Please allow popup windows'; return }
+    const handleMessage = (event) => {
+      if (event.data && event.data.type === 'SSO_CALLBACK') {
+        window.removeEventListener('message', handleMessage)
+        if (event.data.success && event.data.access_token) {
+          setToken(event.data.access_token)
+          authStore.setToken(event.data.access_token)
+          router.push('/dashboard')
+        }
+        ssoLoading.value = false
+      }
+    }
+    window.addEventListener('message', handleMessage)
+  } catch (e) { loginError.value = true; ssoLoading.value = false }
+}
+
+onMounted(checkSetup)
+</script>
+
+<style scoped>
+.auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--color-bg); position: relative; overflow: hidden; }
+.auth-screen .bg-layer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 0; }
+.auth-screen .bg-gradient { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse 100% 60% at 15% 20%, rgba(249, 115, 22, 0.12) 0%, transparent 50%), radial-gradient(ellipse 80% 50% at 85% 80%, rgba(124, 58, 237, 0.1) 0%, transparent 45%), radial-gradient(ellipse 60% 40% at 50% 60%, rgba(219, 39, 119, 0.08) 0%, transparent 40%); animation: gradientPulse 25s ease-in-out infinite alternate; }
+.auth-screen .bg-grain { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E"); opacity: 0.025; }
+@keyframes gradientPulse { 0% { opacity: 0.7; transform: scale(1); } 100% { opacity: 1; transform: scale(1.03); } }
+.auth-card { width: 100%; max-width: 380px; background: rgba(24, 24, 27, 0.6); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 40px 32px; text-align: center; position: relative; z-index: 1; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+.auth-icon { width: 56px; height: 56px; margin: 0 auto 20px; color: var(--color-accent); animation: float 3s ease-in-out infinite; }
+.auth-icon svg { width: 100%; height: 100%; }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.auth-title { font-size: 28px; font-weight: 700; font-family: var(--font-mono); background: linear-gradient(135deg, var(--color-text), var(--color-text-dim)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+.auth-subtitle { font-size: 14px; color: var(--color-text-dim); margin-bottom: 28px; }
+.auth-input { width: 100%; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 14px; font-family: var(--font-mono); transition: border-color 0.15s, box-shadow 0.15s; margin-bottom: 14px; }
+.auth-input:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15); }
+.auth-input::placeholder { color: var(--color-text-dim); opacity: 0.6; }
+.auth-error { font-size: 12px; color: var(--color-red); margin-bottom: 14px; }
+.auth-footer { margin-top: 24px; display: flex; justify-content: center; }
+.lang-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); font-size: 12px; cursor: pointer; transition: all 0.15s; font-family: var(--font-mono); }
+.lang-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.auth-toggle { display: flex; gap: 8px; margin-bottom: 24px; justify-content: center; }
+.auth-toggle-btn { padding: 8px 18px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); font-size: 13px; cursor: pointer; transition: all 0.15s; font-family: var(--font-mono); }
+.auth-toggle-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.auth-toggle-btn.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+.auth-sso-hint { font-size: 13px; color: var(--color-text-dim); margin-bottom: 16px; }
+.auth-sso-loading { padding: 32px 0; text-align: center; }
+.auth-sso-spinner { width: 56px; height: 56px; margin: 0 auto 20px; position: relative; }
+.auth-sso-spinner-ring { position: absolute; width: 100%; height: 100%; border: 3px solid transparent; border-top-color: var(--color-accent); border-radius: 50%; animation: auth-sso-spin 1.2s linear infinite; }
+.auth-sso-spinner-ring:nth-child(2) { width: 80%; height: 80%; top: 10%; left: 10%; border-top-color: var(--color-accent); opacity: 0.6; animation-duration: 1.5s; animation-direction: reverse; }
+.auth-sso-spinner-ring:nth-child(3) { width: 60%; height: 60%; top: 20%; left: 20%; border-top-color: var(--color-accent); opacity: 0.3; animation-duration: 0.9s; }
+@keyframes auth-sso-spin { to { transform: rotate(360deg); } }
+.auth-sso-loading-text { font-size: 16px; font-weight: 600; color: var(--color-text); margin-bottom: 8px; }
+.auth-sso-loading-hint { font-size: 13px; color: var(--color-text-dim); margin-bottom: 16px; }
+.auth-sso-dots { display: flex; justify-content: center; gap: 6px; }
+.auth-sso-dots span { width: 6px; height: 6px; background: var(--color-accent); border-radius: 50%; animation: auth-sso-dot 1.4s ease-in-out infinite; }
+.auth-sso-dots span:nth-child(2) { animation-delay: 0.2s; }
+.auth-sso-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes auth-sso-dot { 0%, 80%, 100% { transform: scale(1); opacity: 0.5; } 40% { transform: scale(1.3); opacity: 1; } }
+.btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 16px; border-radius: 8px; border: none; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; font-family: var(--font-mono); }
+.btn-primary { background: var(--color-accent); color: #fff; }
+.btn-primary:hover { background: var(--color-accent-hover); box-shadow: 0 4px 12px rgba(249, 115, 22, 0.35); }
+.btn-block { width: 100%; justify-content: center; padding: 12px 16px; font-size: 13px; }
+.mt-4 { margin-top: 16px; }
+.mb-2 { margin-bottom: 8px; }
+</style>
