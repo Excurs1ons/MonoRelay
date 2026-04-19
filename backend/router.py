@@ -34,6 +34,17 @@ class ModelRouter:
         """Resolve model by alias, provider_mapping, override, then provider matching."""
         original_model = model
 
+        # Check if model has provider suffix (e.g., "gpt-4o@openrouter")
+        if "@" in model:
+            parts = model.rsplit("@", 1)
+            if len(parts) == 2:
+                resolved_model = parts[0]
+                explicit_provider = parts[1]
+                # Validate the provider exists
+                if explicit_provider in self.config.providers and self.config.providers[explicit_provider].enabled:
+                    logger.info(f"Model with provider suffix: '{model}' -> model='{resolved_model}', provider='{explicit_provider}'")
+                    return resolved_model, explicit_provider
+
         # Step 1: Resolve alias
         aliased = self._resolve_alias(model)
         if aliased:

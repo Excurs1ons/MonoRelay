@@ -65,8 +65,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
+import { useToastStore } from '@/stores'
 
 const { t } = useI18n()
+const toast = useToastStore()
 
 const providers = ref({})
 const selectedProvider = ref('')
@@ -100,14 +102,22 @@ async function saveKey() {
     if (editingIndex.value >= 0) await api.updateKey(selectedProvider.value, editingIndex.value, form.value)
     else await api.addKey(selectedProvider.value, form.value)
     showModal.value = false
+    toast.success('保存成功')
     await fetchProviders()
-  } catch (e) { alert(e.message) }
+  } catch (e) { 
+    toast.error(e.message || '保存失败')
+  }
 }
 
 async function deleteKey(idx) {
   if (!confirm(t('keys.deleteConfirm'))) return
-  await api.deleteKey(selectedProvider.value, idx)
-  await fetchProviders()
+  try {
+    await api.deleteKey(selectedProvider.value, idx)
+    toast.success('删除成功')
+    await fetchProviders()
+  } catch (e) { 
+    toast.error(e.message || '删除失败')
+  }
 }
 
 onMounted(fetchProviders)
@@ -145,4 +155,6 @@ onMounted(fetchProviders)
 .form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
 .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .empty { text-align: center; padding: 30px; color: var(--color-text-dim); font-size: 13px; }
+.toast-error { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; border-radius: 8px; padding: 12px 16px; font-size: 13px; }
+.toast-success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: #22c55e; border-radius: 8px; padding: 12px 16px; font-size: 13px; }
 </style>

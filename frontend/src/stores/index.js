@@ -53,3 +53,26 @@ export const useLocaleStore = defineStore('locale', () => {
 
   return { locale, set, toggle }
 })
+
+export const useToastStore = defineStore('toast', () => {
+  const message = ref('')
+  const type = ref('info') // info, success, error
+  const visible = ref(false)
+  let timer = null
+
+  function show(msg, toastType = 'info', duration = 3000) {
+    message.value = msg
+    type.value = toastType
+    visible.value = true
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      visible.value = false
+    }, duration)
+  }
+
+  function success(msg, duration) { show(msg, 'success', duration) }
+  function error(msg, duration) { show(msg, 'error', duration) }
+  function info(msg, duration) { show(msg, 'info', duration) }
+
+  return { message, type, visible, show, success, error, info }
+})

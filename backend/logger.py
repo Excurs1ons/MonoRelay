@@ -38,7 +38,12 @@ class RequestLogger:
                 request_preview TEXT,
                 response_preview TEXT,
                 error_message TEXT,
-                streaming INTEGER DEFAULT 0
+                streaming INTEGER DEFAULT 0,
+                temperature REAL,
+                top_p REAL,
+                presence_penalty REAL,
+                frequency_penalty REAL,
+                max_tokens INTEGER
             )
             """
         )
@@ -63,7 +68,13 @@ class RequestLogger:
                 "ALTER TABLE requests ADD COLUMN first_token_ms REAL"
             )
         except Exception:
-            pass  # 字段已存在或表不存在
+            pass
+        # 迁移：添加请求参数字段
+        for col in ["temperature REAL", "top_p REAL", "presence_penalty REAL", "frequency_penalty REAL", "max_tokens INTEGER"]:
+            try:
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
+            except Exception:
+                pass
         await self._db.commit()
         logger.info(f"Request logger initialized with database at {self.db_path}")
 
@@ -87,6 +98,11 @@ class RequestLogger:
         error_message: Optional[str] = None,
         streaming: bool = False,
         first_token_ms: Optional[float] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ):
         if not self._db:
             await self.init()
@@ -96,8 +112,9 @@ class RequestLogger:
             INSERT INTO requests (
                 timestamp, model, provider, key_label, status_code, latency_ms,
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
-                response_preview, error_message, streaming
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_preview, error_message, streaming, temperature, top_p,
+                presence_penalty, frequency_penalty, max_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
@@ -114,6 +131,11 @@ class RequestLogger:
                 response_preview,
                 error_message,
                 1 if streaming else 0,
+                temperature,
+                top_p,
+                presence_penalty,
+                frequency_penalty,
+                max_tokens,
             ),
         )
         await self._db.commit()

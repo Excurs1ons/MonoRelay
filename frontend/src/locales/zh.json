@@ -47,7 +47,9 @@
     "firstToken": "首字延迟",
     "streamChunks": "流式块数",
     "noData": "暂无数据",
-    "provider": "提供商"
+    "provider": "提供商",
+    "copy": "复制",
+    "copied": "已复制"
   },
   "providers": {
     "title": "提供商管理",
@@ -133,10 +135,30 @@
     "yamlHint": "编辑 config.yml（YAML 格式）"
   },
   "auth": {
-    "title": "认证",
-    "placeholder": "输入访问密钥",
-    "submit": "确认",
-    "invalid": "密钥无效"
+    "title": "欢迎使用 MonoRelay",
+    "subtitle": "请输入访问密钥",
+    "placeholder": "访问密钥",
+    "submit": "登录",
+    "invalid": "密钥无效",
+    "loginTitle": "用户登录",
+    "registerTitle": "创建管理员账号",
+    "username": "用户名",
+    "email": "邮箱",
+    "password": "密码",
+    "confirmPassword": "确认密码",
+    "login": "登录",
+    "register": "注册",
+    "noAccount": "还没有账号？",
+    "hasAccount": "已有账号？",
+    "usernamePlaceholder": "输入用户名",
+    "emailPlaceholder": "输入邮箱地址",
+    "passwordPlaceholder": "输入密码（至少8位）",
+    "confirmPasswordPlaceholder": "再次输入密码",
+    "passwordMismatch": "两次输入的密码不一致",
+    "passwordTooShort": "密码长度至少8位",
+    "setupRequired": "首次使用需要创建管理员账号",
+    "accessKey": "访问密钥",
+    "userLogin": "用户登录"
   },
   "layout": {
     "toggleTheme": "切换主题",

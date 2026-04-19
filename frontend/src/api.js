@@ -1,36 +1,91 @@
 const BASE = ''
 
 function getToken() {
-  return localStorage.getItem('access_token') || ''
+  return localStorage.getItem('access_token') || localStorage.getItem('token') || ''
+}
+
+function setToken(token) {
+  localStorage.setItem('access_token', token)
+  localStorage.setItem('token', token)
+}
+
+function clearToken() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('token')
+}
+
+function getAccessKey() {
+  return localStorage.getItem('access_key') || ''
+}
+
+function setAccessKey(key) {
+  localStorage.setItem('access_key', key)
 }
 
 async function request(url, options = {}) {
   const token = getToken()
+  const accessKey = getAccessKey()
+  const authHeader = token ? `Bearer ${token}` : (accessKey ? `Bearer ${accessKey}` : '')
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(authHeader ? { Authorization: authHeader } : {}),
     ...options.headers,
   }
 
   const resp = await fetch(BASE + url, { ...options, headers })
 
   if (resp.status === 401) {
-    localStorage.removeItem('access_token')
+    clearToken()
     throw new Error('Unauthorized')
   }
 
   const json = await resp.json()
-  // 自动解包 api_response 包装格式
+  
+  // Check for error status
+  if (!resp.ok) {
+    throw new Error(json.detail || json.message || `Error ${resp.status}`)
+  }
+  
   if (json && json.success === true && json.data !== undefined) {
     return json.data
   }
   return json
 }
 
+export { getToken, setToken, clearToken, getAccessKey, setAccessKey, request }
+
 export const api = {
+  // Auth
+  checkSetupStatus: () => request('/api/setup/status'),
+  register: (username, email, password, turnstileToken = '') => request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, email, password, turnstile_token: turnstileToken })
+  }),
+  login: (username, password, turnstileToken = '') => request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, turnstile_token: turnstileToken })
+  }),
+  getMe: () => request('/api/auth/me'),
+  changePassword: (oldPassword, newPassword) => request('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+  }),
+  logout: () => {
+    clearToken()
+    return Promise.resolve({ ok: true })
+  },
+
+  // SSO
+  getSSOStatus: () => request('/api/auth/sso/status'),
+  getSSOLoginUrl: (redirectUri) => request('/api/auth/sso/login' + (redirectUri ? '?redirect_uri=' + encodeURIComponent(redirectUri) : '')),
+  ssoLogout: (idToken) => request('/api/auth/sso/logout', {
+    method: 'POST',
+    body: JSON.stringify({ id_token: idToken })
+  }),
+
   // Info & Health
   getInfo: () => request('/api/info'),
-  health: () => request('/health'),
+  health: (turnstileToken = '') => request('/health' + (turnstileToken ? `?turnstile_token=${turnstileToken}` : '')),
 
   // Stats
   getStats: () => request('/api/stats'),
@@ -43,13 +98,19 @@ export const api = {
   // Config
   getConfig: () => request('/api/config'),
   updateConfig: (body) => request('/api/config', { method: 'PUT', body: JSON.stringify(body) }),
+  getFullConfig: () => request('/api/config/full'),
+  updateFullConfig: (body) => request('/api/config/full', { method: 'PUT', body: JSON.stringify(body) }),
+  clearAllData: () => request('/api/admin/clear-data', { method: 'POST' }),
 
   // Providers
   getProviders: () => request('/api/providers'),
   addProvider: (name, config) => request('/api/providers', { method: 'POST', body: JSON.stringify({ name, config }) }),
   updateProvider: (name, config) => request(`/api/providers/${name}`, { method: 'PUT', body: JSON.stringify({ config }) }),
   deleteProvider: (name) => request(`/api/providers/${name}`, { method: 'DELETE' }),
-  testProvider: (name) => request(`/api/providers/${name}/test`, { method: 'POST' }),
+  testProvider: (name, testModel) => request(`/api/providers/${name}/test`, { 
+  method: 'POST',
+  body: testModel ? JSON.stringify({ model: testModel }) : undefined
+}),
 
   // Keys
   addKey: (name, keyData) => request(`/api/providers/${name}/keys`, { method: 'POST', body: JSON.stringify(keyData) }),
@@ -66,12 +127,18 @@ export const api = {
 
   // Sync
   getSyncStatus: () => request('/api/sync'),
+  getGistInfo: () => request('/api/sync/gist-info'),
   findGist: (token) => request('/api/sync/find-gist', { method: 'POST', body: JSON.stringify({ gist_token: token }) }),
   setupSync: (token, gistId) => request('/api/sync/setup', { method: 'POST', body: JSON.stringify({ gist_token: token, gist_id: gistId || '' }) }),
   pushSync: () => request('/api/sync/push', { method: 'POST' }),
-  pullSync: (token) => request('/api/sync/pull', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
+  pullSync: (token, force = false) => request('/api/sync/pull', { method: 'POST', body: JSON.stringify({ gist_token: token || '', force }) }),
   verifyToken: (token) => request('/api/sync/verify-token', { method: 'POST', body: JSON.stringify({ gist_token: token || '' }) }),
   getSyncHistory: () => request('/api/sync/history'),
+
+  // Users (Admin Only)
+  getUsers: () => request('/api/users'),
+  updateUser: (id, data) => request(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id) => request(`/api/users/${id}`, { method: 'DELETE' }),
 
   // Enhanced Features - Analytics
   getAnalyticsOverview: () => request('/api/analytics/overview'),

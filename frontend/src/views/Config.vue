@@ -6,7 +6,13 @@
       <div class="form-group">
         <label>{{ $t('sync.token') }}</label>
         <div class="flex gap-2">
-          <input v-model="token" type="password" :placeholder="$t('sync.tokenPlaceholder')" class="form-input flex-1 mono" />
+          <div class="input-with-toggle flex-1">
+            <input v-model="token" :type="showToken ? 'text' : 'password'" :placeholder="$t('sync.tokenPlaceholder')" class="form-input mono" />
+            <button type="button" class="toggle-btn" @click="showToken = !showToken">
+              <Eye v-if="!showToken" :size="16" />
+              <EyeOff v-else :size="16" />
+            </button>
+          </div>
           <button class="btn btn-ghost" @click="saveToken"><Save :size="14" /></button>
           <button class="btn btn-ghost" @click="verifyToken"><RefreshCw :size="14" /></button>
         </div>
@@ -30,6 +36,28 @@
       <div v-if="statusMsg" class="mt-3 p-3 rounded-lg text-sm" :class="statusMsg.ok ? 'toast-success' : 'toast-error'">
         {{ statusMsg.message }}
       </div>
+
+      <!-- Gist Info -->
+      <div v-if="gistInfo" class="mt-4 pt-4 border-t border-dashed border-gray-700/30">
+        <div class="flex items-center gap-2 text-xs text-dim mb-3">
+          <Clock :size="12" />
+          <span>Gist 状态</span>
+        </div>
+        <div class="space-y-2">
+          <div class="flex justify-between text-xs">
+            <span class="text-dim">创建于</span>
+            <span class="mono">{{ formatDate(gistInfo.created_at) }}</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-dim">最后同步</span>
+            <span class="mono">{{ formatDate(gistInfo.updated_at) }}</span>
+          </div>
+          <div class="flex justify-between text-xs font-medium">
+            <span class="text-dim">距离现在</span>
+            <span class="text-accent">{{ timeAgo }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Config Editor -->
@@ -41,7 +69,14 @@
           {{ saving ? $t('common.loading') : $t('config.save') }}
         </button>
       </div>
-      <p class="text-dim text-xs mb-3">{{ $t('config.yamlHint') }}</p>
+      <div class="flex-between mb-2">
+        <p class="text-dim text-xs">{{ $t('config.yamlHint') }}</p>
+        <div class="editor-stats">
+          <span>{{ yamlContent.length }} {{ $t('common.chars', '字符') }}</span>
+          <span class="stats-sep">|</span>
+          <span>{{ yamlContent.split('\n').length }} {{ $t('common.lines', '行') }}</span>
+        </div>
+      </div>
       <textarea
         v-model="yamlContent"
         class="config-editor"
@@ -61,7 +96,14 @@
           {{ statsSaving ? $t('common.loading') : $t('common.save') }}
         </button>
       </div>
-      <p class="text-dim text-xs mb-3">编辑 stats.json（JSON 格式）</p>
+      <div class="flex-between mb-2">
+        <p class="text-dim text-xs">编辑 stats.json（JSON 格式）</p>
+        <div class="editor-stats">
+          <span>{{ statsContent.length }} {{ $t('common.chars', '字符') }}</span>
+          <span class="stats-sep">|</span>
+          <span>{{ statsContent.split('\n').length }} {{ $t('common.lines', '行') }}</span>
+        </div>
+      </div>
       <textarea
         v-model="statsContent"
         class="config-editor"
@@ -75,10 +117,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
-import { Save, RefreshCw, Database, FileCode } from 'lucide-vue-next'
+import { Save, RefreshCw, Database, FileCode, Eye, EyeOff, Clock } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -91,11 +133,31 @@ const statsSaving = ref(false)
 const statsMsg = ref(null)
 
 const token = ref('')
+const showToken = ref(false)
 const gistId = ref('')
 const busy = ref(false)
 const action = ref('')
 const tokenStatus = ref(null)
 const statusMsg = ref(null)
+const gistInfo = ref(null)
+const now = ref(new Date())
+
+let nowTimer = null
+
+const timeAgo = computed(() => {
+  if (!gistInfo.value || !gistInfo.value.updated_at) return '-'
+  const updated = new Date(gistInfo.value.updated_at)
+  const diff = Math.floor((now.value - updated) / 1000)
+  
+  if (diff < 0) return '刚刚'
+  if (diff < 60) return `${diff}秒前`
+  if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
+  
+  const days = Math.floor(diff / 86400)
+  const hours = Math.floor((diff % 86400) / 3600)
+  return `${days}天 ${hours}小时前`
+})
 
 async function fetchConfig() {
   try {
@@ -143,7 +205,19 @@ async function fetchSyncStatus() {
   try {
     const data = await api.getSyncStatus()
     if (data.has_token) token.value = data.token_full || ''
-    if (data.gist_id) gistId.value = data.gist_id
+    if (data.gist_id) {
+      gistId.value = data.gist_id
+      fetchGistInfo()
+    }
+  } catch (e) { console.error(e) }
+}
+
+async function fetchGistInfo() {
+  try {
+    const res = await api.getGistInfo()
+    if (res.status === 'ok') {
+      gistInfo.value = res.info
+    }
   } catch (e) { console.error(e) }
 }
 
@@ -165,7 +239,11 @@ async function verifyToken() {
 async function findGist() {
   try {
     const data = await api.findGist(token.value)
-    if (data.found) { gistId.value = data.gist_id; statusMsg.value = { ok: true, message: `${t('sync.gistFound')}: ${data.gist_id}` } }
+    if (data.found) { 
+      gistId.value = data.gist_id
+      statusMsg.value = { ok: true, message: `${t('sync.gistFound')}: ${data.gist_id}` }
+      fetchGistInfo()
+    }
     else { statusMsg.value = { ok: false, message: data.error || t('sync.gistNotFound') } }
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
 }
@@ -177,6 +255,7 @@ async function pushSync() {
     statusMsg.value = { ok: true, message: data.message || t('sync.pushSuccess') }
     await fetchSyncStatus()
     await fetchConfig()
+    await fetchStats()
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
   finally { busy.value = false }
 }
@@ -186,13 +265,32 @@ async function pullSync() {
   try {
     const data = await api.pullSync(token.value)
     statusMsg.value = { ok: true, message: data.message || t('sync.pullSuccess') }
+    
+    // Refresh everything
     await fetchSyncStatus()
     await fetchConfig()
+    await fetchStats()
   } catch (e) { statusMsg.value = { ok: false, message: e.message } }
   finally { busy.value = false }
 }
 
-onMounted(() => { fetchConfig(); fetchSyncStatus(); fetchStats() })
+function formatDate(dateStr) {
+  if (!dateStr) return '-'
+  return new Date(dateStr).toLocaleString()
+}
+
+onMounted(() => { 
+  fetchConfig()
+  fetchSyncStatus()
+  fetchStats()
+  nowTimer = setInterval(() => {
+    now.value = new Date()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (nowTimer) clearInterval(nowTimer)
+})
 </script>
 
 <style scoped>
@@ -212,6 +310,10 @@ onMounted(() => { fetchConfig(); fetchSyncStatus(); fetchStats() })
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 12px; color: var(--color-text-dim); margin-bottom: 6px; }
 .form-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-input); color: var(--color-text); font-size: 13px; }
+.input-with-toggle { position: relative; display: flex; flex: 1; }
+.input-with-toggle .form-input { padding-right: 36px; flex: 1; }
+.toggle-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--color-text-dim); cursor: pointer; padding: 4px; display: flex; align-items: center; }
+.toggle-btn:hover { color: var(--color-text); }
 .form-input:focus { outline: none; border-color: var(--color-accent); }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-sm { font-size: 12px; }
@@ -238,6 +340,19 @@ onMounted(() => { fetchConfig(); fetchSyncStatus(); fetchStats() })
   line-height: 1.6;
 }
 .config-editor:focus { outline: none; border-color: var(--color-accent); }
+.editor-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.stats-sep {
+  opacity: 0.3;
+}
 .toast-success { background: rgba(0,184,148,0.1); border: 1px solid rgba(0,184,148,0.3); color: var(--color-green); border-radius: 6px; }
 .toast-error { background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3); color: var(--color-red); border-radius: 6px; }
 </style>

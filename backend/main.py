@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import logging
 import os
 import sys
@@ -15,16 +17,20 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
 from .logger import RequestLogger
-from .models import AppConfig, ProviderConfig, ProviderKey
+from .models import AppConfig, ProviderConfig, ProviderKey, SSOConfig
 from .router import ModelRouter
 from .stats import StatsTracker
+from .sso import create_sso_config_from_dict, SSOUser
+from .sso_session import sso_session_manager
+from .auth_service import AuthService
+from .auth_models import UserCreate, UserLogin
 from .proxy.openai_format import (
     handle_chat_completions,
     handle_completions,
@@ -37,8 +43,11 @@ from .proxy.anthropic_format import handle_messages
 from .sync import GistSync
 from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
+from .secrets import secrets_manager
 from .cache import response_cache
 from .usage_tracker import usage_tracker
+from .auth_service import AuthService
+from .auth_models import UserCreate, UserLogin
 
 
 class VerifyRequest(BaseModel):
@@ -85,11 +94,39 @@ request_logger = RequestLogger()
 stats_tracker = StatsTracker()
 model_router = ModelRouter(AppConfig())
 sync_storage = SyncStorage()
+auth_service = AuthService(jwt_secret="")
+sso_validator = None
 
 
 def init_components(cfg: AppConfig):
-    global model_router
+    global model_router, auth_service, sso_validator
+    from .sso import OAuthValidator, create_sso_config_from_dict, SSOConfig
+    
     model_router = ModelRouter(cfg)
+    auth_service.jwt_secret = cfg.server.jwt_secret or ""
+    
+    if cfg.sync and cfg.sync.gist_id:
+        sync_storage.gist_id = cfg.sync.gist_id
+
+    if cfg.sso and cfg.sso.enabled:
+        sso_dump = {
+            "enabled": cfg.sso.enabled,
+            "provider": cfg.sso.provider,
+            "prismaauth_url": cfg.sso.prismaauth_url,
+            "client_id": cfg.sso.client_id,
+            "client_secret": cfg.sso.client_secret,
+            "scopes": cfg.sso.scopes,
+            "github_client_id": cfg.sso.github_client_id,
+            "github_client_secret": cfg.sso.github_client_secret,
+            "google_client_id": cfg.sso.google_client_id,
+            "google_client_secret": cfg.sso.google_client_secret,
+        }
+        sso_config = create_sso_config_from_dict(sso_dump)
+        if sso_config.is_configured:
+            sso_validator = OAuthValidator(sso_config)
+            logger.info(f"SSO enabled with provider: {sso_config.provider}")
+        else:
+            logger.warning("SSO enabled but not configured properly")
 
     for name in list(key_manager._entries.keys()):
         if name not in cfg.providers:
@@ -98,6 +135,8 @@ def init_components(cfg: AppConfig):
     for name, pc in cfg.providers.items():
         if pc.enabled:
             key_manager.register_provider(name, pc)
+    
+    logger.info(f"All components reloaded. Registered providers: {list(key_manager._entries.keys())}")
 
 
 @asynccontextmanager
@@ -109,6 +148,9 @@ async def lifespan(app: FastAPI):
 
     cfg = config_manager.config
     init_components(cfg)
+
+    os.makedirs("./data", exist_ok=True)
+    await auth_service.init()
 
     if cfg.logging.enabled:
         os.makedirs(os.path.dirname(cfg.logging.db_path) or ".", exist_ok=True)
@@ -132,6 +174,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await request_logger.close()
+    await auth_service.close()
     logger.info("MonoRelay shut down.")
 
 
@@ -156,23 +199,84 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
     if path.startswith("/v1/") or path.startswith("/api/"):
-        access_key = config_manager.config.server.access_key
+        public_endpoints = [
+            "/",
+            "/favicon.svg",
+            "/health",
+            "/api/setup/status",
+            "/api/auth/sso/status",
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/refresh",
+            "/api/auth/sso/login",
+            "/api/auth/sso/callback",
+            "/api/auth/sso/test-popup",
+            "/api/info",
+            "/api/providers",
+            "/api/models/pricing",
+            "/api/logs",
+            "/v1/models",
+        ]
+
+        is_public = any(path == ep or (ep.endswith("/") and path.startswith(ep)) for ep in public_endpoints)
+        
+        # Get token from headers
         auth_header = request.headers.get("authorization", "")
+        token = None
+
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
         else:
             token = request.headers.get("x-access-key", "")
 
-        if token != access_key:
-            return JSONResponse(
-                status_code=401,
-                content={"error": {"message": "Unauthorized", "type": "auth_error"}},
-            )
+        # Try local JWT authentication (SSO users get local JWTs after OAuth callback)
+        if token:
+            from .auth_utils import verify_token
 
-        request.state.client_id = token[:16] if len(token) >= 16 else token
+            jwt_secret = config_manager.config.server.jwt_secret or ""
+            user_id = verify_token(token, config_secret=jwt_secret)
+            if user_id:
+                user = await auth_service.user_manager.get_user_by_id(user_id)
+                if user and user.is_active:
+                    request.state.user = user
+                    request.state.client_id = user.username
+                    response = await call_next(request)
+                    return response
+
+        # Fallback to access_key authentication (for backward compatibility)
+        # ONLY if enabled in config
+        if config_manager.config.server.access_key_enabled:
+            access_key = config_manager.config.server.access_key
+            if token == access_key:
+                request.state.client_id = token[:16] if len(token) >= 16 else token
+                response = await call_next(request)
+                return response
+
+        if is_public:
+            response = await call_next(request)
+            return response
+
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"message": "Unauthorized", "type": "auth_error"}},
+        )
 
     response = await call_next(request)
     return response
+
+
+@app.post("/api/auth/refresh")
+async def api_auth_refresh(request: Request):
+    """Refresh access token using refresh token."""
+    body = await request.json()
+    refresh_token = body.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="refresh_token required")
+    
+    token = await auth_service.refresh_token(refresh_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return token
 
 
 def _get_resource_path(relative_path: str) -> Path:
@@ -186,54 +290,655 @@ FRONTEND_DIR = _get_resource_path("frontend")
 FRONTEND_DIST = FRONTEND_DIR / "dist"
 
 
-@app.get("/")
 async def serve_frontend():
     index = FRONTEND_DIST / "index.html"
     if not index.exists():
         index = FRONTEND_DIR / "index.html"
+    
     if index.exists():
-        return FileResponse(index)
+        # Read and inject a unique build ID to force browser to see it as new
+        content = index.read_text(encoding="utf-8")
+        build_id = str(time.time())
+        if "</body>" in content:
+            content = content.replace("</body>", f"<!-- build-id: {build_id} --></body>")
+        
+        return HTMLResponse(
+            content=content,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     return JSONResponse({"error": "Frontend not found. Run `cd frontend && npm run build` first."}, status_code=404)
 
 
+# Mount static files BEFORE catch-all routes - order matters!
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
     if (FRONTEND_DIST / "favicon.svg").exists():
         @app.get("/favicon.svg")
         async def serve_favicon():
-            return FileResponse(FRONTEND_DIST / "favicon.svg")
+            return FileResponse(FRONTEND_DIST / "favicon.svg", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.get("/")
+async def root():
+    return await serve_frontend()
+
+
+@app.middleware("http")
+async def catch_all_middleware(request: Request, call_next):
+    path = request.url.path
+    
+    if path.startswith("/api/") or path.startswith("/v1/"):
+        return await call_next(request)
+    
+    response = await call_next(request)
+    
+    if response.status_code == 404 and "." in path.split("/")[-1]:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    
+    return response
+
+
+@app.get("/api/setup/status")
+async def api_setup_status():
+    """Check if initial setup is needed."""
+    has_users = await auth_service.has_users()
+    return {
+        "initialized": has_users,
+        "needs_setup": not has_users,
+    }
+
+
+async def verify_turnstile(token: str) -> bool:
+    """Verify Cloudflare Turnstile token."""
+    cfg = config_manager.config.server
+    if not cfg.turnstile_enabled or not cfg.turnstile_secret_key:
+        return True
+    
+    if not token:
+        return False
+        
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                data={
+                    "secret": cfg.turnstile_secret_key,
+                    "response": token,
+                },
+                timeout=10.0
+            )
+            data = resp.json()
+            return data.get("success", False)
+    except Exception as e:
+        logger.error(f"Turnstile verification error: {e}")
+        return False
+
+
+@app.post("/api/auth/register")
+async def api_auth_register(request: Request):
+    """Register a new user account."""
+    body = await request.json()
+    
+    # Verify Turnstile
+    if not await verify_turnstile(body.get("turnstile_token", "")):
+        raise HTTPException(status_code=400, detail="Turnstile verification failed")
+        
+    user_data = UserCreate(
+        username=body.get("username"),
+        email=body.get("email"),
+        password=body.get("password")
+    )
+
+    is_first = not await auth_service.has_users()
+    token = await auth_service.register(user_data, is_first_user=is_first)
+    return token
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    """Login with username and password."""
+    body = await request.json()
+    
+    # Verify Turnstile
+    if not await verify_turnstile(body.get("turnstile_token", "")):
+        raise HTTPException(status_code=400, detail="Turnstile verification failed")
+        
+    login_data = UserLogin(
+        username=body.get("username"),
+        password=body.get("password")
+    )
+    token = await auth_service.login(login_data)
+    return token
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    """Get current user info."""
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # We always return the DB user model
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "is_admin": user.is_admin,
+        "sso_provider": user.sso_provider,
+        "sso_id": user.sso_id
+    }
+
+
+@app.post("/api/auth/change-password")
+async def api_auth_change_password(request: Request):
+    """Change current user password."""
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    body = await request.json()
+    old_password = body.get("old_password")
+    new_password = body.get("new_password")
+    
+    if not old_password or not new_password:
+        raise HTTPException(status_code=400, detail="old_password and new_password required")
+    
+    # Get fresh user data from DB
+    db_user = await auth_service.user_manager.get_user_by_id(user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # For users who only have SSO login, they might not have a password set yet.
+    # However, our UserManager currently sets a "SSO:..." random string.
+    
+    # Verify old password
+    authenticated = await auth_service.user_manager.authenticate_user(db_user.username, old_password)
+    if not authenticated:
+        raise HTTPException(status_code=400, detail="Incorrect old password")
+    
+    # Change password
+    success = await auth_service.user_manager.change_password(user.id, new_password)
+    return {"success": success}
+
+
+@app.get("/api/auth/sso/login")
+async def api_auth_sso_login(request: Request):
+    """Initiate OAuth SSO login flow."""
+    global sso_validator
+    
+    if not sso_validator:
+        raise HTTPException(status_code=400, detail="SSO not configured")
+    
+    redirect_uri = request.query_params.get("redirect_uri", "")
+    
+    import hashlib
+    import base64
+    
+    session = sso_session_manager.create_session(redirect_uri=redirect_uri)
+    code_verifier = session.code_verifier
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).decode().rstrip('=')
+    
+    callback_url = f"{request.base_url}api/auth/sso/callback"
+    logger.info(f"Initiating SSO login: callback_url={callback_url}")
+    login_url = sso_validator.get_authorization_url(
+        session.state, callback_url, code_verifier, code_challenge
+    )
+    
+    return {"login_url": login_url, "state": session.state}
+
+
+@app.get("/api/auth/sso/test-popup")
+async def test_popup():
+    """Test page to verify popup stays open."""
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Popup Test</title>
+        <style>
+            body { 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                height: 100vh; 
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #f5f5f5;
+            }
+            .box {
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            }
+            .green { color: #27ae60; }
+            .count { font-size: 48px; font-weight: bold; color: #667eea; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h1 class="green">Popup Test</h1>
+            <p>弹窗测试页面</p>
+            <p>Popup is working!</p>
+            <div class="count" id="countdown">5</div>
+            <p>秒后自动关闭 / Auto close in 5 seconds</p>
+        </div>
+        <script>
+            let count = 5;
+            const interval = setInterval(() => {
+                count--;
+                document.getElementById('countdown').textContent = count;
+                if (count <= 0) {
+                    clearInterval(interval);
+                    window.close();
+                }
+            }, 1000);
+        </script>
+    </body>
+    </html>
+    """)
+
+
+@app.get("/api/auth/sso/callback")
+async def api_auth_sso_callback(request: Request):
+    """Handle OAuth SSO callback - redirect with token in URL."""
+    global sso_validator
+    
+    if not sso_validator:
+        return HTMLResponse(content=_build_callback_html(error="SSO not configured"))
+    
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error_desc = request.query_params.get("error_description") or request.query_params.get("error", "")
+    
+    if error_desc:
+        return HTMLResponse(content=_build_callback_html(error=error_desc, state=state))
+    
+    if not code or not state:
+        return HTMLResponse(content=_build_callback_html(error="Missing code or state", state=state))
+    
+    session = sso_session_manager.get_session(state)
+    if not session:
+        return HTMLResponse(content=_build_callback_html(error="Invalid or expired state", state=state))
+    
+    code_verifier = session.code_verifier
+    sso_session_manager.remove_session(state)
+    
+    callback_url = f"{request.base_url}api/auth/sso/callback"
+    tokens = await sso_validator.exchange_code(code, callback_url, code_verifier)
+    
+    if not tokens or not tokens.get("access_token"):
+        return HTMLResponse(content=_build_callback_html(error="Failed to get access token", state=state))
+    
+    # Get user info from OAuth provider
+    sso_user = await sso_validator.get_user_info(tokens["access_token"])
+    if not sso_user:
+        return HTMLResponse(content=_build_callback_html(error="Failed to get user info", state=state))
+    
+    try:
+        cfg = config_manager.config
+        is_admin_configured = sso_user.username in cfg.sso.admin_usernames
+        
+        # Find or create user in database
+        user = await auth_service.user_manager.get_user_by_sso(sso_user.provider, sso_user.provider_id)
+        if not user:
+            # Try find by email to link
+            existing_user = await auth_service.user_manager.get_user_by_email(sso_user.email)
+            if existing_user:
+                # Update user with SSO info and check admin status
+                update_fields = {
+                    "sso_provider": sso_user.provider,
+                    "sso_id": sso_user.provider_id
+                }
+                if is_admin_configured:
+                    update_fields["is_admin"] = True
+                    
+                user = await auth_service.user_manager.update_user(existing_user.id, **update_fields)
+                logger.info(f"Linked existing user {user.username} to SSO {sso_user.unique_id}")
+            else:
+                # Create new user
+                is_first = not await auth_service.has_users()
+                is_admin = is_first or is_admin_configured
+                
+                user = await auth_service.user_manager.create_sso_user(
+                    provider=sso_user.provider,
+                    sso_id=sso_user.provider_id,
+                    username=sso_user.username,
+                    email=sso_user.email,
+                    is_admin=is_admin
+                )
+                logger.info(f"Created new SSO user: {user.username} (admin={is_admin})")
+        else:
+            # Existing SSO user, check if we need to upgrade to admin
+            if is_admin_configured and not user.is_admin:
+                user = await auth_service.user_manager.update_user(user.id, is_admin=True)
+                logger.info(f"Upgraded SSO user {user.username} to admin via config")
+        
+        # Generate local JWT token for MonoRelay using database user_id
+        from .auth_utils import create_access_token
+        local_token = create_access_token(
+            user_id=user.id,
+            config_secret=config_manager.config.server.jwt_secret or ""
+        )
+        
+        logger.info(f"SSO callback success for user: {user.username}")
+        return HTMLResponse(content=_build_callback_html(success=True, access_token=local_token, state=state))
+        
+    except Exception as e:
+        logger.error(f"SSO callback processing error: {e}")
+        return HTMLResponse(content=_build_callback_html(error=str(e), state=state))
+
+
+def _build_callback_html(
+    success: bool = False,
+    error: str = None,
+    access_token: str = None,
+    state: str = None
+) -> str:
+    """Build HTML for SSO callback that communicates via postMessage and localStorage."""
+    if success:
+        message_html = f"""
+            <div class="success-icon">✓</div>
+            <p style="color: #27ae60; font-weight: 600;">登录成功！</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">Login successful!</p>
+            <p style="color: #888; font-size: 13px; margin-top: 20px;">窗口即将关闭...</p>
+        """
+        script = f"""
+        <script>
+        console.log('Callback loaded - success=true');
+        const token = '{access_token}';
+        const state = '{state}';
+        
+        // 1. Try postMessage to opener
+        if (window.opener) {{
+            try {{
+                window.opener.postMessage({{
+                    type: 'SSO_CALLBACK',
+                    success: true,
+                    access_token: token,
+                    state: state
+                }}, '*');
+                console.log('postMessage sent');
+            }} catch(e) {{
+                console.error('postMessage failed:', e);
+            }}
+        }}
+        
+        // 2. Set localStorage as fallback for storage event listener
+        try {{
+            localStorage.setItem('sso_token', token);
+            console.log('localStorage set');
+        }} catch(e) {{
+            console.error('localStorage failed:', e);
+        }}
+        
+        // 3. Fallback redirect if everything else fails
+        setTimeout(() => {{
+            if (window.opener && !window.opener.closed) {{
+                window.close();
+            }} else {{
+                window.location.href = '/?sso_success=true';
+            }}
+        }}, 1000);
+        </script>
+        """
+    else:
+        message_html = f"""
+            <div class="error-icon">✗</div>
+            <p style="color: #e74c3c; font-weight: 600;">登录失败</p>
+            <p style="color: #888; font-size: 14px; margin-top: 10px;">{error or 'Unknown error'}</p>
+            <p style="color: #888; font-size: 13px; margin-top: 20px;">请手动关闭此窗口</p>
+        """
+        script = f"""
+        <script>
+        if (window.opener) {{
+            window.opener.postMessage({{
+                type: 'SSO_CALLBACK',
+                success: false,
+                error: '{error or "Unknown error"}',
+                state: '{state or ''}'
+            }}, '*');
+        }}
+        </script>
+        """
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SSO Callback</title>
+        <style>
+            body {{ 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                height: 100vh; 
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #f5f5f5;
+            }}
+            .status {{
+                text-align: center;
+                padding: 40px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            }}
+            .spinner {{
+                width: 40px;
+                height: 40px;
+                border: 3px solid #e0e0e0;
+                border-top-color: #6c5ce7;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            }}
+            @keyframes spin {{
+                to {{ transform: rotate(360deg); }}
+            }}
+            .success-icon {{
+                font-size: 48px;
+                color: #27ae60;
+                margin-bottom: 10px;
+            }}
+            .error-icon {{
+                font-size: 48px;
+                color: #e74c3c;
+                margin-bottom: 10px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="status">
+            {message_html}
+        </div>
+        {script}
+    </body>
+    </html>
+    """
+
+
+@app.get("/api/auth/sso/status")
+async def api_auth_sso_status():
+    """Check SSO configuration status."""
+    cfg = config_manager.config
+    if not cfg.sso or not cfg.sso.enabled:
+        return {"enabled": False, "provider": None, "configured": False}
+    
+    provider = cfg.sso.provider or "github"
+    configured = bool(
+        (provider == "prismaauth" and cfg.sso.prismaauth_url and cfg.sso.client_id and cfg.sso.client_secret) or
+        (provider == "github" and cfg.sso.github_client_id and cfg.sso.github_client_secret) or
+        (provider == "google" and cfg.sso.google_client_id and cfg.sso.google_client_secret)
+    )
+    
+    return {
+        "enabled": True,
+        "provider": provider,
+        "configured": configured,
+        "sso_only": cfg.sso.sso_only,
+    }
+
+
+@app.post("/api/auth/sso/logout")
+async def api_auth_sso_logout(request: Request):
+    """Logout from SSO."""
+    cfg = config_manager.config
+    if not cfg.sso or not cfg.sso.enabled:
+        raise HTTPException(status_code=400, detail="SSO is not enabled")
+
+    body = await request.json()
+    id_token = body.get("id_token")
+
+    logout_url = f"{cfg.sso.keycloak_url}/realms/{cfg.sso.realm}/protocol/openid-connect/logout"
+    if id_token:
+        logout_url = f"{logout_url}?id_token_hint={id_token}"
+
+    if cfg.sso.post_logout_uri:
+        logout_url = f"{logout_url}&post_logout_redirect_uri={cfg.sso.post_logout_uri}"
+
+    return {"logout_url": logout_url}
+
+
+@app.get("/api/users")
+async def api_list_users(request: Request):
+    """List all users (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = await auth_service.user_manager.list_users()
+    return {"users": [u.model_dump() for u in users]}
+
+
+@app.put("/api/users/{user_id}")
+async def api_update_user(user_id: int, request: Request):
+    """Update user info (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    # Don't allow updating sensitive fields like id or password_hash here
+    allowed_updates = {k: v for k, v in body.items() if k in {"is_active", "is_admin", "email"}}
+    updated = await auth_service.user_manager.update_user(user_id, **allowed_updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return updated
+
+
+@app.delete("/api/users/{user_id}")
+async def api_delete_user(user_id: int, request: Request):
+    """Delete user (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if user.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+        
+    success = await auth_service.user_manager.delete_user(user_id)
+    return {"success": success}
+
+
+@app.post("/api/admin/clear-data")
+async def api_admin_clear_data(request: Request):
+    """Clear all local data and reset system (admin only)."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    logger.warning(f"SYSTEM RESET INITIATED BY {user.username}")
+    
+    try:
+        import os
+        import shutil
+        from pathlib import Path
+        
+        data_dir = Path("./data")
+        config_file = Path("./config.yml")
+        
+        # 1. Close database connections first
+        await auth_service.user_manager.close()
+        
+        # 2. Delete data directory contents
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
+            data_dir.mkdir(exist_ok=True)
+            logger.info("Data directory cleared")
+            
+        # 3. Reset config file to example if exists
+        if config_file.exists():
+            example = Path("./config.yml.example")
+            if example.exists():
+                shutil.copy(example, config_file)
+            else:
+                config_file.unlink()
+            logger.info("Config file reset")
+            
+        # 4. Schedule self-termination
+        import signal
+        os.kill(os.getpid(), signal.SIGINT)
+        
+        return {"status": "ok", "message": "System reset initiated"}
+    except Exception as e:
+        logger.error(f"Reset failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/info")
 async def api_info():
     """Return server connection info for dashboard."""
     import socket
-    
+    import httpx
+
     cfg = config_manager.config
     public_host = getattr(cfg.server, 'public_host', None) or ""
-    
+
+    local_ip = "127.0.0.1"
     if public_host:
         local_ip = public_host
     else:
+        # Try to get public IP
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("https://api.ipify.org?format=json", timeout=2.0)
+                if resp.status_code == 200:
+                    local_ip = resp.json().get("ip", "127.0.0.1")
+                else:
+                    raise Exception("Failed to get public IP")
         except Exception:
-            local_ip = "127.0.0.1"
+            # Fallback to local IP detection
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                local_ip = "127.0.0.1"
 
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
         "port": cfg.server.port,
         "access_key": cfg.server.access_key,
-        "base_url": f"http://{local_ip}/v1",
+        "access_key_enabled": cfg.server.access_key_enabled,
+        "turnstile_site_key": cfg.server.turnstile_site_key,
+        "base_url": f"http://{local_ip}:{cfg.server.port}/v1",
     }
 
-
 @app.get("/health")
-async def health():
+async def health(turnstile_token: str = ""):
+    # Verify Turnstile if enabled (for key-based access or just general protection)
+    if not await verify_turnstile(turnstile_token):
+         raise HTTPException(status_code=400, detail="Turnstile verification failed")
+         
     return {
         "status": "ok",
         "providers": {
@@ -632,32 +1337,92 @@ async def api_update_stats_file(request: Request):
     return {"status": "ok", "message": "统计数据已更新"}
 
 
+@app.get("/api/config/full")
+async def api_get_full_config(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    cfg = config_manager.config.model_copy(deep=True)
+    
+    all_secrets = await secrets_manager.get_all()
+    secrets = {}
+    for key in ["sso_client_secret", "github_client_secret", "google_client_secret", "local_sso_secret", "jwt_secret", "turnstile_secret_key"]:
+        secrets[key] = all_secrets.get(key, "")
+    
+    result = cfg.model_dump(mode="json")
+    result["secrets"] = secrets
+    return result
+
+
+@app.put("/api/config/full")
+async def api_update_full_config(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    body = await request.json()
+    try:
+        new_cfg = AppConfig(**body)
+        
+        secrets = body.get("secrets", {})
+        for key, value in secrets.items():
+            if value:
+                await secrets_manager.set(key, value)
+            else:
+                await secrets_manager.delete(key)
+        
+        if body.get("sso", {}).get("provider"):
+            await secrets_manager.set("sso_provider", body["sso"]["provider"])
+
+        config_manager.save(new_cfg)
+        init_components(new_cfg)
+        
+        return {"status": "ok", "message": "Settings updated"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
+
+
 @app.get("/api/config")
 async def api_get_config():
-    import yaml
-    raw = config_manager.config.model_dump(mode="json")
-    # 清理 sync 字段（token 不暴露）
-    if 'sync' in raw:
-        raw['sync'] = {
-            'enabled': raw['sync'].get('enabled', False),
-            'gist_id': raw['sync'].get('gist_id', ''),
-        }
-    return {"content": yaml.dump(raw, default_flow_style=False, allow_unicode=True)}
+    """返回原始配置文件内容（保留注释）。"""
+    path = config_manager.config_path
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        # 简单脱敏：如果包含 gist_token，将其替换
+        # 注意：正常情况下 config.yml 不存 token，token 在 sync.json
+        return {"content": content}
+    return {"content": ""}
 
 
 @app.put("/api/config")
 async def api_update_config(request: Request):
     try:
         body = await request.json()
+        content = body.get("content", "").strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Content required")
+
         import yaml
-        raw = yaml.safe_load(body.get("content", "{}"))
-        new_cfg = AppConfig(**raw)
-        config_manager.save(new_cfg)
-        init_components(new_cfg)
+        # 1. 验证 YAML 语法
+        try:
+            raw = yaml.safe_load(content)
+            # 2. 验证模型结构
+            new_cfg = AppConfig(**raw)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"YAML 或配置格式错误: {e}")
+
+        # 3. 直接写入原始文本（保留注释）
+        config_manager.config_path.write_text(content, encoding="utf-8")
+        
+        # 4. 热重载内存中的配置
+        config_manager.reload()
+        init_components(config_manager.config)
 
         # Auto-push to Gist if sync is enabled
-        sc = new_cfg.sync
+        sc = config_manager.config.sync
         if sc.enabled and sync_storage.has_token:
+            # ... (rest of push logic)
             import asyncio
             import yaml
             from .sync import GistSync
@@ -719,12 +1484,22 @@ async def api_providers(page: int = 1, page_size: int = 20):
 
 
 @app.post("/api/providers/{name}/test")
-async def api_test_provider(name: str):
+async def api_test_provider(name: str, request: Request):
     pc = config_manager.config.providers.get(name)
     if not pc:
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
     if not pc.keys:
         return {"status": "error", "message": "No keys configured"}
+
+    body = {}
+    try:
+        body = await request.json()
+    except:
+        pass
+    test_model = body.get("model", pc.test_model)
+    
+    if not test_model:
+        return {"status": "error", "message": "No test model specified"}
 
     if pc.provider_type == "web_reverse":
         try:
@@ -746,6 +1521,38 @@ async def api_test_provider(name: str):
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
+    
+    # API type - test with the specified model
+    url = pc.base_url
+    if not url.endswith("/chat/completions"):
+        url = f"{url}/chat/completions"
+    
+    headers = {
+        "Authorization": f"Bearer {pc.keys[0].key}",
+        "Content-Type": "application/json",
+    }
+    if pc.headers:
+        headers.update(pc.headers)
+    
+    try:
+        # Strip provider suffix if present
+        if "@" in test_model:
+            test_model = test_model.rsplit("@", 1)[0]
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json={
+                "model": test_model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 5,
+            }, timeout=30.0)
+            if resp.status_code == 200:
+                return {"status": "ok", "message": f"连接成功: {test_model}"}
+            else:
+                return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except httpx.TimeoutException:
+        return {"status": "error", "message": "请求超时"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/providers/{name}/verify")
@@ -1664,15 +2471,28 @@ async def api_delete_key(name: str, key_index: int):
 
 
 # Model management
+def clear_remote_models_cache(name: str):
+    """Clear cached remote models for a provider."""
+    cfg = config_manager.config
+    if name in cfg.providers and cfg.providers[name].remote_models_cache:
+        new_cfg = cfg.model_copy(deep=True)
+        new_cfg.providers[name].remote_models_cache = []
+        config_manager.save(new_cfg)
+
+
 @app.get("/api/providers/{name}/models/remote")
 async def api_get_remote_models(name: str):
-    """Fetch all available models from a provider's upstream API."""
-    pc = config_manager.config.providers.get(name)
+    """Fetch all available models from a provider's upstream API, with caching."""
+    cfg = config_manager.config
+    pc = cfg.providers.get(name)
     if not pc:
         raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
+    # 优先返回缓存
+    if pc.remote_models_cache:
+        return {"object": "list", "data": pc.remote_models_cache}
+
     if pc.provider_type == "web_reverse":
-        # Web reverse: use model_mapping keys
         models = []
         if pc.web_reverse and pc.web_reverse.model_mapping:
             for client_model, upstream_model in pc.web_reverse.model_mapping.items():
@@ -1681,6 +2501,10 @@ async def api_get_remote_models(name: str):
                     "upstream_id": upstream_model,
                     "provider": name,
                 })
+        if models:
+            new_cfg = cfg.model_copy(deep=True)
+            new_cfg.providers[name].remote_models_cache = models
+            config_manager.save(new_cfg)
         return {"object": "list", "data": models}
 
     if not pc.keys:
@@ -1708,6 +2532,12 @@ async def api_get_remote_models(name: str):
                             if field in m:
                                 model_info[field] = m[field]
                     models.append(model_info)
+                
+                # 保存到配置
+                new_cfg = cfg.model_copy(deep=True)
+                new_cfg.providers[name].remote_models_cache = models
+                config_manager.save(new_cfg)
+                
                 return {"object": "list", "data": models}
             else:
                 return {"status": "error", "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
@@ -1740,11 +2570,25 @@ async def api_update_models(name: str, request: Request):
         if name not in cfg.providers:
             raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
+        pc = cfg.providers[name]
+        
+        remote_model_ids = []
+        if pc.provider_type == "web_reverse" and pc.web_reverse and pc.web_reverse.model_mapping:
+            remote_model_ids = list(pc.web_reverse.model_mapping.keys())
+        elif pc.remote_models_cache:
+            remote_model_ids = [m.get("id") for m in pc.remote_models_cache]
+        
         if "include" in body:
-            cfg.providers[name].models["include"] = body["include"]
+            if remote_model_ids:
+                valid_include = [m for m in body["include"] if m in remote_model_ids]
+                pc.models["include"] = valid_include
+            else:
+                pc.models["include"] = body["include"]
         if "exclude" in body:
-            cfg.providers[name].models["exclude"] = body["exclude"]
+            pc.models["exclude"] = body["exclude"]
 
+        cfg.providers[name].remote_models_cache = []
+        
         config_manager.save(cfg)
         init_components(cfg)
         return {"status": "ok", "message": f"Models updated for '{name}'"}
@@ -1827,13 +2671,13 @@ async def api_sync_setup(request: Request):
     """配置 Gist 同步，支持 Token 和可选的 gist_id。"""
     try:
         body = await request.json()
-        token = body.get("gist_token", "").strip()
+        token = body.get("gist_token", "")
         gist_id = body.get("gist_id", "").strip()
 
         if not token:
             raise HTTPException(status_code=400, detail="gist_token 不能为空")
 
-        # 清理 Token
+        # 彻底清理 Token：移除所有空白字符（包括换行、空格等）
         token = "".join(token.split())
         
         # 保存 token 到本地存储
@@ -1880,14 +2724,14 @@ async def api_sync_setup(request: Request):
                 pass
         
         logger.info(f"开始推送: gist_id={sync.gist_id}, content_len={len(content)}")
-        ok = await sync.push(content, stats_content)
+        ok, version = await sync.push(content, stats_content)
         
         if not ok:
             logger.error(f"推送失败，但配置已保存。可稍后手动点击'推送'按钮重试")
-            # 不抛出异常，因为配置已保存成功
             return {"status": "ok", "message": "Gist 同步已配置，但推送完整内容失败，请稍后手动推送", "gist_id": sync.gist_id}
         
-        logger.info(f"推送成功: {sync.gist_id}")
+        sync_storage.last_sync_version = version
+        logger.info(f"推送成功: {sync.gist_id}, version: {version}")
         return {"status": "ok", "message": "Gist 同步已配置", "gist_id": sync.gist_id}
     except HTTPException:
         raise
@@ -1897,17 +2741,22 @@ async def api_sync_setup(request: Request):
 
 @app.post("/api/sync/push")
 async def api_sync_push():
-    """推送当前配置和统计到 Gist。"""
+    """推送当前原始配置和统计到 Gist。"""
     sc = config_manager.config.sync
     import logging
     logger = logging.getLogger("monorelay.sync")
     token = sync_storage.gist_token
-    logger.info(f"同步推送: enabled={sc.enabled}, token_len={len(token)}, token_prefix={token[:15]}..., gist_id={sc.gist_id}")
     if not sc.enabled or not token:
         raise HTTPException(status_code=400, detail="Gist 同步未配置")
 
-    sync = GistSync(token, sc.gist_id)
-    content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
+    # 读取原始文本（保留注释）
+    content = ""
+    if config_manager.config_path.exists():
+        content = config_manager.config_path.read_text(encoding="utf-8")
+    
+    if not content:
+        import yaml
+        content = yaml.dump(config_manager.config.model_dump(mode="json"), default_flow_style=False, allow_unicode=True)
 
     # 附带统计数据
     stats_content = None
@@ -1918,24 +2767,27 @@ async def api_sync_push():
         except Exception:
             pass
 
-    ok = await sync.push(content, stats_content)
-
+    sync = GistSync(token, sc.gist_id)
+    ok, version = await sync.push(content, stats_content)
+    
     if ok:
-        # 如果创建了新 Gist，保存 gist_id
+        sync_storage.last_sync_version = version
         if sync.gist_id and sync.gist_id != sc.gist_id:
             cfg = config_manager.config.model_copy(deep=True)
             cfg.sync.gist_id = sync.gist_id
             config_manager.save(cfg)
-        return {"status": "ok", "message": "配置和统计已推送到 Gist", "gist_id": sync.gist_id}
+        return {"status": "ok", "message": "原始配置和统计已推送到 Gist", "gist_id": sync.gist_id, "version": version}
     raise HTTPException(status_code=500, detail="推送到 Gist 失败")
 
 
 @app.post("/api/sync/pull")
 async def api_sync_pull(request: Request):
-    """从 Gist 拉取配置和统计并应用。"""
+    """从 Gist 拉取原始文本并应用，支持版本对比。"""
     sc = config_manager.config.sync
     body = await request.json()
     token = body.get("gist_token", "").strip() or sync_storage.gist_token
+    force = body.get("force", False)  # 支持强制拉取
+
     if not token:
         raise HTTPException(status_code=400, detail="未配置 Gist Token")
     if not sc.gist_id:
@@ -1947,30 +2799,74 @@ async def api_sync_pull(request: Request):
     if not data:
         raise HTTPException(status_code=500, detail="从 Gist 拉取失败")
 
+    new_version = data.get("version", "")
+    last_version = sync_storage.last_sync_version
+    
+    # 如果版本一致且未强制拉取，直接返回
+    if new_version == last_version and not force and last_version != "":
+        return {"status": "ok", "message": "本地已是 Gist 的最新版本", "changes": False, "version": new_version}
+
     results = []
+    changes_made = False
     try:
         if "config" in data:
-            import yaml
-            raw = yaml.safe_load(data["config"])
-            new_cfg = AppConfig(**raw)
-            config_manager.save(new_cfg)
-            init_components(new_cfg)
-            results.append("配置")
+            current_content = ""
+            if config_manager.config_path.exists():
+                current_content = config_manager.config_path.read_text(encoding="utf-8")
+            
+            new_content = data["config"]
+            if force or current_content.replace("\r\n", "\n").strip() != new_content.replace("\r\n", "\n").strip():
+                config_manager.config_path.write_text(new_content, encoding="utf-8")
+                config_manager.reload()
+                init_components(config_manager.config)
+                results.append("配置")
+                changes_made = True
 
         if "stats" in data:
             stats_path = stats_tracker.db_path
-            stats_path.parent.mkdir(parents=True, exist_ok=True)
-            stats_path.write_text(data["stats"], encoding="utf-8")
-            stats_tracker._load()
-            results.append("统计数据")
+            current_stats = ""
+            if stats_path.exists():
+                current_stats = stats_path.read_text(encoding="utf-8")
+            
+            new_stats = data["stats"]
+            if force or current_stats.strip() != new_stats.strip():
+                stats_path.parent.mkdir(parents=True, exist_ok=True)
+                stats_path.write_text(new_stats, encoding="utf-8")
+                stats_tracker._load()
+                results.append("统计数据")
+                changes_made = True
 
-        if results:
-            return {"status": "ok", "message": f"已从 Gist 拉取并应用{'、'.join(results)}"}
-        raise HTTPException(status_code=500, detail="Gist 中无有效数据")
+        if changes_made:
+            sync_storage.last_sync_version = new_version
+            msg = f"已从 Gist 拉取：{ '、'.join(results) }"
+            return {"status": "ok", "message": msg, "changes": True, "version": new_version}
+        
+        # 即使 changes_made 为 False (因为内容刚好一致)，也更新本地版本号
+        sync_storage.last_sync_version = new_version
+        return {"status": "ok", "message": "Gist 内容与本地完全一致，版本号已同步。", "changes": False, "version": new_version}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"应用拉取的数据失败: {e}")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"应用拉取的数据失败: {e}")
+
+
+@app.get("/api/sync/gist-info")
+async def api_sync_gist_info(request: Request):
+    """获取 Gist 元数据。"""
+    sc = config_manager.config.sync
+    token = sync_storage.gist_token
+    if not token or not sc.gist_id:
+        return {"status": "error", "message": "Not configured"}
+    
+    from .sync import GistSync
+    sync = GistSync(token, sc.gist_id)
+    info = await sync.get_info()
+    if info:
+        return {"status": "ok", "info": info}
+    return {"status": "error", "message": "Failed to fetch gist info"}
 
 
 @app.post("/api/sync/verify-token")
@@ -2119,6 +3015,12 @@ async def api_webdav_pull(request: Request):
         raise HTTPException(status_code=500, detail=f"WebDAV pull failed: {e}")
 
     return {"status": "ok", "results": results}
+
+
+@app.get("/api/debug/routes")
+async def debug_routes():
+    routes = [r.path for r in app.routes if hasattr(r, 'path')]
+    return {"routes": routes}
 
 
 @app.get("/{full_path:path}")
