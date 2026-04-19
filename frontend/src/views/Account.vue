@@ -69,18 +69,16 @@
         >
           {{ updating ? '正在保存...' : '修改密码' }}
         </button>
-      </div>
-
-      <!-- Logout Card -->
-      <div class="card danger-card">
-        <h3 class="card-title danger-title">危险操作</h3>
-        <button 
-          class="btn btn-danger" 
-          @click="handleLogout"
-        >
-          <LogOut :size="14" class="mr-1" />
-          注销登录
-        </button>
+        
+        <div class="logout-section mt-4 pt-4 border-t">
+          <button 
+            class="btn btn-logout" 
+            @click="handleLogout"
+          >
+            <LogOut :size="14" class="mr-1" />
+            注销登录
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -306,26 +304,36 @@ async function changePassword() {
   cursor: not-allowed;
 }
 
-.danger-card {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.05);
+.logout-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-border);
 }
 
-.danger-title {
-  color: #ef4444;
+.btn-logout {
+  background: transparent;
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-border);
 }
 
-.btn-danger {
-  background: #ef4444;
-  color: #fff;
-  border: none;
-}
-
-.btn-danger:hover {
-  background: #dc2626;
+.btn-logout:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }
 
 .mr-1 {
   margin-right: 4px;
+}
+
+.mt-4 {
+  margin-top: 16px;
+}
+
+.pt-4 {
+  padding-top: 16px;
+}
+
+.border-t {
+  border-top: 1px solid var(--color-border);
 }
 </style>
