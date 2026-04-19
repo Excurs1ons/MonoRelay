@@ -60,24 +60,24 @@
                          <span v-if="log.max_tokens">max_tokens: {{ log.max_tokens }}</span>
                        </div>
                      </div>
-                     <div v-if="log.request_preview || (fullContent[log.id]?.request_full)" class="content-block">
-                       <div class="content-label">
-                         Request
-                         <button v-if="fullContent[log.id]?.request_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullRequest = !fullContent[log.id].showFullRequest">
-                           {{ fullContent[log.id].showFullRequest ? '显示预览' : '显示完整' }}
-                         </button>
-                       </div>
-                       <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullRequest) ? (fullContent[log.id].request_full || log.request_preview) : log.request_preview }}</pre>
-                     </div>
-                     <div v-if="log.response_preview || (fullContent[log.id]?.response_full)" class="content-block">
-                       <div class="content-label">
-                         Response
-                         <button v-if="fullContent[log.id]?.response_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullResponse = !fullContent[log.id].showFullResponse">
-                           {{ fullContent[log.id].showFullResponse ? '显示预览' : '显示完整' }}
-                         </button>
-                       </div>
-                       <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || log.response_preview) : log.response_preview }}</pre>
-                     </div>
+                      <div v-if="log.request_preview || (fullContent[log.id]?.request_full) || (fullContent[log.id] && log.error_message)" class="content-block">
+                        <div class="content-label">
+                          Request
+                          <button v-if="fullContent[log.id]?.request_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullRequest = !fullContent[log.id].showFullRequest">
+                            {{ fullContent[log.id].showFullRequest ? '显示预览' : '显示完整' }}
+                          </button>
+                        </div>
+                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullRequest) ? (fullContent[log.id].request_full || log.request_preview || '无请求内容') : (log.request_preview || '无请求内容') }}</pre>
+                      </div>
+                      <div v-if="log.response_preview || (fullContent[log.id]?.response_full) || (fullContent[log.id] && log.error_message)" class="content-block">
+                        <div class="content-label">
+                          Response
+                          <button v-if="fullContent[log.id]?.response_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullResponse = !fullContent[log.id].showFullResponse">
+                            {{ fullContent[log.id].showFullResponse ? '显示预览' : '显示完整' }}
+                          </button>
+                        </div>
+                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || log.response_preview || '无响应内容') : (log.response_preview || '无响应内容') }}</pre>
+                      </div>
                       <div v-if="log.error_message" class="content-block">
                         <div class="content-label">Error</div>
                         <pre class="content-text error-text">{{ log.error_message }}</pre>
