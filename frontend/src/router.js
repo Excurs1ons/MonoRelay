@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -67,6 +68,15 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach((to, from, next) => {
+  const authStore = useAuthStore()
+  if (!authStore.token && to.path !== '/') {
+    window.location.href = '/'
+  } else {
+    next()
+  }
 })
 
 export default router
