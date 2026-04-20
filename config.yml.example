@@ -38,6 +38,16 @@ providers:
     models:
       include: []
       exclude: []
+    # retry:
+    #   enabled: true
+    #   max_retries: 3
+    #   retry_on_status: [429, 500, 502, 503, 504]
+    #   retry_on_errors: ["rate_limit_error", "timeout_error", "upstream_error", "service_unavailable"]
+    #   backoff_factor: 1.5
+    #   backoff_max: 60
+    # ignore:
+    #   enabled: true
+    #   ignore_errors: ["content_filter", "content_moderation", "policy_violation"]
 
   nvidia:
     enabled: true

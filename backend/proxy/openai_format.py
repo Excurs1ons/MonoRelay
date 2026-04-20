@@ -1,6 +1,7 @@
 """OpenAI-compatible API proxy handler (OpenRouter, NVIDIA NIM, OpenAI, Web Reverse)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -9,7 +10,7 @@ from typing import AsyncGenerator
 import httpx
 from fastapi.responses import StreamingResponse
 
-from ..key_manager import KeyManager
+from ..key_manager import KeyManager, retry_with_backoff
 from ..logger import RequestLogger
 from ..models import AppConfig
 from ..router import ModelRouter
@@ -347,42 +348,91 @@ async def handle_embeddings(
     start_time = time.time()
     logger.info(f"Embeddings请求发送 | 模型={resolved_model} | 提供商={provider_name}")
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
-        try:
-            resp = await client.post(
-                _build_url(provider_cfg.base_url, "/embeddings"),
-                headers=headers,
-                json=body,
-            )
-            elapsed = time.time() - start_time
-            if resp.status_code >= 400:
+        attempt = 0
+        last_error = None
+        
+        while attempt <= provider_cfg.retry.max_retries:
+            try:
+                resp = await client.post(
+                    _build_url(provider_cfg.base_url, "/embeddings"),
+                    headers=headers,
+                    json=body,
+                )
+                elapsed = time.time() - start_time
+                if resp.status_code >= 400:
+                    error_data = resp.json() if resp.content else {}
+                    error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    status_code = resp.status_code
+                    
+                    if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2),
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=True)
+                        return error_data
+                    
+                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        attempt += 1
+                        if attempt <= provider_cfg.retry.max_retries:
+                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            await asyncio.sleep(delay)
+                            last_error = error_data
+                            continue
+                    
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    stats_tracker.record_request(provider_name, resolved_model, success=False)
+                    logger.error(f"Embeddings错误{status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                    return error_data
+                
+                key_manager.report_success(key, 0)
+                logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=resp.status_code,
+                    latency_ms=round(elapsed * 1000, 2),
+                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                )
+                stats_tracker.record_request(provider_name, resolved_model, success=True)
+                return resp.json()
+            except Exception as e:
+                error_type = "proxy_error"
+                
+                if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                    logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                    return {"error": {"message": str(e), "type": error_type}}
+                
+                if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
+                    attempt += 1
+                    if attempt <= provider_cfg.retry.max_retries:
+                        delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                        logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                        await asyncio.sleep(delay)
+                        last_error = {"error": {"message": str(e), "type": error_type}}
+                        continue
+                
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
-                logger.error(f"Embeddings错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
-                return resp.json()
-            key_manager.report_success(key, 0)
-            logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
-            await request_logger.log_request(
-                model=resolved_model,
-                provider=provider_name,
-                key_label=key.key.label,
-                status_code=resp.status_code,
-                latency_ms=round(elapsed * 1000, 2),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-            )
-            stats_tracker.record_request(provider_name, resolved_model, success=True)
-            return resp.json()
-        except Exception as e:
-            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-            stats_tracker.record_request(provider_name, resolved_model, success=False)
-            logger.error(f"Embeddings失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
+                logger.error(f"Embeddings失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+                return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
+        
+        return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
 
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
             tokens_out = None
@@ -407,32 +457,62 @@ async def _stream_chat(
             frequency_penalty = body.get("frequency_penalty")
             max_tokens = body.get("max_tokens")
 
-            async with client.stream(
-                "POST", url, headers=headers, json=body,
-                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
-            ) as response:
-                if response.status_code >= 400:
-                    error_body = await response.aread()
-                    error_text = error_body.decode("utf-8", errors="replace")
-                    logger.error(f"Upstream error {response.status_code}: {error_text}")
-                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    elapsed = time.time() - start_time
-                    await request_logger.log_request(
-                        model=resolved_model, provider=provider_name,
-                        key_label=key.key.label, status_code=response.status_code,
-                        latency_ms=round(elapsed * 1000, 2), streaming=True,
-                        error_message=error_text,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    )
-                    stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
-                    err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": response.status_code}})
-                    yield f"data: {err}\n\n".encode()
-                    yield b"data: [DONE]\n\n"
-                    return
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, json=body,
+                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+                ) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        error_text = error_body.decode("utf-8", errors="replace")
+                        error_data = json.loads(error_text) if error_text else {}
+                        error_type = error_data.get("error", {}).get("type", "upstream_error")
+                        status_code = response.status_code
 
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        yield chunk
+                        if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                            logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                            elapsed = time.time() - start_time
+                            await request_logger.log_request(
+                                model=resolved_model, provider=provider_name,
+                                key_label=key.key.label, status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2), streaming=True,
+                                error_message=error_text,
+                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            )
+                            stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
+                            err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
+                            yield f"data: {err}\n\n".encode()
+                            yield b"data: [DONE]\n\n"
+                            return
+
+                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                            attempt += 1
+                            if attempt <= provider_cfg.retry.max_retries:
+                                delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                                logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                                await asyncio.sleep(delay)
+                                last_error = {"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}}
+                                continue
+
+                        logger.error(f"Upstream error {status_code}: {error_text}")
+                        key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                        elapsed = time.time() - start_time
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2), streaming=True,
+                            error_message=error_text,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
+                        err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
+                        yield f"data: {err}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        return
+
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
                         buffer += chunk
                         stream_chunks += 1
 
@@ -610,93 +690,155 @@ async def _non_stream_chat(
         stats_tracker.record_request(provider_name, resolved_model, success=True)
         return cached
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
         try:
-            resp = await client.post(url, headers=headers, json=body)
-            elapsed = time.time() - start_time
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                resp = await client.post(url, headers=headers, json=body)
+                elapsed = time.time() - start_time
 
-            if resp.status_code >= 400:
-                key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                if resp.status_code >= 400:
+                    error_data = resp.json() if resp.content else {}
+                    error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    status_code = resp.status_code
+                    
+                    if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        await request_logger.log_request(
+                            model=resolved_model,
+                            provider=provider_name,
+                            key_label=key.key.label,
+                            status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2),
+                            error_message=resp.text,
+                            request_preview=request_text if request_text else None,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            temperature=temperature,
+                            top_p=top_p,
+                            presence_penalty=presence_penalty,
+                            frequency_penalty=frequency_penalty,
+                            max_tokens=max_tokens,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=True)
+                        return error_data
+                    
+                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        attempt += 1
+                        if attempt <= provider_cfg.retry.max_retries:
+                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            await asyncio.sleep(delay)
+                            last_error = error_data
+                            continue
+                    
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    await request_logger.log_request(
+                        model=resolved_model,
+                        provider=provider_name,
+                        key_label=key.key.label,
+                        status_code=status_code,
+                        latency_ms=round(elapsed * 1000, 2),
+                        error_message=resp.text,
+                        request_preview=request_text if request_text else None,
+                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        temperature=temperature,
+                        top_p=top_p,
+                        presence_penalty=presence_penalty,
+                        frequency_penalty=frequency_penalty,
+                        max_tokens=max_tokens,
+                    )
+                    stats_tracker.record_request(provider_name, resolved_model, success=False)
+                    return error_data
+
+                result = resp.json()
+                tokens_in, tokens_out = extract_token_usage(result)
+
+                # Extract thinking tokens if available
+                thinking_tokens = None
+                usage = result.get("usage", {})
+                if usage:
+                    details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
+                    thinking_tokens = details.get("reasoning_tokens")
+
+                tokens_in = int(tokens_in) if tokens_in is not None else 0
+                tokens_out = int(tokens_out) if tokens_out is not None else 0
+                thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
+                total_tokens = tokens_in + tokens_out
+
+                key_manager.report_success(key, total_tokens)
+
+                # Detailed logging
+                log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
+                if tokens_in is not None:
+                    log_parts.append(f"输入token={tokens_in}")
+                if thinking_tokens is not None:
+                    log_parts.append(f"思考token={thinking_tokens}")
+                if tokens_out is not None:
+                    log_parts.append(f"输出token={tokens_out}")
+                total = (tokens_in or 0) + (tokens_out or 0)
+                if tokens_in is not None or tokens_out is not None:
+                    log_parts.append(f"总token={total}")
+                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                logger.info(" | ".join(log_parts))
+
                 await request_logger.log_request(
                     model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
-                    error_message=resp.text,
+                    input_tokens=tokens_in,
+                    output_tokens=tokens_out,
                     request_preview=request_text if request_text else None,
+                    response_preview=json.dumps(result) if result else None,
                     request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
                     temperature=temperature,
                     top_p=top_p,
                     presence_penalty=presence_penalty,
                     frequency_penalty=frequency_penalty,
                     max_tokens=max_tokens,
                 )
-                stats_tracker.record_request(provider_name, resolved_model, success=False)
-                return resp.json()
-
-            result = resp.json()
-            tokens_in, tokens_out = extract_token_usage(result)
-
-            # Extract thinking tokens if available
-            thinking_tokens = None
-            usage = result.get("usage", {})
-            if usage:
-                details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
-                thinking_tokens = details.get("reasoning_tokens")
-
-            tokens_in = int(tokens_in) if tokens_in is not None else 0
-            tokens_out = int(tokens_out) if tokens_out is not None else 0
-            thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
-            total_tokens = tokens_in + tokens_out
-
-            key_manager.report_success(key, total_tokens)
-
-            # Detailed logging
-            log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
-            if tokens_in is not None:
-                log_parts.append(f"输入token={tokens_in}")
-            if thinking_tokens is not None:
-                log_parts.append(f"思考token={thinking_tokens}")
-            if tokens_out is not None:
-                log_parts.append(f"输出token={tokens_out}")
-            total = (tokens_in or 0) + (tokens_out or 0)
-            if tokens_in is not None or tokens_out is not None:
-                log_parts.append(f"总token={total}")
-            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
-            logger.info(" | ".join(log_parts))
-
-            await request_logger.log_request(
-                model=resolved_model,
-                provider=provider_name,
-                key_label=key.key.label,
-                status_code=resp.status_code,
-                latency_ms=round(elapsed * 1000, 2),
-                input_tokens=tokens_in,
-                output_tokens=tokens_out,
-                request_preview=request_text if request_text else None,
-                response_preview=json.dumps(result) if result else None,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None,
-                temperature=temperature,
-                top_p=top_p,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-                max_tokens=max_tokens,
-            )
-            stats_tracker.record_request(
-                provider_name, resolved_model,
-                input_tokens=tokens_in,
-                output_tokens=tokens_out,
-                success=True,
-                cost_per_m_input=provider_cfg.cost_per_m_input,
-                cost_per_m_output=provider_cfg.cost_per_m_output,
-            )
-            from ..usage_tracker import usage_tracker
-            usage_tracker.record(None, success=True, tokens_in=tokens_in or 0, tokens_out=tokens_out or 0)
-            response_cache.set(body, resolved_model, result)
-            return result
+                stats_tracker.record_request(
+                    provider_name, resolved_model,
+                    input_tokens=tokens_in,
+                    output_tokens=tokens_out,
+                    success=True,
+                    cost_per_m_input=provider_cfg.cost_per_m_input,
+                    cost_per_m_output=provider_cfg.cost_per_m_output,
+                )
+                from ..usage_tracker import usage_tracker
+                usage_tracker.record(None, success=True, tokens_in=tokens_in or 0, tokens_out=tokens_out or 0)
+                response_cache.set(body, resolved_model, result)
+                return result
         except Exception as e:
+            error_type = "proxy_error"
+            
+            if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                elapsed = time.time() - start_time
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message=str(e),
+                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                )
+                return {"error": {"message": str(e), "type": error_type}}
+            
+            if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
+                attempt += 1
+                if attempt <= provider_cfg.retry.max_retries:
+                    delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                    logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                    await asyncio.sleep(delay)
+                    last_error = {"error": {"message": str(e), "type": error_type}}
+                    continue
+            
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
@@ -710,46 +852,81 @@ async def _non_stream_chat(
                 request_full=json.dumps(body, ensure_ascii=False) if body else None,
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
+    
+    return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
 
 
 async def _stream_completion(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
             tokens_out = None
             stream_chunks = 0
             buffer = b""
 
-            async with client.stream(
-                "POST", url, headers=headers, json=body,
-                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
-            ) as response:
-                if response.status_code >= 400:
-                    error_body = await response.aread()
-                    error_text = error_body.decode("utf-8", errors="replace")
-                    logger.error(f"Completion upstream error {response.status_code}: {error_text}")
-                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    elapsed = time.time() - start_time
-                    await request_logger.log_request(
-                        model=resolved_model, provider=provider_name,
-                        key_label=key.key.label, status_code=response.status_code,
-                        latency_ms=round(elapsed * 1000, 2), streaming=True,
-                        error_message=error_text,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    )
-                    stats_tracker.record_request(provider_name, resolved_model, success=False)
-                    err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": response.status_code}})
-                    yield f"data: {err}\n\n".encode()
-                    yield b"data: [DONE]\n\n"
-                    return
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, json=body,
+                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+                ) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        error_text = error_body.decode("utf-8", errors="replace")
+                        error_data = json.loads(error_text) if error_text else {}
+                        error_type = error_data.get("error", {}).get("type", "upstream_error")
+                        status_code = response.status_code
 
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        yield chunk
+                        if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                            logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                            elapsed = time.time() - start_time
+                            await request_logger.log_request(
+                                model=resolved_model, provider=provider_name,
+                                key_label=key.key.label, status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2), streaming=True,
+                                error_message=error_text,
+                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            )
+                            stats_tracker.record_request(provider_name, resolved_model, success=True)
+                            err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
+                            yield f"data: {err}\n\n".encode()
+                            yield b"data: [DONE]\n\n"
+                            return
+
+                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                            attempt += 1
+                            if attempt <= provider_cfg.retry.max_retries:
+                                delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                                logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                                await asyncio.sleep(delay)
+                                last_error = {"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}}
+                                continue
+
+                        logger.error(f"Completion upstream error {status_code}: {error_text}")
+                        key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                        elapsed = time.time() - start_time
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2), streaming=True,
+                            error_message=error_text,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=False)
+                        err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
+                        yield f"data: {err}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        return
+
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
                         buffer += chunk
                         stream_chunks += 1
 
@@ -827,52 +1004,99 @@ async def _non_stream_completion(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
         try:
-            resp = await client.post(url, headers=headers, json=body)
-            elapsed = time.time() - start_time
-            if resp.status_code >= 400:
-                key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                logger.error(f"Completion错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
-                stats_tracker.record_request(provider_name, resolved_model, success=False)
-                return resp.json()
-            result = resp.json()
-            tokens_in, tokens_out = extract_token_usage(result)
-            tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
-            tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
-            total_tokens = tokens_in_calc + tokens_out_calc
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                resp = await client.post(url, headers=headers, json=body)
+                elapsed = time.time() - start_time
+                if resp.status_code >= 400:
+                    error_data = resp.json() if resp.content else {}
+                    error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    status_code = resp.status_code
+                    
+                    if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2),
+                            error_message=resp.text,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=True)
+                        return error_data
+                    
+                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        attempt += 1
+                        if attempt <= provider_cfg.retry.max_retries:
+                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            await asyncio.sleep(delay)
+                            last_error = error_data
+                            continue
+                    
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    logger.error(f"Completion错误{status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                    stats_tracker.record_request(provider_name, resolved_model, success=False)
+                    return error_data
+                
+                result = resp.json()
+                tokens_in, tokens_out = extract_token_usage(result)
+                tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+                tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+                total_tokens = tokens_in_calc + tokens_out_calc
 
-            key_manager.report_success(key, total_tokens)
-            tokens_in = int(tokens_in) if tokens_in is not None else None
-            tokens_out = int(tokens_out) if tokens_out is not None else None
+                key_manager.report_success(key, total_tokens)
+                tokens_in = int(tokens_in) if tokens_in is not None else None
+                tokens_out = int(tokens_out) if tokens_out is not None else None
 
-            log_parts = [f"非流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
-            if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
-            if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
-            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
-            logger.info(" | ".join(log_parts))
+                log_parts = [f"非流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
+                if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+                if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
+                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                logger.info(" | ".join(log_parts))
 
-            await request_logger.log_request(
-                model=resolved_model,
-                provider=provider_name,
-                key_label=key.key.label,
-                status_code=resp.status_code,
-                latency_ms=round(elapsed * 1000, 2),
-                input_tokens=tokens_in,
-                output_tokens=tokens_out,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None,
-            )
-            stats_tracker.record_request(
-                provider_name, resolved_model,
-                input_tokens=tokens_in, output_tokens=tokens_out, success=True,
-            )
-            return result
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=resp.status_code,
+                    latency_ms=round(elapsed * 1000, 2),
+                    input_tokens=tokens_in,
+                    output_tokens=tokens_out,
+                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                )
+                stats_tracker.record_request(
+                    provider_name, resolved_model,
+                    input_tokens=tokens_in, output_tokens=tokens_out, success=True,
+                )
+                return result
         except Exception as e:
+            error_type = "proxy_error"
+            
+            if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                return {"error": {"message": str(e), "type": error_type}}
+            
+            if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
+                attempt += 1
+                if attempt <= provider_cfg.retry.max_retries:
+                    delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                    logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                    await asyncio.sleep(delay)
+                    last_error = {"error": {"message": str(e), "type": error_type}}
+                    continue
+            
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             logger.error(f"Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
+    
+    return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
 
 
 async def handle_models_list(config: AppConfig) -> dict:
