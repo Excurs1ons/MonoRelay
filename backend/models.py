@@ -225,7 +225,7 @@ class SSOConfig(BaseModel):
     provider: str = "github"
     prismaauth_url: str = "http://localhost:8080"
     client_id: str = ""
-    scopes: list[str] = ["openid", "profile", "email"]
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile", "email"])
     github_client_id: str = ""
     google_client_id: str = ""
     local_sso_enabled: bool = False
