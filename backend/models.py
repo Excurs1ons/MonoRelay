@@ -172,6 +172,13 @@ class PayloadTransformation(BaseModel):
     rules: list[TransformationRule] = Field(default_factory=list)
 
 
+class GlobalRequestParamsConfig(BaseModel):
+    """Global request parameters with default or override mode."""
+    enabled: bool = False
+    mode: str = "default"  # "default" (if missing) or "override" (always)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelRoutingConfig(BaseModel):
     enabled: bool = True
     mode: str = "passthrough"
@@ -181,6 +188,7 @@ class ModelRoutingConfig(BaseModel):
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     cascade: CascadeConfig = Field(default_factory=CascadeConfig)
     payload_transformation: PayloadTransformation = Field(default_factory=PayloadTransformation)
+    global_params: GlobalRequestParamsConfig = Field(default_factory=GlobalRequestParamsConfig)
 
 
 class ToolCallingConfig(BaseModel):

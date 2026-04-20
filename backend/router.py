@@ -93,7 +93,6 @@ class ModelRouter:
 
     def _resolve_alias(self, model: str) -> Optional[str]:
         aliases = self.config.model_routing.aliases
-        model_norm = self._normalize_id(model)
         visited = set()
         current = model
         while current not in visited:
@@ -110,15 +109,10 @@ class ModelRouter:
         return current if current != model else None
 
     def _resolve_provider_mapping(self, model: str) -> Optional[str]:
-        """Match model against provider_mapping fnmatch patterns.
-
-        Returns the provider name if a pattern matches, None otherwise.
-        Only considers enabled providers.
-        """
+        """Match model against provider_mapping fnmatch patterns."""
         mapping = self.config.model_routing.provider_mapping
         for pattern, target_provider in mapping.items():
             if fnmatch.fnmatch(model.lower(), pattern.lower()):
-                # Verify target provider is enabled
                 pc = self.config.providers.get(target_provider)
                 if pc and pc.enabled:
                     logger.info(f"Provider mapping: '{model}' -> provider '{target_provider}' (pattern: '{pattern}')")
@@ -137,127 +131,74 @@ class ModelRouter:
         return model.lower().replace("-", "").replace("_", "")
 
     def _resolve_provider(self, model: str) -> tuple[str, str]:
-        """Find the first provider that has this model enabled.
-        
-        Returns tuple of (original_upstream_model_id, provider_name).
-        """
-        
+        """Find the first provider that has this model enabled."""
         # Pass 1: Exact match in 'include' list (Sensitive)
         for name, pc in self.config.providers.items():
-            if not pc.enabled:
-                continue
+            if not pc.enabled: continue
             enabled_models = pc.models.get("include", []) if pc.models else []
-            if model in enabled_models:
-                return model, name
+            if model in enabled_models: return model, name
 
         # Pass 2: Insensitive/Normalized match or catch-all
         model_norm = self._normalize_id(model)
         for name, pc in self.config.providers.items():
-            if not pc.enabled:
-                continue
+            if not pc.enabled: continue
             enabled_models = pc.models.get("include", []) if pc.models else []
-            
-            # If a provider has no include/exclude list, it's a catch-all
-            if not enabled_models:
-                return model, name
-                
+            if not enabled_models: return model, name
             for em in enabled_models:
                 em_norm = self._normalize_id(em)
-                if em_norm == model_norm:
-                    return em, name
-                if em_norm in model_norm or model_norm in em_norm:
-                    return em, name
+                if em_norm == model_norm: return em, name
+                if em_norm in model_norm or model_norm in em_norm: return em, name
 
-        # Fallback: first enabled provider
         for name, pc in self.config.providers.items():
-            if pc.enabled:
-                return model, name
-
+            if pc.enabled: return model, name
         return model, "openrouter"
 
     def _guess_provider(self, model: str) -> tuple[str, str]:
         return self._resolve_provider(model)
 
     def resolve_cascade(self, body: dict, messages: list[dict] | None = None) -> list[tuple[str, str]]:
-        """Resolve cascade model sequence for fallback.
-
-        Returns list of (model, provider) tuples in cascade order.
-        """
         cascade = self.config.model_routing.cascade
-        if not cascade.enabled or not cascade.models:
-            return []
-
+        if not cascade.enabled or not cascade.models: return []
         results = []
         for model in cascade.models:
-            # Apply alias and provider_mapping for each cascade model
             aliased = self._resolve_alias(model)
-            if aliased:
-                model = aliased
-
+            if aliased: model = aliased
             mapped_provider = self._resolve_provider_mapping(model)
             if mapped_provider:
                 results.append((model, mapped_provider))
                 continue
-
             model, provider = self._resolve_provider(model)
             results.append((model, provider))
-
         return results
 
     def _complexity_route(self, messages: list[dict]) -> str:
         score = self._score_complexity(messages)
         cfg = self.config.model_routing.complexity
-
-        if score < 0:
-            return cfg.simple
-        elif score < 0.35:
-            return cfg.moderate
-        else:
-            return cfg.complex
+        if score < 0: return cfg.simple
+        elif score < 0.35: return cfg.moderate
+        else: return cfg.complex
 
     def _score_complexity(self, messages: list[dict]) -> float:
-        text = " ".join(
-            m.get("content", "") for m in messages
-            if isinstance(m.get("content"), str)
-        )
-        if not text:
-            return 0
-
-        score = 0.0
-        text_lower = text.lower()
-        token_estimate = len(text) / 4
-
-        if token_estimate > 50000:
-            return 1.0
-
-        reasoning_count = sum(1 for kw in REASONING_KEYWORDS if kw in text_lower)
-        if reasoning_count >= 2:
-            return 0.95
-
+        text = " ".join(m.get("content", "") for m in messages if isinstance(m.get("content"), str))
+        if not text: return 0
+        score, text_lower = 0.0, text.lower()
+        if (len(text) / 4) > 50000: return 1.0
+        if sum(1 for kw in REASONING_KEYWORDS if kw in text_lower) >= 2: return 0.95
         for kw in REASONING_KEYWORDS:
-            if kw in text_lower:
-                score += 0.18
+            if kw in text_lower: score += 0.18
         for kw in CODE_KEYWORDS:
-            if kw in text_lower:
-                score += 0.14
+            if kw in text_lower: score += 0.14
         for kw in SIMPLE_KEYWORDS:
-            if kw in text_lower:
-                score -= 0.12
-
-        if "```" in text:
-            score += 0.1
-        if text.count("?") > 2:
-            score += 0.05
-
+            if kw in text_lower: score -= 0.12
+        if "```" in text: score += 0.1
+        if text.count("?") > 2: score += 0.05
         return max(-1.0, min(1.0, score))
 
     def supports_tools(self, model: str) -> bool:
         patterns = self.config.tool_calling.unsupported_models
-        if not self.config.tool_calling.auto_downgrade:
-            return True
+        if not self.config.tool_calling.auto_downgrade: return True
         for pattern in patterns:
-            if fnmatch.fnmatch(model.lower(), pattern.lower()):
-                return False
+            if fnmatch.fnmatch(model.lower(), pattern.lower()): return False
         return True
 
     def strip_tools(self, body: dict) -> dict:
@@ -267,48 +208,38 @@ class ModelRouter:
         return body
 
     def apply_transformation(self, body: dict, model: str) -> dict:
-        pt = self.config.model_routing.payload_transformation
-        if not pt.enabled:
-            return body
-
         body = body.copy()
-        injected_keys: list[str] = []
-        overridden_keys: list[str] = []
-
-        for rule in pt.rules:
-            patterns = rule.models
-            if not patterns:
-                continue
-
-            matches = any(fnmatch.fnmatch(model.lower(), p.lower()) for p in patterns)
-            if not matches:
-                continue
-
-            for key, value in rule.inject_params.items():
-                if key not in body:
-                    body[key] = value
-                    injected_keys.append(key)
-
-            for key, value in rule.override_params.items():
-                if "." in key:
-                    self._set_nested(body, key, value)
-                else:
-                    body[key] = value
-                overridden_keys.append(key)
-
-        if injected_keys or overridden_keys:
-            logger.info(
-                f"Payload transformation applied | model={model} | "
-                f"injected={injected_keys} | overridden={overridden_keys}"
-            )
-
+        
+        # 1. Payload Transformation Rules
+        pt = self.config.model_routing.payload_transformation
+        if pt.enabled:
+            for rule in pt.rules:
+                if not rule.models: continue
+                if any(fnmatch.fnmatch(model.lower(), p.lower()) for p in rule.models):
+                    for key, value in rule.inject_params.items():
+                        if key not in body: body[key] = value
+                    for key, value in rule.override_params.items():
+                        if "." in key: self._set_nested(body, key, value)
+                        else: body[key] = value
+        
+        # 2. Global Request Parameters
+        gp = self.config.model_routing.global_params
+        if gp.enabled and gp.params:
+            for key, value in gp.params.items():
+                if gp.mode == "override":
+                    if "." in key: self._set_nested(body, key, value)
+                    else: body[key] = value
+                else: # "default"
+                    if key not in body:
+                        if "." in key: self._set_nested(body, key, value)
+                        else: body[key] = value
+                        
         return body
 
     def _set_nested(self, d: dict, path: str, value: Any) -> None:
         keys = path.split(".")
         current = d
         for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
+            if key not in current: current[key] = {}
             current = current[key]
         current[keys[-1]] = value

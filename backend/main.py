@@ -1592,7 +1592,7 @@ async def api_log_detail(log_id: int):
 
 @app.post("/api/stats/reset")
 async def api_stats_reset():
-    stats_tracker.reset()
+    await stats_tracker.reset(request_logger)
     return api_response(message="统计数据已清空")
 
 

@@ -5,7 +5,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .logger import RequestLogger
 
 # Exponential decay weighted average config
 MAX_HISTORY = 100       # Max history entries per model
@@ -152,36 +155,23 @@ class StatsTracker:
             self.total_errors += 1
             self.errors_by_provider[provider] = self.errors_by_provider.get(provider, 0) + 1
 
-        # Per-model detailed stats
-        if model not in self.model_stats:
-            self.model_stats[model] = {
-                "requests": 0,
-                "errors": 0,
-                "total_tokens_in": 0,
-                "total_tokens_out": 0,
-                "streaming_requests": 0,
-                "_first_token_history": [],
-                "_speed_history": [],
-            }
-        ms = self.model_stats[model]
+        ms = self.model_stats.setdefault(model, {
+            "requests": 0, "errors": 0, "total_tokens_in": 0, "total_tokens_out": 0,
+            "streaming_requests": 0, "_first_token_history": [], "_speed_history": [],
+        })
         ms["requests"] += 1
-        if not success:
-            ms["errors"] += 1
+        if not success: ms["errors"] += 1
         ms["total_tokens_in"] += in_tokens
         ms["total_tokens_out"] += out_tokens
         if is_streaming:
             ms["streaming_requests"] += 1
             if first_token_ms is not None:
                 ms["_first_token_history"].append(first_token_ms)
-                if len(ms["_first_token_history"]) > MAX_HISTORY:
-                    ms["_first_token_history"] = ms["_first_token_history"][-MAX_HISTORY:]
+                if len(ms["_first_token_history"]) > MAX_HISTORY: ms["_first_token_history"] = ms["_first_token_history"][-MAX_HISTORY:]
             if output_tokens is not None and latency_ms > 0:
                 speed = out_tokens / (latency_ms / 1000)
                 ms["_speed_history"].append(speed)
-                if len(ms["_speed_history"]) > MAX_HISTORY:
-                    ms["_speed_history"] = ms["_speed_history"][-MAX_HISTORY:]
-
-        # Auto-save after each request
+                if len(ms["_speed_history"]) > MAX_HISTORY: ms["_speed_history"] = ms["_speed_history"][-MAX_HISTORY:]
         self.save()
 
     def get_summary(self) -> dict:
@@ -202,61 +192,50 @@ class StatsTracker:
         for model, ms in self.model_stats.items():
             if "total_first_token_ms" in ms:
                 count = ms.get("first_token_count", 0)
-                if count > 0:
-                    avg = ms["total_first_token_ms"] / count
-                    ms["_first_token_history"] = [avg] * min(count, MAX_HISTORY)
-                else:
-                    ms["_first_token_history"] = []
-                del ms["total_first_token_ms"]
-                del ms["first_token_count"]
-            if "total_output_tokens_for_speed" in ms and "total_stream_duration_ms" in ms:
-                duration_s = ms["total_stream_duration_ms"] / 1000
-                if duration_s > 0:
-                    avg_speed = ms["total_output_tokens_for_speed"] / duration_s
-                    stream_count = ms.get("streaming_requests", 1)
-                    ms["_speed_history"] = [avg_speed] * min(stream_count, MAX_HISTORY)
-                else:
-                    ms["_speed_history"] = []
-                del ms["total_output_tokens_for_speed"]
-                del ms["total_stream_duration_ms"]
-            if "total_stream_chunks" in ms:
-                del ms["total_stream_chunks"]
-            if "total_latency_ms" in ms:
-                del ms["total_latency_ms"]
+                ms["_first_token_history"] = [ms["total_first_token_ms"] / count] * min(count, MAX_HISTORY) if count > 0 else []
+                del ms["total_first_token_ms"], ms["first_token_count"]
+            if "total_output_tokens_for_speed" in ms and ms.get("total_stream_duration_ms", 0) > 0:
+                avg_speed = ms["total_output_tokens_for_speed"] / (ms["total_stream_duration_ms"] / 1000)
+                ms["_speed_history"] = [avg_speed] * min(ms.get("streaming_requests", 1), MAX_HISTORY)
+                del ms["total_output_tokens_for_speed"], ms["total_stream_duration_ms"]
+            for k in ["total_stream_chunks", "total_latency_ms"]: ms.pop(k, None)
 
     @staticmethod
     def _weighted_avg(values: list[float]) -> float | None:
-        if not values:
-            return None
+        if not values: return None
         n = len(values)
         total_weight = sum(DECAY_RATE ** (n - 1 - i) for i in range(n))
-        if total_weight == 0:
-            return None
-        return sum(values[i] * (DECAY_RATE ** (n - 1 - i)) for i in range(n)) / total_weight
+        return sum(values[i] * (DECAY_RATE ** (n - 1 - i)) for i in range(n)) / total_weight if total_weight > 0 else None
 
     def get_model_details(self) -> dict:
         result = {}
         for model, ms in self.model_stats.items():
-            req = ms["requests"]
-            if req == 0:
-                continue
-
-            first_token_history = ms.get("_first_token_history", [])
-            speed_history = ms.get("_speed_history", [])
-
-            avg_first_token = self._weighted_avg(first_token_history)
-            avg_speed = self._weighted_avg(speed_history)
-
+            if ms["requests"] == 0: continue
+            avg_ft = self._weighted_avg(ms.get("_first_token_history", []))
+            avg_sp = self._weighted_avg(ms.get("_speed_history", []))
             result[model] = {
-                "requests": req,
-                "errors": ms["errors"],
-                "total_tokens_in": ms["total_tokens_in"],
-                "total_tokens_out": ms["total_tokens_out"],
-                "avg_first_token_ms": round(avg_first_token, 1) if avg_first_token is not None else None,
-                "avg_speed_tps": round(avg_speed, 1) if avg_speed is not None else None,
+                "requests": ms["requests"], "errors": ms["errors"],
+                "total_tokens_in": ms["total_tokens_in"], "total_tokens_out": ms["total_tokens_out"],
+                "avg_first_token_ms": round(avg_ft, 1) if avg_ft is not None else None,
+                "avg_speed_tps": round(avg_sp, 1) if avg_sp is not None else None,
                 "streaming_requests": ms["streaming_requests"],
             }
         return result
 
-    def reset(self):
-        self.__init__()
+    async def reset(self, request_logger: Optional[RequestLogger] = None):
+        """彻底清空统计数据、删除 JSON 文件并（可选）清空数据库日志。"""
+        self.total_requests = 0
+        self.total_errors = 0
+        self.total_tokens_in = 0
+        self.total_tokens_out = 0
+        self.total_cost = 0.0
+        self.requests_by_provider = {}
+        self.requests_by_model = {}
+        self.errors_by_provider = {}
+        self.model_stats = {}
+        if self.db_path.exists():
+            try: os.remove(self.db_path)
+            except Exception: pass
+        if request_logger:
+            await request_logger.clear_all()
+        logger.info("Statistics and logs cleared via reset.")
