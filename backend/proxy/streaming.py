@@ -30,7 +30,7 @@ async def stream_openai_response(
             error_text = error_body.decode("utf-8", errors="replace")
             logger.error(f"[{provider_name}] Upstream error {response.status_code}: {error_text}")
             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": response.status_code}})
-            yield ("data: " + err + "\n\n").encode()
+            yield f"data: {err}\n\n".encode()
             yield b"data: [DONE]\n\n"
             return
 

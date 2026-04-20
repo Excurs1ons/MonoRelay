@@ -51,6 +51,12 @@ class ConfigManager:
         with open(self._config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            logger.warning(f"配置文件格式错误: {self._config_path}，使用默认值")
+            raw = {}
+
         config = AppConfig(**raw)
 
         if not config.server.access_key:

@@ -78,8 +78,6 @@ from .sync_storage import SyncStorage
 from .secrets import secrets_manager
 from .cache import response_cache
 from .usage_tracker import usage_tracker
-from .auth_service import AuthService
-from .auth_models import UserCreate, UserLogin
 
 
 class VerifyRequest(BaseModel):

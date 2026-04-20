@@ -82,10 +82,20 @@ class ModelRouter:
     def _resolve_alias(self, model: str) -> Optional[str]:
         aliases = self.config.model_routing.aliases
         model_norm = self._normalize_id(model)
-        for alias_key, target in aliases.items():
-            if self._normalize_id(alias_key) == model_norm:
-                return target
-        return None
+        visited = set()
+        current = model
+        while current not in visited:
+            visited.add(current)
+            found = None
+            for alias_key, target in aliases.items():
+                if self._normalize_id(alias_key) == self._normalize_id(current):
+                    found = target
+                    break
+            if found:
+                current = found
+            else:
+                break
+        return current if current != model else None
 
     def _resolve_provider_mapping(self, model: str) -> Optional[str]:
         """Match model against provider_mapping fnmatch patterns.

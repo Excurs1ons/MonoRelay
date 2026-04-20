@@ -662,7 +662,7 @@ async def _stream_chat(
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
-            yield f"data: {err}".encode() + b"\n\n"
+            yield f"data: {err}\n\n".encode()
             yield b"data: [DONE]\n\n"
 
 
@@ -996,7 +996,7 @@ async def _stream_completion(
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
-            yield f"data: {err}".encode() + b"\n\n"
+            yield f"data: {err}\n\n".encode()
             yield b"data: [DONE]\n\n"
 
 
