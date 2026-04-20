@@ -1359,3 +1359,102 @@ async def handle_image_generations(
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             logger.error(f"Image Generation失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
+
+async def handle_image_variations(body, file, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Image variations not implemented', 'type': 'not_implemented'}}
+
+async def handle_image_edits(body, image, mask, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Image edits not implemented', 'type': 'not_implemented'}}
+
+async def handle_moderations(body, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Moderations not implemented', 'type': 'not_implemented'}}
+
+async def handle_responses(body, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Responses not implemented', 'type': 'not_implemented'}}
+
+async def handle_credits(config, key_manager, request_logger, auth_header):
+    return {'error': {'message': 'Credits not implemented', 'type': 'not_implemented'}}
+
+async def handle_audio_translations(body, file, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Audio translations not implemented', 'type': 'not_implemented'}}
+
+async def handle_files_list(config, key_manager, request_logger, stats_tracker, purpose=None, limit=None, order=None, after=None, before=None):
+    return {'error': {'message': 'Files list not implemented', 'type': 'not_implemented'}}
+
+async def handle_files_retrieve(file_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Files retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_files_content(file_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Files content not implemented', 'type': 'not_implemented'}}
+
+async def handle_fine_tuning_jobs_list(config, key_manager, request_logger, stats_tracker, limit=None, after=None):
+    return {'error': {'message': 'Fine-tuning jobs list not implemented', 'type': 'not_implemented'}}
+
+async def handle_fine_tuning_jobs_create(body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Fine-tuning jobs create not implemented', 'type': 'not_implemented'}}
+
+async def handle_fine_tuning_jobs_retrieve(job_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Fine-tuning jobs retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_fine_tuning_jobs_cancel(job_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Fine-tuning jobs cancel not implemented', 'type': 'not_implemented'}}
+
+async def handle_batches_list(config, key_manager, request_logger, stats_tracker, limit=None, after=None):
+    return {'error': {'message': 'Batches list not implemented', 'type': 'not_implemented'}}
+
+async def handle_batches_create(body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Batches create not implemented', 'type': 'not_implemented'}}
+
+async def handle_batches_retrieve(batch_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Batches retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_assistants_list(config, key_manager, request_logger, stats_tracker, limit=None, order=None, after=None, before=None):
+    return {'error': {'message': 'Assistants list not implemented', 'type': 'not_implemented'}}
+
+async def handle_assistants_create(body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Assistants create not implemented', 'type': 'not_implemented'}}
+
+async def handle_assistants_retrieve(assistant_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Assistants retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_assistants_update(assistant_id, body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Assistants update not implemented', 'type': 'not_implemented'}}
+
+async def handle_assistants_delete(assistant_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Assistants delete not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_list(config, key_manager, request_logger, stats_tracker, limit=None, order=None, after=None, before=None):
+    return {'error': {'message': 'Threads list not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_create(body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Threads create not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_retrieve(thread_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Threads retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_modify(thread_id, body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Threads modify not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_delete(thread_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Threads delete not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_messages_list(thread_id, config, key_manager, request_logger, stats_tracker, limit=None, order=None, after=None, before=None):
+    return {'error': {'message': 'Threads messages list not implemented', 'type': 'not_implemented'}}
+
+async def handle_threads_messages_create(thread_id, body, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Threads messages create not implemented', 'type': 'not_implemented'}}
+
+async def handle_runs_list(thread_id, config, key_manager, request_logger, stats_tracker, limit=None, order=None, after=None, before=None):
+    return {'error': {'message': 'Runs list not implemented', 'type': 'not_implemented'}}
+
+async def handle_runs_create(thread_id, body, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Runs create not implemented', 'type': 'not_implemented'}}
+
+async def handle_runs_retrieve(thread_id, run_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Runs retrieve not implemented', 'type': 'not_implemented'}}
+
+async def handle_runs_cancel(thread_id, run_id, config, key_manager, request_logger, stats_tracker):
+    return {'error': {'message': 'Runs cancel not implemented', 'type': 'not_implemented'}}
+
+async def handle_image_variations(body, file, config, key_manager, router, request_logger, stats_tracker):
+    return {'error': {'message': 'Image variations not implemented', 'type': 'not_implemented'}}

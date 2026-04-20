@@ -86,7 +86,7 @@ class ModelRouter:
         if self.config.model_routing.complexity.enabled and messages:
             model = self._complexity_route(messages)
 
-        provider = self._resolve_provider(model)
+        model, provider = self._resolve_provider(model)
         if model != original_model:
             logger.info(f"Model routing: '{original_model}' -> '{model}' (provider: {provider})")
         return model, provider
@@ -136,8 +136,11 @@ class ModelRouter:
         """Normalize model ID by lowering case and removing common separators."""
         return model.lower().replace("-", "").replace("_", "")
 
-    def _resolve_provider(self, model: str) -> str:
-        """Find the first provider (in config order) that has this model enabled."""
+    def _resolve_provider(self, model: str) -> tuple[str, str]:
+        """Find the first provider that has this model enabled.
+        
+        Returns tuple of (original_upstream_model_id, provider_name).
+        """
         
         # Pass 1: Exact match in 'include' list (Sensitive)
         for name, pc in self.config.providers.items():
@@ -145,7 +148,7 @@ class ModelRouter:
                 continue
             enabled_models = pc.models.get("include", []) if pc.models else []
             if model in enabled_models:
-                return name
+                return model, name
 
         # Pass 2: Insensitive/Normalized match or catch-all
         model_norm = self._normalize_id(model)
@@ -156,21 +159,23 @@ class ModelRouter:
             
             # If a provider has no include/exclude list, it's a catch-all
             if not enabled_models:
-                return name
+                return model, name
                 
             for em in enabled_models:
                 em_norm = self._normalize_id(em)
+                if em_norm == model_norm:
+                    return em, name
                 if em_norm in model_norm or model_norm in em_norm:
-                    return name
+                    return em, name
 
         # Fallback: first enabled provider
         for name, pc in self.config.providers.items():
             if pc.enabled:
-                return name
+                return model, name
 
-        return "openrouter"
+        return model, "openrouter"
 
-    def _guess_provider(self, model: str) -> str:
+    def _guess_provider(self, model: str) -> tuple[str, str]:
         return self._resolve_provider(model)
 
     def resolve_cascade(self, body: dict, messages: list[dict] | None = None) -> list[tuple[str, str]]:
@@ -194,7 +199,7 @@ class ModelRouter:
                 results.append((model, mapped_provider))
                 continue
 
-            provider = self._resolve_provider(model)
+            model, provider = self._resolve_provider(model)
             results.append((model, provider))
 
         return results
