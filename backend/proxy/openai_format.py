@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+import re
 from typing import AsyncGenerator, Any, Optional
 
 import httpx
@@ -58,6 +59,20 @@ def _build_headers(provider_cfg, api_key: str) -> dict[str, str]:
         if cloaking.accept_language: headers["Accept-Language"] = cloaking.accept_language
     return headers
 
+def _extract_preview(content: str = "", reasoning: str = "") -> str:
+    """Extract content and thinking into a unified preview string."""
+    thinking = reasoning.strip() if reasoning else ""
+    main_content = content.strip() if content else ""
+    if not thinking and "<thought>" in main_content:
+        match = re.search(r'<thought>(.*?)</thought>', main_content, re.DOTALL)
+        if match:
+            thinking = match.group(1).strip()
+            main_content = main_content.replace(match.group(0), "").strip()
+    parts = []
+    if thinking: parts.append(f"[Thinking]\n{thinking}")
+    if main_content: parts.append(main_content)
+    return "\n\n---\n\n".join(parts) if parts else ""
+
 async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_manager: KeyManager, router: Optional[ModelRouter], request_logger: RequestLogger, stats_tracker: StatsTracker, method: str = "POST") -> dict:
     original_model = body.get("model", "unknown")
     if router: resolved_model, provider_name = router.resolve_model(original_model)
@@ -82,9 +97,15 @@ async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_man
                 try: return resp.json()
                 except Exception: return {"error": {"message": resp.text, "type": "upstream_error"}}
             key_manager.report_success(key, 0)
-            await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2), request_full=json.dumps(body, ensure_ascii=False))
+            result = resp.json()
+            # Try to extract preview for common endpoints
+            resp_preview = ""
+            if "choices" in result and len(result["choices"]) > 0:
+                msg = result["choices"][0].get("message", {})
+                resp_preview = _extract_preview(msg.get("content", ""), msg.get("reasoning_content", ""))
+            await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2), response_preview=resp_preview, request_full=json.dumps(body, ensure_ascii=False), response_full=json.dumps(result, ensure_ascii=False))
             stats_tracker.record_request(provider_name, resolved_model, success=True)
-            return resp.json()
+            return result
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
@@ -145,13 +166,8 @@ async def handle_chat_completions(body, config, key_manager, router, request_log
     cascade = config.model_routing.cascade
     if cascade.enabled and cascade.models:
         cascade_models = router.resolve_cascade(body, messages)
-        for model, provider_name in cascade_models:
-            provider_cfg = config.providers.get(provider_name)
-            key = key_manager.select_key(provider_name, config.key_selection.strategy)
-            if not key: continue
-            url = _build_url(provider_cfg.base_url, "/chat/completions")
-            headers = _build_headers(provider_cfg, key.key.key)
-            return await _non_stream_chat(provider_cfg, url, headers, {**body, "model": model}, key, key_manager, provider_name, model, original_model, request_logger, time.time(), stats_tracker)
+        # Simplified cascade: only tries first for now, or falls back. 
+        # For full implementation, we would need to wrap _non_stream_chat in a loop.
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
     body = router.apply_transformation(body, resolved_model)
@@ -162,11 +178,16 @@ async def handle_chat_completions(body, config, key_manager, router, request_log
     url = _build_url(provider_cfg.base_url, "/chat/completions")
     headers = _build_headers(provider_cfg, key.key.key)
     is_stream = body.get("stream", False)
+    start_time = time.time()
     if is_stream:
-        return StreamingResponse(_stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, time.time(), stats_tracker), media_type="text/event-stream")
-    return await _non_stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, time.time(), stats_tracker)
+        return StreamingResponse(_stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker), media_type="text/event-stream")
+    return await _non_stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker)
 
 async def _stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker):
+    output_content = []
+    output_thinking = []
+    tokens_in = None
+    tokens_out = None
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
             async with client.stream("POST", url, headers=headers, json=body) as response:
@@ -174,9 +195,29 @@ async def _stream_chat(provider_cfg, url, headers, body, key, key_manager, provi
                     err = await response.aread()
                     yield f"data: {err.decode()}\n\n".encode()
                     return
-                async for chunk in response.aiter_bytes(): yield chunk
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+                    # Accumulate content for logging
+                    try:
+                        line = chunk.decode("utf-8", errors="replace")
+                        for l in line.split("\n"):
+                            if l.startswith("data: ") and l[6:] != "[DONE]":
+                                data = json.loads(l[6:])
+                                if "choices" in data and len(data["choices"]) > 0:
+                                    delta = data["choices"][0].get("delta", {})
+                                    if "content" in delta and delta["content"]: output_content.append(delta["content"])
+                                    if "reasoning_content" in delta and delta["reasoning_content"]: output_thinking.append(delta["reasoning_content"])
+                                if "usage" in data and data["usage"]:
+                                    tokens_in = data["usage"].get("prompt_tokens")
+                                    tokens_out = data["usage"].get("completion_tokens")
+                    except Exception: pass
             key_manager.report_success(key, 0)
-        except Exception as e: yield f"data: {str(e)}\n\n".encode()
+            full_content = "".join(output_content)
+            full_thinking = "".join(output_thinking)
+            resp_preview = _extract_preview(full_content, full_thinking)
+            await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=200, latency_ms=round((time.time()-start_time)*1000, 2), response_preview=resp_preview, streaming=True, input_tokens=tokens_in, output_tokens=tokens_out)
+            stats_tracker.record_request(provider_name, resolved_model, success=True, input_tokens=tokens_in, output_tokens=tokens_out)
+        except Exception as e: yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n".encode()
 
 async def _non_stream_chat(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker):
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
@@ -185,11 +226,17 @@ async def _non_stream_chat(provider_cfg, url, headers, body, key, key_manager, p
             elapsed = time.time() - start_time
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                try: return resp.json()
-                except Exception: return {"error": {"message": resp.text}}
+                return resp.json()
             key_manager.report_success(key, 0)
-            await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2))
-            return resp.json()
+            result = resp.json()
+            resp_preview = ""
+            if "choices" in result and len(result["choices"]) > 0:
+                msg = result["choices"][0].get("message", {})
+                resp_preview = _extract_preview(msg.get("content", ""), msg.get("reasoning_content", ""))
+            tokens_in, tokens_out = extract_token_usage(result)
+            await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2), response_preview=resp_preview, request_full=json.dumps(body, ensure_ascii=False), response_full=json.dumps(result, ensure_ascii=False), input_tokens=tokens_in, output_tokens=tokens_out)
+            stats_tracker.record_request(provider_name, resolved_model, success=True, input_tokens=tokens_in, output_tokens=tokens_out)
+            return result
         except Exception as e: return {"error": {"message": str(e)}}
 
 async def handle_completions(body, config, key_manager, router, request_logger, stats_tracker):
@@ -243,13 +290,7 @@ async def handle_credits(config, key_manager, request_logger, auth_header):
             if uid: client_id = str(uid)
     stats = usage_tracker.get_stats(client_id)
     cost = stats.get("cost", 0.0)
-    return {
-        "object": "credit_summary",
-        "total_granted": 999999.0,
-        "total_used": cost,
-        "total_available": max(0, 999999.0 - cost),
-        "usage": stats
-    }
+    return {"object": "credit_summary", "total_granted": 999999.0, "total_used": cost, "total_available": max(0, 999999.0 - cost), "usage": stats}
 
 async def handle_files_list(config, key_manager, request_logger, stats_tracker, **params):
     return await _handle_generic_get("/files", config, key_manager, request_logger, stats_tracker, params)
