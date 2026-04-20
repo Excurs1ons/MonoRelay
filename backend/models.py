@@ -101,6 +101,31 @@ class RequestCloakingConfig(BaseModel):
     tls_fingerprint_profile: str = ""  # Profile name for TLS fingerprinting
 
 
+class RetryConfig(BaseModel):
+    """Configurable retry logic for API requests."""
+    enabled: bool = False
+    max_retries: int = 3
+    retry_on_status: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
+    retry_on_errors: list[str] = Field(default_factory=lambda: [
+        "rate_limit_error",
+        "timeout_error",
+        "upstream_error",
+        "service_unavailable",
+    ])
+    backoff_factor: float = 1.5
+    backoff_max: int = 60  # Maximum backoff in seconds
+
+
+class IgnoreConfig(BaseModel):
+    """Configurable ignore logic for API errors."""
+    enabled: bool = False
+    ignore_errors: list[str] = Field(default_factory=lambda: [
+        "content_filter",
+        "content_moderation",
+        "policy_violation",
+    ])
+
+
 class ProviderConfig(BaseModel):
     enabled: bool = True
     provider_type: str = "api"
@@ -109,7 +134,7 @@ class ProviderConfig(BaseModel):
     rate_limit_cooldown: int = 60
     timeout: int = 120
     models: dict[str, list[str]] = Field(default_factory=lambda: {"include": [], "exclude": []})
-    remote_models_cache: list[dict] = Field(default_factory=list)  # 缓存的远程模型列表
+    remote_models_cache: list[dict] = Field(default_factory=list)
     headers: dict[str, str] = Field(default_factory=dict)
     cloaking: RequestCloakingConfig = Field(default_factory=RequestCloakingConfig)
     web_reverse: Optional[WebReverseConfig] = None
@@ -117,6 +142,8 @@ class ProviderConfig(BaseModel):
     console_url: str = ""
     cost_per_m_input: float = 0.0
     cost_per_m_output: float = 0.0
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    ignore: IgnoreConfig = Field(default_factory=IgnoreConfig)
 
 
 class ComplexityConfig(BaseModel):

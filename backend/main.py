@@ -37,9 +37,41 @@ from .proxy.openai_format import (
     handle_embeddings,
     handle_models_list,
     handle_audio_transcriptions,
+    handle_audio_translations,
     handle_image_generations,
+    handle_image_variations,
+    handle_image_edits,
+    handle_moderations,
+    handle_responses,
+    handle_credits,
+    handle_files_list,
+    handle_files_retrieve,
+    handle_files_content,
+    handle_fine_tuning_jobs_list,
+    handle_fine_tuning_jobs_create,
+    handle_fine_tuning_jobs_retrieve,
+    handle_fine_tuning_jobs_cancel,
+    handle_batches_list,
+    handle_batches_create,
+    handle_batches_retrieve,
+    handle_assistants_list,
+    handle_assistants_create,
+    handle_assistants_retrieve,
+    handle_assistants_update,
+    handle_assistants_delete,
+    handle_threads_list,
+    handle_threads_create,
+    handle_threads_retrieve,
+    handle_threads_modify,
+    handle_threads_delete,
+    handle_threads_messages_list,
+    handle_threads_messages_create,
+    handle_runs_list,
+    handle_runs_create,
+    handle_runs_retrieve,
+    handle_runs_cancel,
 )
-from .proxy.anthropic_format import handle_messages
+from .proxy.anthropic_format import handle_messages, handle_anthropic_models, handle_anthropic_messages_beta
 from .sync import GistSync
 from .sync_webdav import WebDAVSync
 from .sync_storage import SyncStorage
@@ -1025,6 +1057,17 @@ async def chat_completions(request: Request):
     return result
 
 
+@app.post("/v1/responses")
+async def responses(request: Request):
+    body = await request.json()
+    result = await handle_responses(
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
 @app.post("/v1/completions")
 async def completions(request: Request):
     body = await request.json()
@@ -1050,6 +1093,17 @@ async def embeddings(request: Request):
 @app.get("/v1/models")
 async def models_list():
     return await handle_models_list(config_manager.config)
+
+
+@app.get("/v1/credits")
+async def credits(request: Request):
+    auth_header = request.headers.get("authorization", "")
+    result = await handle_credits(
+        config_manager.config, key_manager, request_logger, auth_header,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=401 if "auth_error" in result.get("error", {}).get("type", "") else 503, content=result)
+    return result
 
 
 @app.post("/v1/audio/transcriptions")
@@ -1078,6 +1132,20 @@ async def audio_transcriptions(
     return result
 
 
+@app.post("/v1/audio/translations")
+async def audio_translations(
+    file: UploadFile,
+    model: str = Form(...),
+):
+    form_data = {"model": model}
+    result = await handle_audio_translations(
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
 @app.post("/v1/images/generations")
 async def images_generations(request: Request):
     body = await request.json()
@@ -1089,11 +1157,400 @@ async def images_generations(request: Request):
     return result
 
 
+@app.post("/v1/images/variations")
+async def images_variations(
+    file: UploadFile,
+    model: str = Form(...),
+    n: int | None = Form(None),
+    size: str | None = Form(None),
+    response_format: str | None = Form(None),
+):
+    form_data = {"model": model}
+    if n is not None:
+        form_data["n"] = n
+    if size:
+        form_data["size"] = size
+    if response_format:
+        form_data["response_format"] = response_format
+    result = await handle_image_variations(
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/images/edits")
+async def images_edits(
+    image: UploadFile,
+    mask: UploadFile | None = None,
+    model: str = Form(...),
+    prompt: str = Form(...),
+    n: int | None = Form(None),
+    size: str | None = Form(None),
+    response_format: str | None = Form(None),
+):
+    form_data = {"model": model, "prompt": prompt}
+    if n is not None:
+        form_data["n"] = n
+    if size:
+        form_data["size"] = size
+    if response_format:
+        form_data["response_format"] = response_format
+    result = await handle_image_edits(
+        form_data, image, mask, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/moderations")
+async def moderations(request: Request):
+    body = await request.json()
+    result = await handle_moderations(
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/files")
+async def files_list(
+    purpose: str | None = None,
+    limit: int | None = None,
+    order: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+):
+    result = await handle_files_list(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+        purpose, limit, order, after, before,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/files/{file_id}")
+async def files_retrieve(file_id: str):
+    result = await handle_files_retrieve(
+        file_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/files/{file_id}/content")
+async def files_content(file_id: str):
+    result = await handle_files_content(
+        file_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/fine_tuning/jobs")
+async def fine_tuning_jobs_list(
+    limit: int | None = None,
+    after: str | None = None,
+):
+    result = await handle_fine_tuning_jobs_list(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, after,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/fine_tuning/jobs")
+async def fine_tuning_jobs_create(request: Request):
+    body = await request.json()
+    result = await handle_fine_tuning_jobs_create(
+        body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/fine_tuning/jobs/{job_id}")
+async def fine_tuning_jobs_retrieve(job_id: str):
+    result = await handle_fine_tuning_jobs_retrieve(
+        job_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/fine_tuning/jobs/{job_id}/cancel")
+async def fine_tuning_jobs_cancel(job_id: str):
+    result = await handle_fine_tuning_jobs_cancel(
+        job_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/batches")
+async def batches_list(
+    limit: int | None = None,
+    after: str | None = None,
+):
+    result = await handle_batches_list(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, after,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/batches")
+async def batches_create(request: Request):
+    body = await request.json()
+    result = await handle_batches_create(
+        body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/batches/{batch_id}")
+async def batches_retrieve(batch_id: str):
+    result = await handle_batches_retrieve(
+        batch_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/assistants")
+async def assistants_list(
+    limit: int | None = None,
+    order: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+):
+    result = await handle_assistants_list(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, order, after, before,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/assistants")
+async def assistants_create(request: Request):
+    body = await request.json()
+    result = await handle_assistants_create(
+        body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/assistants/{assistant_id}")
+async def assistants_retrieve(assistant_id: str):
+    result = await handle_assistants_retrieve(
+        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/assistants/{assistant_id}")
+async def assistants_update(assistant_id: str, request: Request):
+    body = await request.json()
+    result = await handle_assistants_update(
+        assistant_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.delete("/v1/assistants/{assistant_id}")
+async def assistants_delete(assistant_id: str):
+    result = await handle_assistants_delete(
+        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/threads")
+async def threads_list(
+    limit: int | None = None,
+    order: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+):
+    result = await handle_threads_list(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, order, after, before,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/threads")
+async def threads_create(request: Request):
+    body = await request.json()
+    result = await handle_threads_create(
+        body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/threads/{thread_id}")
+async def threads_retrieve(thread_id: str):
+    result = await handle_threads_retrieve(
+        thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/threads/{thread_id}")
+async def threads_modify(thread_id: str, request: Request):
+    body = await request.json()
+    result = await handle_threads_modify(
+        thread_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.delete("/v1/threads/{thread_id}")
+async def threads_delete(thread_id: str):
+    result = await handle_threads_delete(
+        thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/threads/{thread_id}/messages")
+async def threads_messages_list(
+    thread_id: str,
+    limit: int | None = None,
+    order: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+):
+    result = await handle_threads_messages_list(
+        thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, order, after, before,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/threads/{thread_id}/messages")
+async def threads_messages_create(thread_id: str, request: Request):
+    body = await request.json()
+    result = await handle_threads_messages_create(
+        thread_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/threads/{thread_id}/runs")
+async def runs_list(
+    thread_id: str,
+    limit: int | None = None,
+    order: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+):
+    result = await handle_runs_list(
+        thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        limit, order, after, before,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/threads/{thread_id}/runs")
+async def runs_create(thread_id: str, request: Request):
+    body = await request.json()
+    result = await handle_runs_create(
+        thread_id, body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/threads/{thread_id}/runs/{run_id}")
+async def runs_retrieve(thread_id: str, run_id: str):
+    result = await handle_runs_retrieve(
+        thread_id, run_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/threads/{thread_id}/runs/{run_id}/cancel")
+async def runs_cancel(thread_id: str, run_id: str):
+    result = await handle_runs_cancel(
+        thread_id, run_id, config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
 # Anthropic-compatible endpoints
 @app.post("/v1/messages")
 async def messages(request: Request):
     body = await request.json()
     result = await handle_messages(
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/anthropic/models")
+async def anthropic_models():
+    result = await handle_anthropic_models(
+        config_manager.config, key_manager, request_logger, stats_tracker,
+    )
+    if isinstance(result, dict) and "error" in result:
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.post("/v1/messages/beta")
+async def anthropic_messages_beta(request: Request):
+    body = await request.json()
+    result = await handle_anthropic_messages_beta(
         body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:

@@ -1,6 +1,7 @@
 """Anthropic Messages API proxy handler."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -10,7 +11,7 @@ from typing import AsyncGenerator, Any
 import httpx
 from fastapi.responses import StreamingResponse
 
-from ..key_manager import KeyManager
+from ..key_manager import KeyManager, retry_with_backoff
 from ..logger import RequestLogger
 from ..models import AppConfig
 from ..router import ModelRouter
@@ -573,39 +574,71 @@ async def _stream_messages(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> AsyncGenerator[bytes, None]:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
             tokens_out = None
             stream_chunks = 0
             buffer = b""
 
-            async with client.stream(
-                "POST", url, headers=headers, json=body,
-                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
-            ) as response:
-                if response.status_code >= 400:
-                    error_body = await response.aread()
-                    error_text = error_body.decode("utf-8", errors="replace")
-                    logger.error(f"Anthropic upstream error {response.status_code}: {error_text}")
-                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    elapsed = time.time() - start_time
-                    await request_logger.log_request(
-                        model=resolved_model, provider=provider_name,
-                        key_label=key.key.label, status_code=response.status_code,
-                        latency_ms=round(elapsed * 1000, 2), streaming=True,
-                        error_message=error_text,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    )
-                    stats_tracker.record_request(provider_name, resolved_model, success=False)
-                    event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": "upstream_error"}})
-                    yield f"event: error\ndata: {event_data}\n\n".encode()
-                    return
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, json=body,
+                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+                ) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        error_text = error_body.decode("utf-8", errors="replace")
+                        error_data = json.loads(error_text) if error_text else {}
+                        error_type = error_data.get("error", {}).get("type", "upstream_error")
+                        status_code = response.status_code
 
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        yield chunk
-                        buffer += chunk
+                        if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                            logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                            elapsed = time.time() - start_time
+                            await request_logger.log_request(
+                                model=resolved_model, provider=provider_name,
+                                key_label=key.key.label, status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2), streaming=True,
+                                error_message=error_text,
+                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            )
+                            stats_tracker.record_request(provider_name, resolved_model, success=True)
+                            event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": error_type}})
+                            yield f"event: error\ndata: {event_data}\n\n".encode()
+                            return
+
+                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                            attempt += 1
+                            if attempt <= provider_cfg.retry.max_retries:
+                                delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                                logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                                await asyncio.sleep(delay)
+                                last_error = {"error": {"message": f"[{provider_name}] {error_text}", "type": error_type}}
+                                continue
+
+                        logger.error(f"Anthropic upstream error {status_code}: {error_text}")
+                        key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                        elapsed = time.time() - start_time
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2), streaming=True,
+                            error_message=error_text,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=False)
+                        event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": error_type}})
+                        yield f"event: error\ndata: {event_data}\n\n".encode()
+                        return
+
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+                            buffer += chunk
                         stream_chunks += 1
 
                         # Parse SSE events for Anthropic message_stop with usage
@@ -687,14 +720,339 @@ async def _non_stream_messages(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
 ) -> dict:
+    attempt = 0
+    last_error = None
+    
+    while attempt <= provider_cfg.retry.max_retries:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+                resp = await client.post(url, headers=headers, json=body)
+                elapsed = time.time() - start_time
+
+                if resp.status_code >= 400:
+                    error_data = resp.json() if resp.content else {}
+                    error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    status_code = resp.status_code
+                    
+                    if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        await request_logger.log_request(
+                            model=resolved_model, provider=provider_name,
+                            key_label=key.key.label, status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2),
+                            error_message=resp.text,
+                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        )
+                        stats_tracker.record_request(provider_name, resolved_model, success=True)
+                        return error_data
+                    
+                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        attempt += 1
+                        if attempt <= provider_cfg.retry.max_retries:
+                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            await asyncio.sleep(delay)
+                            last_error = error_data
+                            continue
+                    
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    logger.error(f"Anthropic错误{status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                    await request_logger.log_request(
+                        model=resolved_model, provider=provider_name,
+                        key_label=key.key.label, status_code=status_code,
+                        latency_ms=round(elapsed * 1000, 2),
+                        error_message=resp.text,
+                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    )
+                    stats_tracker.record_request(provider_name, resolved_model, success=False)
+                    return error_data
+
+                result = resp.json()
+                tokens_in, tokens_out = extract_anthropic_token_usage(result)
+                tokens_in_calc = int(tokens_in) if tokens_in is not None else 0
+                tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
+                total_tokens = tokens_in_calc + tokens_out_calc
+                key_manager.report_success(key, total_tokens)
+                tokens_in = int(tokens_in) if tokens_in is not None else None
+                tokens_out = int(tokens_out) if tokens_out is not None else None
+
+                log_parts = [f"Anthropic非流式 | 模型={resolved_model} | 提供商={provider_name}"]
+                if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+                if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
+                total = (tokens_in or 0) + (tokens_out or 0)
+                if tokens_in is not None or tokens_out is not None: log_parts.append(f"总token={total}")
+                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                logger.info(" | ".join(log_parts))
+
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=resp.status_code,
+                    latency_ms=round(elapsed * 1000, 2),
+                    input_tokens=tokens_in,
+                    output_tokens=tokens_out,
+                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                )
+                stats_tracker.record_request(
+                    provider_name, resolved_model,
+                    input_tokens=tokens_in,
+                    output_tokens=tokens_out,
+                    success=True,
+                    cost_per_m_input=provider_cfg.cost_per_m_input,
+                    cost_per_m_output=provider_cfg.cost_per_m_output,
+                )
+                return result
+        except Exception as e:
+            error_type = "proxy_error"
+            
+            if key_manager.should_ignore(provider_name, error_type, provider_cfg):
+                logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                return {"error": {"message": str(e), "type": error_type}}
+            
+            if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
+                attempt += 1
+                if attempt <= provider_cfg.retry.max_retries:
+                    delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                    logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                    await asyncio.sleep(delay)
+                    last_error = {"error": {"message": str(e), "type": error_type}}
+                    continue
+            
+            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            logger.error(f"Anthropic失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            stats_tracker.record_request(provider_name, resolved_model, success=False)
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
+    
+    return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
+
+
+async def handle_anthropic_models(
+    config: AppConfig,
+    key_manager: KeyManager,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+) -> dict:
+    """List Anthropic models from the provider.
+
+    Args:
+        config: Application configuration
+        key_manager: Key manager instance
+        request_logger: Request logger instance
+        stats_tracker: Statistics tracker instance
+
+    Returns:
+        dict: List of Anthropic models or error response
+    """
+    provider_name = None
+    for name, provider_cfg in config.providers.items():
+        if provider_cfg.enabled and provider_cfg.provider_type == "anthropic":
+            provider_name = name
+            break
+
+    if not provider_name:
+        return {"error": {"message": "No enabled Anthropic providers found", "type": "no_providers"}}
+
+    provider_cfg = config.providers.get(provider_name)
+    if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, "models", success=False)
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+
+    key = key_manager.select_key(provider_name, config.key_selection.strategy)
+    if not key:
+        stats_tracker.record_request(provider_name, "models", success=False)
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
+
+    headers = {
+        "x-api-key": key.key.key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+
+    start_time = time.time()
+    logger.info(f"Anthropic models请求 | 提供商={provider_name}")
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
-            resp = await client.post(url, headers=headers, json=body)
+            resp = await client.get(
+                f"{provider_cfg.base_url}/v1/models",
+                headers=headers,
+            )
+            elapsed = time.time() - start_time
+            if resp.status_code >= 400:
+                key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                stats_tracker.record_request(provider_name, "models", success=False)
+                logger.error(f"Anthropic models错误{resp.status_code} | 提供商={provider_name}")
+                return resp.json()
+            key_manager.report_success(key, 0)
+            logger.info(f"Anthropic models | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            await request_logger.log_request(
+                model="models",
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=resp.status_code,
+                latency_ms=round(elapsed * 1000, 2),
+            )
+            stats_tracker.record_request(provider_name, "models", success=True)
+            return resp.json()
+        except Exception as e:
+            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            stats_tracker.record_request(provider_name, "models", success=False)
+            logger.error(f"Anthropic models失败 | 提供商={provider_name} | 错误={e}")
+            return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
+
+
+async def handle_anthropic_messages_beta(
+    body: dict,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+) -> StreamingResponse | dict:
+    """Handle Anthropic Messages API with beta features (computer_use, extended_thinking).
+
+    Args:
+        body: Request body with message parameters
+        config: Application configuration
+        key_manager: Key manager instance
+        router: Model router instance
+        request_logger: Request logger instance
+        stats_tracker: Statistics tracker instance
+
+    Returns:
+        StreamingResponse | dict: Response or error response
+    """
+    original_model = body.get("model", "unknown")
+    resolved_model, provider_name = router.resolve_model(original_model)
+    body["model"] = resolved_model
+
+    provider_cfg = config.providers.get(provider_name)
+    if not provider_cfg or not provider_cfg.enabled:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+
+    if provider_cfg.provider_type != "anthropic":
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"[{provider_name}] Beta features only available for Anthropic providers", "type": "provider_not_supported"}}
+
+    key = key_manager.select_key(provider_name, config.key_selection.strategy)
+    if not key:
+        stats_tracker.record_request(provider_name, resolved_model, success=False)
+        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
+
+    headers = {
+        "x-api-key": key.key.key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": body.get("beta", ""),
+        "Content-Type": "application/json",
+    }
+
+    is_stream = body.get("stream", False)
+    start_time = time.time()
+
+    logger.info(f"Anthropic messages beta请求 | 模型={resolved_model} | 提供商={provider_name}")
+
+    if is_stream:
+        return StreamingResponse(
+            _stream_anthropic_messages_beta(
+                provider_cfg, headers, body, key, key_manager, provider_name,
+                resolved_model, request_logger, start_time, stats_tracker,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    else:
+        return await _non_stream_anthropic_messages_beta(
+            provider_cfg, headers, body, key, key_manager, provider_name,
+            resolved_model, request_logger, start_time, stats_tracker,
+        )
+
+
+async def _stream_anthropic_messages_beta(
+    provider_cfg, headers, body, key, key_manager, provider_name,
+    resolved_model, request_logger, start_time, stats_tracker,
+) -> AsyncGenerator[bytes, None]:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+        try:
+            async with client.stream(
+                "POST", f"{provider_cfg.base_url}/v1/messages/beta",
+                headers=headers, json=body,
+                timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")
+                    logger.error(f"Anthropic messages beta stream error {response.status_code}: {error_text}")
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    elapsed = time.time() - start_time
+                    await request_logger.log_request(
+                        model=resolved_model, provider=provider_name,
+                        key_label=key.key.label, status_code=response.status_code,
+                        latency_ms=round(elapsed * 1000, 2), streaming=True,
+                        error_message=error_text,
+                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    )
+                    stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
+                    event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": "proxy_error"}})
+                    yield f"event: error\ndata: {event_data}\n\n".encode()
+                    return
+
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        yield chunk
+
+            elapsed = time.time() - start_time
+            logger.info(f"Anthropic messages beta stream完成 | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            await request_logger.log_request(
+                model=resolved_model,
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=response.status_code,
+                latency_ms=round(elapsed * 1000, 2),
+                streaming=True,
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+            )
+            stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
+        except Exception as e:
+            key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+            elapsed = time.time() - start_time
+            logger.error(f"Anthropic messages beta stream失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            await request_logger.log_request(
+                model=resolved_model,
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=500,
+                latency_ms=round(elapsed * 1000, 2),
+                streaming=True,
+                error_message=str(e),
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+            )
+            stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
+            event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}})
+            yield f"event: error\ndata: {event_data}\n\n".encode()
+
+
+async def _non_stream_anthropic_messages_beta(
+    provider_cfg, headers, body, key, key_manager, provider_name,
+    resolved_model, request_logger, start_time, stats_tracker,
+) -> dict:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+        try:
+            resp = await client.post(
+                f"{provider_cfg.base_url}/v1/messages/beta",
+                headers=headers,
+                json=body,
+            )
             elapsed = time.time() - start_time
 
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                logger.error(f"Anthropic错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
                 await request_logger.log_request(
                     model=resolved_model,
                     provider=provider_name,
@@ -713,17 +1071,8 @@ async def _non_stream_messages(
             tokens_out_calc = int(tokens_out) if tokens_out is not None else 0
             total_tokens = tokens_in_calc + tokens_out_calc
             key_manager.report_success(key, total_tokens)
-            tokens_in = int(tokens_in) if tokens_in is not None else None
-            tokens_out = int(tokens_out) if tokens_out is not None else None
 
-            log_parts = [f"Anthropic非流式 | 模型={resolved_model} | 提供商={provider_name}"]
-            if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
-            if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
-            total = (tokens_in or 0) + (tokens_out or 0)
-            if tokens_in is not None or tokens_out is not None: log_parts.append(f"总token={total}")
-            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
-            logger.info(" | ".join(log_parts))
-
+            logger.info(f"Anthropic messages beta non-stream完成 | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -746,6 +1095,16 @@ async def _non_stream_messages(
             return result
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-            logger.error(f"Anthropic失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            elapsed = time.time() - start_time
+            logger.error(f"Anthropic messages beta non-stream失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            await request_logger.log_request(
+                model=resolved_model,
+                provider=provider_name,
+                key_label=key.key.label,
+                status_code=500,
+                latency_ms=round(elapsed * 1000, 2),
+                error_message=str(e),
+                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+            )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}

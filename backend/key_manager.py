@@ -17,6 +17,11 @@ WINDOW_1D = 24 * 60 * 60
 WINDOW_7D = 7 * 24 * 60 * 60
 
 
+def retry_with_backoff(attempt: int, backoff_factor: float, backoff_max: int) -> float:
+    delay = min(backoff_factor ** attempt, backoff_max)
+    return delay
+
+
 class KeyEntry:
     def __init__(self, key: ProviderKey):
         self.key = key
@@ -236,6 +241,22 @@ class KeyManager:
             key.key.quota_used += 1
         if tokens > 0:
             key.record_usage(tokens)
+
+    def should_retry(self, provider_name: str, status_code: int, error_type: str, attempt: int, config: ProviderConfig) -> bool:
+        if not config.retry.enabled:
+            return False
+        if attempt >= config.retry.max_retries:
+            return False
+        if status_code in config.retry.retry_on_status:
+            return True
+        if error_type in config.retry.retry_on_errors:
+            return True
+        return False
+
+    def should_ignore(self, provider_name: str, error_type: str, config: ProviderConfig) -> bool:
+        if not config.ignore.enabled:
+            return False
+        return error_type in config.ignore.ignore_errors
 
     def get_stats(self) -> dict:
         stats = {}
