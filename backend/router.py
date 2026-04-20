@@ -53,8 +53,20 @@ class ModelRouter:
                         break
                 
                 if found_provider:
-                    logger.info(f"Model with provider suffix: '{model}' -> model='{resolved_model}', provider='{found_provider}'")
-                    return resolved_model, found_provider
+                    # Apply alias and model_overrides to the model part (before sending to upstream)
+                    model_part = resolved_model
+
+                    aliased = self._resolve_alias(model_part)
+                    if aliased:
+                        model_part = aliased
+                        logger.info(f"Model alias (explicit provider): '{resolved_model}' -> '{model_part}'")
+
+                    model_part = self._apply_override(model_part)
+                    if model_part != resolved_model:
+                        logger.info(f"Model override (explicit provider): '{resolved_model}' -> '{model_part}'")
+
+                    logger.info(f"Model with provider suffix: '{model}' -> model='{model_part}', provider='{found_provider}'")
+                    return model_part, found_provider
 
         # Step 1: Resolve alias
         aliased = self._resolve_alias(model)
