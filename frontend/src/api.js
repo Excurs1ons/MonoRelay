@@ -39,11 +39,24 @@ async function request(url, options = {}) {
     throw new Error('Unauthorized')
   }
 
-  const json = await resp.json()
+  const contentType = resp.headers.get('content-type') || ''
+  let json
+  if (!resp.ok || !contentType.includes('application/json')) {
+    const text = await resp.text()
+    if (!resp.ok) {
+      throw new Error(text || `Error ${resp.status}`)
+    }
+    try {
+      json = JSON.parse(text)
+    } catch {
+      json = {}
+    }
+  } else {
+    json = await resp.json()
+  }
   
-  // Check for error status
   if (!resp.ok) {
-    throw new Error(json.detail || json.message || `Error ${resp.status}`)
+    throw new Error(json?.detail || json?.message || json?.error?.message || `Error ${resp.status}`)
   }
   
   if (json && json.success === true && json.data !== undefined) {

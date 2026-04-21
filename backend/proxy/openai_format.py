@@ -397,7 +397,10 @@ async def handle_embeddings(
                 )
                 elapsed = time.time() - start_time
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
                     status_code = resp.status_code
                     
@@ -782,7 +785,10 @@ async def _non_stream_chat(
                 elapsed = time.time() - start_time
 
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
                     status_code = resp.status_code
                     
@@ -1113,7 +1119,10 @@ async def _non_stream_completion(
                 resp = await client.post(url, headers=headers, json=body)
                 elapsed = time.time() - start_time
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
                     status_code = resp.status_code
                     
