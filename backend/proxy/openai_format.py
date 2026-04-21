@@ -236,11 +236,6 @@ async def handle_chat_completions(
         )
 
     original_body = body.copy()
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    original_body = body.copy()
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
 
