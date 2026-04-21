@@ -23,11 +23,6 @@ logger = logging.getLogger("monorelay.openai_proxy")
 
 
 async def _check_user_balance(user_id: Optional[int], config: AppConfig) -> bool:
-    if not config.billing.enabled or user_id == 0 or user_id is None: return True
-    from ..main import user_manager
-    user = await user_manager.get_user_by_id(user_id)
-    if not user: return False
-    if config.billing.enforce_balance and user.balance <= 0: return False
     return True
 
 def _calculate_credits(provider_cfg: Any, model: str, input_tokens: int, output_tokens: int) -> float:
@@ -190,7 +185,7 @@ async def _handle_cascade_chat(
             return StreamingResponse(
                 _stream_chat(
                     provider_cfg, url, headers, request_body, key, key_manager, provider_name,
-                    model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
+                                    model=resolved_model, provider=provider_name,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -279,7 +274,7 @@ async def handle_chat_completions(
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
+                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
             ),
             media_type="text/event-stream",
             headers={
@@ -293,7 +288,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
         )
 
 
@@ -402,7 +397,7 @@ async def handle_embeddings(
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                         await request_logger.log_request(
-                            user_id=user_id, model=resolved_model, provider=provider_name,
+                            model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
@@ -427,7 +422,7 @@ async def handle_embeddings(
                 key_manager.report_success(key, 0)
                 logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
                 await request_logger.log_request(
-                    user_id=user_id, model=resolved_model,
+                    model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
                     status_code=resp.status_code,
@@ -510,7 +505,7 @@ async def _stream_chat(
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
                             await request_logger.log_request(
-                                user_id=user_id, model=resolved_model, provider=provider_name,
+                                model=resolved_model, provider=provider_name,
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
@@ -535,7 +530,7 @@ async def _stream_chat(
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
                         await request_logger.log_request(
-                            user_id=user_id, model=resolved_model, provider=provider_name,
+                            model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
@@ -688,7 +683,7 @@ async def _stream_chat(
             logger.info(" | ".join(log_parts))
 
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=response.status_code,
@@ -725,7 +720,7 @@ async def _stream_chat(
             elapsed = time.time() - start_time
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=500,
@@ -790,7 +785,7 @@ async def _non_stream_chat(
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                         await request_logger.log_request(
-                            user_id=user_id, model=resolved_model,
+                            model=resolved_model,
                             provider=provider_name,
                             key_label=key.key.label,
                             status_code=status_code,
@@ -818,7 +813,7 @@ async def _non_stream_chat(
                     
                     key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                     await request_logger.log_request(
-                        user_id=user_id, model=resolved_model,
+                        model=resolved_model,
                         provider=provider_name,
                         key_label=key.key.label,
                         status_code=status_code,
@@ -874,7 +869,7 @@ async def _non_stream_chat(
                 logger.info(" | ".join(log_parts))
 
                 await request_logger.log_request(
-                    user_id=user_id, model=resolved_model,
+                    model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
                     status_code=resp.status_code,
@@ -910,7 +905,7 @@ async def _non_stream_chat(
                 logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
                 elapsed = time.time() - start_time
                 await request_logger.log_request(
-                    user_id=user_id, model=resolved_model,
+                    model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
                     status_code=500,
@@ -933,7 +928,7 @@ async def _non_stream_chat(
             elapsed = time.time() - start_time
             logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=500,
@@ -977,7 +972,7 @@ async def _stream_completion(
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
                             await request_logger.log_request(
-                                user_id=user_id, model=resolved_model, provider=provider_name,
+                                model=resolved_model, provider=provider_name,
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
@@ -1002,7 +997,7 @@ async def _stream_completion(
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
                         await request_logger.log_request(
-                            user_id=user_id, model=resolved_model, provider=provider_name,
+                            model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
@@ -1065,7 +1060,7 @@ async def _stream_completion(
             logger.info(" | ".join(log_parts))
 
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=200,
@@ -1086,7 +1081,7 @@ async def _stream_completion(
             elapsed = time.time() - start_time
             logger.error(f"流式Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=500,
@@ -1124,7 +1119,7 @@ async def _non_stream_completion(
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                         await request_logger.log_request(
-                            user_id=user_id, model=resolved_model, provider=provider_name,
+                            model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             error_message=resp.text,
@@ -1171,7 +1166,7 @@ async def _non_stream_completion(
                 logger.info(" | ".join(log_parts))
 
                 await request_logger.log_request(
-                    user_id=user_id, model=resolved_model,
+                    model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
                     status_code=resp.status_code,
@@ -1295,7 +1290,7 @@ async def _handle_web_reverse_chat(
             key_manager.report_success(key, 0)
             elapsed = time.time() - start_time
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=resp.status_code,
@@ -1309,7 +1304,7 @@ async def _handle_web_reverse_chat(
         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
         elapsed = time.time() - start_time
         await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
             provider=provider_name,
             key_label=key.key.label,
             status_code=500,
@@ -1337,7 +1332,7 @@ async def _wrap_web_reverse_stream(
     key_manager.report_success(key, 0)
     elapsed = time.time() - start_time
     await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
         provider=provider_name,
         key_label=key.key.label,
         status_code=200,
@@ -1397,7 +1392,7 @@ async def handle_audio_transcriptions(
             key_manager.report_success(key, 0)
             logger.info(f"Audio Transcription | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=resp.status_code,
@@ -1456,7 +1451,7 @@ async def handle_image_generations(
             key_manager.report_success(key, 0)
             logger.info(f"Image Generation | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+                model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
                 status_code=resp.status_code,
@@ -1490,7 +1485,7 @@ async def _handle_generic_get(path: str, config: AppConfig, key_manager: KeyMana
             except Exception: 
                 result = {"error": {"message": resp.text, "type": "upstream_error"}}
             await request_logger.log_request(
-                user_id=user_id, model=path, provider=provider_name, key_label=key.key.label,
+                model=path, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(params, ensure_ascii=False) if params else None,
                 response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
@@ -1525,7 +1520,7 @@ async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_man
             else:
                 key_manager.report_success(key, 0)
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model, provider=provider_name, key_label=key.key.label,
+                model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
@@ -1567,7 +1562,7 @@ async def _handle_generic_multipart(path: str, body: dict, files: dict, config: 
             else:
                 key_manager.report_success(key, 0)
             await request_logger.log_request(
-                user_id=user_id, model=resolved_model, provider=provider_name, key_label=key.key.label,
+                model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
