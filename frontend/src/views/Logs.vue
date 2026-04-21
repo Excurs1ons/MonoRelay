@@ -62,7 +62,7 @@
                        </div>
                      </div>
 
-                      <!-- Request Section -->
+                      <!-- Request Section (Chat Bubble Design) -->
                       <div v-if="log.request_preview || getFullRequest(log.id)" class="content-block">
                         <div class="content-label">
                           Request
@@ -70,7 +70,14 @@
                             {{ isFullRequest(log.id) ? '显示请求文本' : '显示原始请求' }}
                           </button>
                         </div>
-                        <pre class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
+                        
+                        <div v-if="!isFullRequest(log.id) && getParsedMessages(log.id)" class="chat-container">
+                          <div v-for="(msg, idx) in getParsedMessages(log.id)" :key="idx" class="message-item" :class="'msg-' + msg.role">
+                            <div class="message-role">{{ msg.role.toUpperCase() }}</div>
+                            <div class="message-bubble">{{ msg.content }}</div>
+                          </div>
+                        </div>
+                        <pre v-else class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                       </div>
 
                       <!-- Response Section -->
@@ -82,7 +89,7 @@
                           </button>
                         </div>
 
-                        <!-- Thinking Sub-section (Now between title and content) -->
+                        <!-- Thinking Sub-section -->
                         <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
                           <div class="sub-label">Thinking Process</div>
                           <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
@@ -191,6 +198,21 @@ function getFullResponse(id) {
   } catch (e) { return full.response_full }
 }
 
+function getParsedMessages(id) {
+  const full = fullContent.value[id]
+  if (!full?.request_full) return null
+  try {
+    const obj = typeof full.request_full === 'string' ? JSON.parse(full.request_full) : full.request_full
+    if (obj.messages && Array.isArray(obj.messages)) {
+      return obj.messages.map(m => ({
+        role: m.role || 'user',
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      }))
+    }
+  } catch (e) {}
+  return null
+}
+
 function getThinkingContent(id) {
   const full = fullContent.value[id]
   const log = logs.value.find(l => l.id === id)
@@ -291,8 +313,21 @@ tr:last-child td { border-bottom: none; }
 .content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; margin: 0; }
 .error-text { color: var(--color-red); border-color: rgba(231,76,60,0.3); background: rgba(231,76,60,0.05); }
 
+/* Chat Container Styles */
+.chat-container { display: flex; flex-direction: column; gap: 12px; background: rgba(0,0,0,0.1); padding: 16px; border-radius: 10px; border: 1px solid var(--color-border); }
+.message-item { display: flex; flex-direction: column; max-width: 90%; }
+.msg-user { align-self: flex-end; align-items: flex-end; }
+.msg-assistant { align-self: flex-start; align-items: flex-start; }
+.msg-system { align-self: center; align-items: center; max-width: 100%; }
+
+.message-role { font-size: 9px; font-weight: 700; margin-bottom: 4px; color: var(--color-text-dim); opacity: 0.8; }
+.message-bubble { padding: 10px 14px; border-radius: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+.msg-user .message-bubble { background: var(--color-accent); color: #fff; border-bottom-right-radius: 2px; }
+.msg-assistant .message-bubble { background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border); border-bottom-left-radius: 2px; }
+.msg-system .message-bubble { background: rgba(255,255,255,0.05); color: var(--color-text-dim); font-size: 11px; border: 1px dashed var(--color-border); border-radius: 6px; font-style: italic; }
+
 .thinking-sub-block { margin-top: 12px; padding-left: 12px; border-left: 2px solid rgba(168, 85, 247, 0.3); }
 .sub-label { font-size: 10px; font-weight: 600; color: #a855f7; text-transform: uppercase; margin-bottom: 6px; }
 .thinking-text { background: rgba(168, 85, 247, 0.02); border-color: rgba(168, 85, 247, 0.1); color: var(--color-text-dim); font-style: italic; }
-.mt-4 { margin-top: 16px; }
 </style>
