@@ -27,7 +27,6 @@
             <tr>
               <th class="w-8"></th>
               <th>{{ $t('logs.time') }}</th>
-              <th v-if="isAdmin">UID</th>
               <th>{{ $t('logs.model') }}</th>
               <th>{{ $t('logs.provider') }}</th>
               <th class="text-center">{{ $t('logs.status') }}</th>
@@ -42,7 +41,6 @@
                   <span class="expand-icon" :class="{ rotated: expanded[log.id] }">▶</span>
                 </td>
                 <td class="text-dim text-xs">{{ formatTime(log.timestamp) }}</td>
-                <td v-if="isAdmin"><span class="badge badge-gray">#{{ log.user_id || 0 }}</span></td>
                 <td class="mono text-xs">{{ log.model }}</td>
                 <td class="text-dim">{{ log.provider }}</td>
                 <td class="text-center">
@@ -52,7 +50,7 @@
                 <td class="text-right mono text-xs">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</td>
               </tr>
                <tr v-if="expanded[log.id]" class="expand-row">
-                 <td :colspan="isAdmin ? 8 : 7">
+                 <td :colspan="isAdmin ? 7 : 6">
                    <div class="expand-content">
                      <!-- Params Block -->
                      <div v-if="log.temperature || log.top_p || log.max_tokens" class="params-block">
