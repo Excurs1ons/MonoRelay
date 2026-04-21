@@ -62,14 +62,14 @@
                      </div>
 
                       <!-- Request Section -->
-                      <div v-if="log.request_preview || (fullContent[log.id]?.request_full) || (fullContent[log.id] && log.error_message)" class="content-block">
+                      <div v-if="log.request_preview || getFullRequest(log.id)" class="content-block">
                         <div class="content-label">
                           Request
-                          <button v-if="fullContent[log.id]?.request_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullRequest = !fullContent[log.id].showFullRequest">
-                            {{ fullContent[log.id].showFullRequest ? '显示预览' : '显示完整' }}
+                          <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
+                            {{ isFullRequest(log.id) ? '显示预览' : '显示完整' }}
                           </button>
                         </div>
-                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullRequest) ? (fullContent[log.id].request_full || log.request_preview || '无请求内容') : (log.request_preview || '无请求内容') }}</pre>
+                        <pre class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                       </div>
 
                       <!-- Thinking Section (If available) -->
@@ -79,14 +79,14 @@
                       </div>
 
                       <!-- Response Section -->
-                      <div v-if="log.response_preview || (fullContent[log.id]?.response_full) || (fullContent[log.id] && log.error_message)" class="content-block">
+                      <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
                         <div class="content-label">
                           Response
-                          <button v-if="fullContent[log.id]?.response_full && !log.error_message" class="content-toggle" @click="fullContent[log.id].showFullResponse = !fullContent[log.id].showFullResponse">
-                            {{ fullContent[log.id].showFullResponse ? '显示预览' : '显示完整' }}
+                          <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
+                            {{ isFullResponse(log.id) ? '显示预览' : '显示完整' }}
                           </button>
                         </div>
-                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || getCleanResponseContent(log.id) || '无响应内容') : (getCleanResponseContent(log.id) || '无响应内容') }}</pre>
+                        <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
                       </div>
 
                       <!-- Error Section -->
@@ -127,6 +127,8 @@ const logs = ref([])
 const limit = ref(50)
 const expanded = ref({})
 const fullContent = ref({})
+const showFullReqState = ref({})
+const showFullResState = ref({})
 
 async function fetchLogs() {
   loading.value = true
@@ -149,11 +151,11 @@ async function loadFullContent(id) {
   if (fullContent.value[id]) return
   try {
     const data = await api.getLogDetail(id)
-    const logEntry = logs.value.find(l => l.id === id)
-    fullContent.value[id] = {
-      ...data,
-      showFullRequest: !!logEntry?.error_message,
-      showFullResponse: !!logEntry?.error_message
+    fullContent.value[id] = data
+    // Auto-show full for errors
+    if (data.error_message) {
+      showFullReqState.value[id] = true
+      showFullResState.value[id] = true
     }
   } catch (e) { console.error(e) }
 }
@@ -165,37 +167,52 @@ function toggleExpand(id) {
   }
 }
 
-// Logic to extract Thinking content
+function isFullRequest(id) { return !!showFullReqState.value[id] }
+function isFullResponse(id) { return !!showFullResState.value[id] }
+function toggleFullRequest(id) { showFullReqState.value[id] = !showFullReqState.value[id] }
+function toggleFullResponse(id) { showFullResState.value[id] = !showFullResState.value[id] }
+
+function getFullRequest(id) {
+  const full = fullContent.value[id]
+  if (!full?.request_full) return null
+  try {
+    const obj = typeof full.request_full === 'string' ? JSON.parse(full.request_full) : full.request_full
+    return JSON.stringify(obj, null, 2)
+  } catch (e) { return full.request_full }
+}
+
+function getFullResponse(id) {
+  const full = fullContent.value[id]
+  if (!full?.response_full) return null
+  try {
+    const obj = typeof full.response_full === 'string' ? JSON.parse(full.response_full) : full.response_full
+    return JSON.stringify(obj, null, 2)
+  } catch (e) { return full.response_full }
+}
+
 function getThinkingContent(id) {
   const full = fullContent.value[id]
   const log = logs.value.find(l => l.id === id)
   
-  // Try response_full first (JSON)
   if (full?.response_full) {
     try {
-      const parsed = JSON.parse(full.response_full)
+      const parsed = typeof full.response_full === 'string' ? JSON.parse(full.response_full) : full.response_full
       if (parsed.reasoning_content) return parsed.reasoning_content
       if (parsed.choices?.[0]?.message?.reasoning_content) return parsed.choices[0].message.reasoning_content
     } catch (e) {}
   }
-
-  // Fallback to preview parsing if full not available or no field
   const preview = log?.response_preview || full?.response_preview
   if (preview && preview.startsWith('[Thinking]')) {
     const parts = preview.split('\n\n---\n\n')
-    if (parts.length > 1) {
-      return parts[0].replace('[Thinking]\n', '')
-    }
+    if (parts.length > 1) return parts[0].replace('[Thinking]\n', '')
   }
   return null
 }
 
-// Logic to get clean response (without Thinking header)
 function getCleanResponseContent(id) {
   const log = logs.value.find(l => l.id === id)
   const full = fullContent.value[id]
   const preview = log?.response_preview || full?.response_preview
-  
   if (preview && preview.startsWith('[Thinking]')) {
     const parts = preview.split('\n\n---\n\n')
     if (parts.length > 1) return parts[1]
