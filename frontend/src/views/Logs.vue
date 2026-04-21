@@ -60,6 +60,8 @@
                          <span v-if="log.max_tokens">max_tokens: {{ log.max_tokens }}</span>
                        </div>
                      </div>
+
+                      <!-- Request Section -->
                       <div v-if="log.request_preview || (fullContent[log.id]?.request_full) || (fullContent[log.id] && log.error_message)" class="content-block">
                         <div class="content-label">
                           Request
@@ -69,6 +71,14 @@
                         </div>
                         <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullRequest) ? (fullContent[log.id].request_full || log.request_preview || '无请求内容') : (log.request_preview || '无请求内容') }}</pre>
                       </div>
+
+                      <!-- Thinking Section (If available) -->
+                      <div v-if="getThinkingContent(log.id)" class="content-block">
+                        <div class="content-label thinking-label">Thinking</div>
+                        <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
+                      </div>
+
+                      <!-- Response Section -->
                       <div v-if="log.response_preview || (fullContent[log.id]?.response_full) || (fullContent[log.id] && log.error_message)" class="content-block">
                         <div class="content-label">
                           Response
@@ -76,8 +86,10 @@
                             {{ fullContent[log.id].showFullResponse ? '显示预览' : '显示完整' }}
                           </button>
                         </div>
-                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || log.response_preview || '无响应内容') : (log.response_preview || '无响应内容') }}</pre>
+                        <pre class="content-text">{{ (log.error_message || fullContent[log.id]?.showFullResponse) ? (fullContent[log.id].response_full || getCleanResponseContent(log.id) || '无响应内容') : (getCleanResponseContent(log.id) || '无响应内容') }}</pre>
                       </div>
+
+                      <!-- Error Section -->
                       <div v-if="log.error_message" class="content-block">
                         <div class="content-label">Error</div>
                         <pre class="content-text error-text">{{ log.error_message }}</pre>
@@ -90,6 +102,7 @@
                           <pre class="content-text">{{ log.error_details }}</pre>
                         </div>
                       </div>
+
                      <div v-if="!log.request_preview && !log.response_preview && !log.error_message" class="text-dim text-sm">
                        无详细内容
                      </div>
@@ -150,6 +163,44 @@ function toggleExpand(id) {
   if (expanded.value[id] && !fullContent.value[id]) {
     loadFullContent(id)
   }
+}
+
+// Logic to extract Thinking content
+function getThinkingContent(id) {
+  const full = fullContent.value[id]
+  const log = logs.value.find(l => l.id === id)
+  
+  // Try response_full first (JSON)
+  if (full?.response_full) {
+    try {
+      const parsed = JSON.parse(full.response_full)
+      if (parsed.reasoning_content) return parsed.reasoning_content
+      if (parsed.choices?.[0]?.message?.reasoning_content) return parsed.choices[0].message.reasoning_content
+    } catch (e) {}
+  }
+
+  // Fallback to preview parsing if full not available or no field
+  const preview = log?.response_preview || full?.response_preview
+  if (preview && preview.startsWith('[Thinking]')) {
+    const parts = preview.split('\n\n---\n\n')
+    if (parts.length > 1) {
+      return parts[0].replace('[Thinking]\n', '')
+    }
+  }
+  return null
+}
+
+// Logic to get clean response (without Thinking header)
+function getCleanResponseContent(id) {
+  const log = logs.value.find(l => l.id === id)
+  const full = fullContent.value[id]
+  const preview = log?.response_preview || full?.response_preview
+  
+  if (preview && preview.startsWith('[Thinking]')) {
+    const parts = preview.split('\n\n---\n\n')
+    if (parts.length > 1) return parts[1]
+  }
+  return preview
 }
 
 function formatTime(ts) {
@@ -221,4 +272,7 @@ tr:last-child td { border-bottom: none; }
 .params-grid span { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 4px; padding: 4px 8px; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }
 .content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; margin: 0; }
 .error-text { color: var(--color-red); border-color: rgba(231,76,60,0.3); background: rgba(231,76,60,0.05); }
+
+.thinking-label { color: #a855f7; }
+.thinking-text { border-color: rgba(168, 85, 247, 0.2); background: rgba(168, 85, 247, 0.03); color: var(--color-text-dim); font-style: italic; }
 </style>
