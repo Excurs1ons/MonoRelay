@@ -444,7 +444,7 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -695,7 +695,7 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
 ) -> dict:
     from ..cache import response_cache
     
@@ -1429,7 +1429,7 @@ async def _handle_generic_get(path: str, config: AppConfig, key_manager: KeyMana
         except Exception as e:
             return {"error": {"message": str(e), "type": "proxy_error"}}
 
-async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_manager: KeyManager, router: Optional[ModelRouter], request_logger: RequestLogger, stats_tracker: StatsTracker, method: str = "POST") -> dict:
+async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_manager: KeyManager, router: Optional[ModelRouter], request_logger: RequestLogger, stats_tracker: StatsTracker, method: str = "POST", original_body: dict = None) -> dict:
     original_model = body.get("model", "unknown")
     if router: resolved_model, provider_name = router.resolve_model(original_model)
     else:
