@@ -65,4 +65,9 @@ export const api = {
   getEnhancedStats: () => request('/api/stats/enhanced'),
   getModelsPricing: () => request('/api/models/pricing'),
   clearAllData: () => request('/api/config/clear', { method: 'POST' }),
+
+  // Billing & Redemption
+  getRedemptionCodes: () => request('/api/admin/redemption-codes'),
+  createRedemptionCodes: (amount, count, prefix) => request('/api/admin/redemption-codes', { method: 'POST', body: JSON.stringify({ amount, count, prefix }) }),
+  redeemCode: (code) => request('/api/user/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
 }
