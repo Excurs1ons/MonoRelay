@@ -3608,3 +3608,29 @@ async def api_user_logs(request: Request, limit: int = 50):
     if user_id is None: raise HTTPException(status_code=401)
     logs = await request_logger.get_recent_requests(limit, user_id=user_id)
     return api_response(data=logs)
+
+# --- Multi-tenant Admin API Endpoints ---
+
+@app.get("/api/admin/users")
+async def api_admin_users(request: Request):
+    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    # Using raw SQL for quick user list
+    cursor = await user_manager._db.execute("SELECT id, username, email, role, balance, created_at FROM users")
+    rows = await cursor.fetchall()
+    return api_response(data=[dict(r) for r in rows])
+
+@app.post("/api/admin/users/{user_id}/balance")
+async def api_admin_user_balance(user_id: int, body: dict, request: Request):
+    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    adjustment = body.get("adjustment", 0.0)
+    await user_manager._db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (adjustment, user_id))
+    await user_manager._db.commit()
+    return api_response(message="余额已更新")
+
+@app.delete("/api/admin/users/{user_id}")
+async def api_admin_user_delete(user_id: int, request: Request):
+    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    if user_id == 0: raise HTTPException(status_code=400, detail="Cannot delete system admin")
+    await user_manager._db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await user_manager._db.commit()
+    return api_response(message="用户已删除")

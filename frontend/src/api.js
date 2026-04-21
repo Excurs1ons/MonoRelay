@@ -66,7 +66,9 @@ export const api = {
   getUserLogs: (limit = 50) => request(`/api/user/logs?limit=${limit}`),
 
   // Users Management (Admin)
-  getUsers: () => request('/api/users'),
+  getUsers: () => request('/api/admin/users'),
+  updateUserBalance: (id, adjustment) => request(`/api/admin/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ adjustment }) }),
+  deleteUser: (id) => request(`/api/admin/users/${id}`, { method: 'DELETE' }),
   
   // Enhanced Features
   getEnhancedStats: () => request('/api/stats/enhanced'),

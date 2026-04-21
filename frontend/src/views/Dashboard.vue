@@ -1,223 +1,182 @@
 <template>
-  <div v-if="loading" class="loading"><div class="spinner"></div></div>
-  <template v-else>
-    <!-- API 地址卡片 -->
-    <div class="api-cards">
-      <div class="api-card">
-        <div class="api-card-header">
-          <span class="api-card-title">OpenAI API</span>
-          <button class="btn-copy" @click="copyToClipboard(openaiUrl)" :class="{ copied: copiedOpenAI }">
-            <Copy :size="14" v-if="!copiedOpenAI" />
-            <Check :size="14" v-else />
-            {{ copiedOpenAI ? $t('dashboard.copied') : $t('dashboard.copy') }}
-          </button>
-        </div>
-        <div class="api-url">{{ openaiUrl }}</div>
-        <div class="api-hint">/v1/chat/completions</div>
-      </div>
-      <div class="api-card">
-        <div class="api-card-header">
-          <span class="api-card-title">Anthropic API</span>
-          <button class="btn-copy" @click="copyToClipboard(anthropicUrl, 'anthropic')" :class="{ copied: copiedAnthropic }">
-            <Copy :size="14" v-if="!copiedAnthropic" />
-            <Check :size="14" v-else />
-            {{ copiedAnthropic ? $t('dashboard.copied') : $t('dashboard.copy') }}
-          </button>
-        </div>
-        <div class="api-url">{{ anthropicUrl }}</div>
-        <div class="api-hint">/v1/messages</div>
-      </div>
+  <div class="dashboard">
+    <div v-if="loading" class="loading-state">
+      <RefreshCw class="spin" :size="32" />
     </div>
 
-    <div class="flex-between mb-4">
-      <h2 class="section-title">统计</h2>
-    </div>
+    <template v-else>
+      <!-- Stats Overview -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon"><Activity :size="20" /></div>
+          <div class="stat-info">
+            <div class="label">{{ isAdmin ? '全站请求总数' : '我的请求总数' }}</div>
+            <div class="value">{{ stats.total_requests || 0 }}</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon success"><CheckCircle :size="20" /></div>
+          <div class="stat-info">
+            <div class="label">平均成功率</div>
+            <div class="value">{{ ((1 - (stats.total_errors / (stats.total_requests || 1))) * 100).toFixed(1) }}%</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon warning"><CreditCard :size="20" /></div>
+          <div class="stat-info">
+            <div class="label">{{ isAdmin ? '全站预估支出' : '当前余额' }}</div>
+            <div class="value">{{ isAdmin ? '$' + (stats.estimated_total_cost || 0).toFixed(4) : '$' + (userBalance || 0).toFixed(2) }}</div>
+          </div>
+        </div>
+        <div v-if="isAdmin" class="stat-card">
+          <div class="stat-icon"><Globe :size="20" /></div>
+          <div class="stat-info">
+            <div class="label">活跃提供商</div>
+            <div class="value">{{ Object.keys(stats.requests_by_provider || {}).length }}</div>
+          </div>
+        </div>
+      </div>
 
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">{{ $t('dashboard.totalRequests') }}</span>
-          <TrendingUp :size="18" class="stat-icon accent" />
+      <div class="dashboard-grid">
+        <!-- Model Usage Chart (Placeholder or List) -->
+        <div class="card chart-card">
+          <h3 class="card-title">热门模型分布</h3>
+          <div v-if="Object.keys(stats.requests_by_model || {}).length" class="model-list">
+            <div v-for="(count, model) in sortedModels" :key="model" class="model-item">
+              <div class="model-info">
+                <span class="model-name mono">{{ model }}</span>
+                <span class="model-count">{{ count }} 次</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: (count / stats.total_requests * 100) + '%' }"></div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-state">暂无模型使用数据</div>
         </div>
-        <div class="stat-value accent">{{ formatNum(stats.totalRequests) }}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">{{ $t('dashboard.errorRate') }}</span>
-          <AlertTriangle :size="18" :class="['stat-icon', stats.errorRate > 0.1 ? 'red' : 'green']" />
-        </div>
-        <div class="stat-value" :class="stats.errorRate > 0.1 ? 'red' : 'green'">
-          {{ (stats.errorRate * 100).toFixed(1) }}%
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-header">
-          <span class="stat-label">{{ $t('dashboard.tokenUsage') }}</span>
-          <ArrowLeftRight :size="18" class="stat-icon info" />
-        </div>
-        <div class="stat-value">{{ formatToken(stats.inputTokens + stats.outputTokens) }}</div>
-        <div class="stat-detail">{{ $t('dashboard.inputTokens') }}: {{ formatToken(stats.inputTokens) }} / {{ $t('dashboard.outputTokens') }}: {{ formatToken(stats.outputTokens) }}</div>
-      </div>
-    </div>
 
-    <div class="card">
-      <div class="card-title">{{ $t('dashboard.modelStats') }}</div>
-      <div v-if="modelList.length" class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{{ $t('dashboard.model') }}</th>
-              <th class="text-right">{{ $t('dashboard.requests') }}</th>
-              <th class="text-right">{{ $t('dashboard.inputTokens') }}</th>
-              <th class="text-right">{{ $t('dashboard.outputTokens') }}</th>
-              <th class="text-right">{{ $t('dashboard.firstToken') }}</th>
-              <th class="text-right">{{ $t('dashboard.outputSpeed') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="m in modelList" :key="m.name">
-              <td class="mono">{{ m.name }}</td>
-              <td class="text-right">{{ m.requests }}</td>
-              <td class="text-right">{{ formatToken(m.total_tokens_in || m.input_tokens) }}</td>
-              <td class="text-right">{{ formatToken(m.total_tokens_out || m.output_tokens) }}</td>
-              <td class="text-right">{{ m.avg_first_token_ms?.toFixed(0) || '-' }}ms</td>
-              <td class="text-right">{{ m.avg_speed_tps?.toFixed(1) || '-' }} t/s</td>
-            </tr>
-          </tbody>
-        </table>
+        <!-- Provider Status (Admin Only) -->
+        <div v-if="isAdmin" class="card">
+          <h3 class="card-title">提供商健康度</h3>
+          <div class="provider-grid">
+            <div v-for="(count, provider) in stats.requests_by_provider" :key="provider" class="provider-status-item">
+              <div class="flex-between mb-1">
+                <span class="font-bold">{{ provider }}</span>
+                <span class="text-xs text-dim">{{ count }} reqs</span>
+              </div>
+              <div class="text-xs">
+                错误率: 
+                <span :class="getErrorClass(provider)">
+                  {{ ((stats.errors_by_provider[provider] || 0) / count * 100).toFixed(1) }}%
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Access for User -->
+        <div v-if="!isAdmin" class="card">
+          <h3 class="card-title">快捷操作</h3>
+          <div class="quick-actions">
+            <router-link to="/keys" class="action-btn">
+              <Plus :size="16" /> 创建新令牌
+            </router-link>
+            <router-link to="/logs" class="action-btn secondary">
+              <Activity :size="16" /> 查看最近日志
+            </router-link>
+          </div>
+        </div>
       </div>
-      <div v-else class="empty">{{ $t('dashboard.noData') }}</div>
-    </div>
-  </template>
+    </template>
+  </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { api } from '@/api'
-import { TrendingUp, AlertTriangle, ArrowLeftRight, BarChart3, Zap, Clock, Copy, Check } from 'lucide-vue-next'
+import { 
+  Activity, CheckCircle, CreditCard, Globe, 
+  RefreshCw, Plus 
+} from 'lucide-vue-next'
 
 const loading = ref(true)
-const rawStats = ref(null)
-const serverInfo = ref({ local_ip: '127.0.0.1', port: 8787 })
-const copiedOpenAI = ref(false)
-const copiedAnthropic = ref(false)
+const stats = ref({})
+const user = ref(null)
+const userBalance = ref(0)
 
-const openaiUrl = computed(() => serverInfo.value.base_url || `http://${serverInfo.value.local_ip}:${serverInfo.value.port}/v1`)
-const anthropicUrl = computed(() => {
-  if (serverInfo.value.base_url) {
-    return serverInfo.value.base_url.replace('/v1', '')
-  }
-  return `http://${serverInfo.value.local_ip}:${serverInfo.value.port}`
+const isAdmin = computed(() => user.value?.role === 'admin' || user.value?.is_admin)
+
+const sortedModels = computed(() => {
+  const m = stats.value.requests_by_model || {}
+  return Object.fromEntries(
+    Object.entries(m).sort(([,a],[,b]) => b - a).slice(0, 5)
+  )
 })
 
-async function copyToClipboard(text, type) {
+async function fetchData() {
+  loading.value = true
   try {
-    await navigator.clipboard.writeText(text)
-    if (type === 'anthropic') {
-      copiedAnthropic.value = true
-      setTimeout(() => copiedAnthropic.value = false, 2000)
+    user.value = await api.getMe()
+    if (isAdmin.value) {
+      stats.value = await api.getStats()
     } else {
-      copiedOpenAI.value = true
-      setTimeout(() => copiedOpenAI.value = false, 2000)
+      const userStats = await api.getUserStats()
+      stats.value = {
+        total_requests: userStats.total_requests,
+        total_errors: 0, # To be improved in backend
+        requests_by_model: userStats.requests_by_model || {}
+      }
+      userBalance.value = userStats.balance
     }
   } catch (e) {
-    console.error('Copy failed:', e)
+    console.error('Fetch dashboard data failed:', e)
+  } finally {
+    loading.value = false
   }
 }
-let timer = null
 
-const stats = computed(() => {
-  const s = rawStats.value
-  if (!s) return { totalRequests: 0, errorRate: 0, inputTokens: 0, outputTokens: 0 }
-  const p = s.persistent || {}
-  const m = s.in_memory || {}
-  return {
-    totalRequests: p.total_requests || m.total_requests || 0,
-    errorRate: p.error_rate ?? m.error_rate ?? 0,
-    inputTokens: m.input_tokens || 0,
-    outputTokens: m.output_tokens || 0,
-  }
-})
-
-const modelList = computed(() => {
-  const models = rawStats.value?.model_stats || rawStats.value?.models || {}
-  return Object.entries(models).map(([name, data]) => ({ name, ...data }))
-})
-
-function formatNum(n) {
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
-  return n?.toString() || '0'
+function getErrorClass(provider) {
+  const rate = (stats.value.errors_by_provider[provider] || 0) / stats.value.requests_by_provider[provider]
+  if (rate > 0.2) return 'text-red-500'
+  if (rate > 0.05) return 'text-orange-500'
+  return 'text-green-500'
 }
 
-function formatToken(n) {
-  if (!n) return '0'
-  return n.toLocaleString()
-}
-
-async function fetch() {
-  try {
-    rawStats.value = await api.getStats()
-    const info = await api.getInfo()
-    serverInfo.value = { 
-      local_ip: info.local_ip || '127.0.0.1', 
-      port: info.port || 8787,
-      base_url: info.base_url || ''
-    }
-  } catch (e) { console.error(e) }
-  finally { loading.value = false }
-}
-
-async function resetStats() {
-  if (!confirm('确定清空所有统计数据？')) return
-  try {
-    await api.resetStats()
-    await fetch()
-  } catch (e) { console.error(e) }
-}
-
-onMounted(() => { fetch(); timer = setInterval(fetch, 30000) })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+onMounted(fetchData)
 </script>
 
 <style scoped>
-.api-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
-.api-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 16px; transition: all 0.2s; }
-.api-card:hover { border-color: var(--color-accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-.api-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.api-card-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
-.btn-copy { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); font-size: 11px; cursor: pointer; transition: all 0.15s; }
-.btn-copy:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.btn-copy.copied { border-color: var(--color-green); color: var(--color-green); }
-.api-url { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; color: var(--color-accent); word-break: break-all; margin-bottom: 6px; }
-.api-hint { font-size: 11px; color: var(--color-text-dim); }
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
-.stat-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 16px; transition: all 0.2s; }
-.stat-card:hover { border-color: var(--color-accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-.stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.stat-label { font-size: 12px; color: var(--color-text-dim); }
-.stat-icon { opacity: 0.6; }
-.stat-icon.accent { color: var(--color-accent); }
-.stat-icon.green { color: var(--color-green); }
-.stat-icon.red { color: var(--color-red); }
-.stat-icon.info { color: var(--color-info); }
-.stat-value { font-size: 24px; font-weight: 700; }
-.stat-value.accent { color: var(--color-accent); }
-.stat-value.green { color: var(--color-green); }
-.stat-value.red { color: var(--color-red); }
-.stat-detail { font-size: 11px; color: var(--color-text-dim); margin-top: 4px; }
-.card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 20px; }
-.card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; padding: 10px 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--color-border); }
-th.text-right { text-align: right; }
-td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
-td.text-right { text-align: right; }
-tr:last-child td { border-bottom: none; }
-.mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
-.empty { text-align: center; padding: 30px; color: var(--color-text-dim); font-size: 13px; }
-.loading { text-align: center; padding: 40px; color: var(--color-text-dim); }
-.spinner { width: 24px; height: 24px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 24px; }
+.stat-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 16px; }
+.stat-icon { width: 40px; height: 40px; border-radius: 10px; background: rgba(249, 115, 22, 0.1); color: var(--color-accent); display: flex; align-items: center; justify-content: center; }
+.stat-icon.success { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.stat-icon.warning { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+
+.stat-info .label { font-size: 12px; color: var(--color-text-dim); margin-bottom: 4px; }
+.stat-info .value { font-size: 20px; font-weight: 700; }
+
+.dashboard-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+@media (max-width: 1024px) { .dashboard-grid { grid-template-columns: 1fr; } }
+
+.card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 12px; padding: 20px; }
+.card-title { font-size: 14px; font-weight: 600; margin-bottom: 20px; color: var(--color-accent); }
+
+.model-list { display: flex; flex-direction: column; gap: 16px; }
+.model-item { display: flex; flex-direction: column; gap: 6px; }
+.model-info { display: flex; justify-content: space-between; font-size: 12px; }
+.progress-bar { height: 6px; background: var(--color-bg-input); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--color-accent); border-radius: 3px; transition: width 0.3s; }
+
+.provider-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.provider-status-item { padding: 10px; background: var(--color-bg-input); border-radius: 8px; border: 1px solid var(--color-border); }
+
+.quick-actions { display: flex; flex-direction: column; gap: 10px; }
+.action-btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 8px; background: var(--color-accent); color: #fff; text-decoration: none; font-weight: 600; font-size: 13px; transition: all 0.2s; }
+.action-btn.secondary { background: var(--color-bg-input); border: 1px solid var(--color-border); color: var(--color-text); }
+.action-btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+
+.loading-state { display: flex; align-items: center; justify-content: center; padding: 100px; color: var(--color-text-dim); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.empty-state { text-align: center; padding: 40px; color: var(--color-text-dim); font-size: 13px; }
 </style>
