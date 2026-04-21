@@ -32,7 +32,9 @@ Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=${SERVICE_NAME}
+SyslogIdentifier=monorelay
+# 设置进程名为 monorelay
+Environment=PYTHON_NAME=monorelay
 
 [Install]
 WantedBy=multi-user.target
