@@ -1583,11 +1583,14 @@ async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
 
 @app.get("/api/logs/{log_id}")
 async def api_log_detail(log_id: int):
-    logs = await request_logger.get_recent_requests(1000)
-    log = next((l for l in logs if l.get('id') == log_id), None)
-    if not log:
+    # Fix: Query by ID directly instead of fetching 1000 rows
+    if not request_logger._db:
+        await request_logger.init()
+    cursor = await request_logger._db.execute("SELECT * FROM requests WHERE id = ?", (log_id,))
+    row = await cursor.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Log not found")
-    return api_response(data=log)
+    return api_response(data=dict(row))
 
 
 @app.post("/api/stats/reset")

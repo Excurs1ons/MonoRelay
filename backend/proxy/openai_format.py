@@ -220,6 +220,7 @@ async def handle_chat_completions(
             original_model, messages,
         )
 
+    original_body = body.copy()
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
 
@@ -277,7 +278,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
         )
 
 
@@ -386,7 +387,7 @@ async def handle_embeddings(
                             model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=True)
                         return error_data
@@ -413,7 +414,7 @@ async def handle_embeddings(
                     key_label=key.key.label,
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 )
                 stats_tracker.record_request(provider_name, resolved_model, success=True)
                 return resp.json()
@@ -443,7 +444,7 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -494,7 +495,7 @@ async def _stream_chat(
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
-                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                             )
                             stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
                             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -519,7 +520,7 @@ async def _stream_chat(
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
                         err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -609,7 +610,7 @@ async def _stream_chat(
             response_full_obj = {"content": full_output}
             if full_thinking:
                 response_full_obj["reasoning_content"] = full_thinking
-            response_full_str = json.dumps(response_full_obj, ensure_ascii=False)
+            response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
 
             # Detailed logging
             log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
@@ -645,7 +646,7 @@ async def _stream_chat(
                 output_tokens=tokens_out,
                 request_preview=request_text if request_text else None,
                 response_preview=response_preview if response_preview else None,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 response_full=response_full_str,
                 temperature=temperature,
                 top_p=top_p,
@@ -679,7 +680,7 @@ async def _stream_chat(
                 streaming=True,
                 error_message=str(e),
                 request_preview=request_text if request_text else None,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
@@ -694,7 +695,7 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=None,
 ) -> dict:
     from ..cache import response_cache
     
@@ -740,7 +741,7 @@ async def _non_stream_chat(
                             latency_ms=round(elapsed * 1000, 2),
                             error_message=resp.text,
                             request_preview=request_text if request_text else None,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                             temperature=temperature,
                             top_p=top_p,
                             presence_penalty=presence_penalty,
@@ -768,7 +769,7 @@ async def _non_stream_chat(
                         latency_ms=round(elapsed * 1000, 2),
                         error_message=resp.text,
                         request_preview=request_text if request_text else None,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                         temperature=temperature,
                         top_p=top_p,
                         presence_penalty=presence_penalty,
@@ -826,8 +827,8 @@ async def _non_stream_chat(
                     output_tokens=tokens_out,
                     request_preview=request_text if request_text else None,
                     response_preview=response_preview,
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                    response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                     temperature=temperature,
                     top_p=top_p,
                     presence_penalty=presence_penalty,
@@ -859,7 +860,7 @@ async def _non_stream_chat(
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=str(e),
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                 )
                 return {"error": {"message": str(e), "type": error_type}}
             
@@ -882,7 +883,7 @@ async def _non_stream_chat(
                 status_code=500,
                 latency_ms=round(elapsed * 1000, 2),
                 error_message=str(e),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
@@ -924,7 +925,7 @@ async def _stream_completion(
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
-                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                             )
                             stats_tracker.record_request(provider_name, resolved_model, success=True)
                             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -949,7 +950,7 @@ async def _stream_completion(
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=False)
                         err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -1005,7 +1006,7 @@ async def _stream_completion(
                 streaming=True,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
@@ -1025,7 +1026,7 @@ async def _stream_completion(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
                 error_message=str(e),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
@@ -1057,7 +1058,7 @@ async def _non_stream_completion(
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             error_message=resp.text,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=True)
                         return error_data
@@ -1107,8 +1108,8 @@ async def _non_stream_completion(
                     latency_ms=round(elapsed * 1000, 2),
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                    response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                 )
                 stats_tracker.record_request(
                     provider_name, resolved_model,
@@ -1230,7 +1231,7 @@ async def _handle_web_reverse_chat(
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
                 request_preview=request_text,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return result
@@ -1244,7 +1245,7 @@ async def _handle_web_reverse_chat(
             status_code=500,
             latency_ms=round(elapsed * 1000, 2),
             error_message=str(e),
-            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
         )
         stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": str(e), "type": "web_reverse_error"}}
@@ -1331,7 +1332,7 @@ async def handle_audio_transcriptions(
                 key_label=key.key.label,
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return resp.json()
@@ -1390,7 +1391,7 @@ async def handle_image_generations(
                 key_label=key.key.label,
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return resp.json()
@@ -1422,7 +1423,7 @@ async def _handle_generic_get(path: str, config: AppConfig, key_manager: KeyMana
                 model=path, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(params, ensure_ascii=False) if params else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None
+                response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
             )
             return result
         except Exception as e:
@@ -1456,8 +1457,8 @@ async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_man
             await request_logger.log_request(
                 model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
             )
             stats_tracker.record_request(provider_name, resolved_model, success=(resp.status_code < 400))
             return result
@@ -1498,8 +1499,8 @@ async def _handle_generic_multipart(path: str, body: dict, files: dict, config: 
             await request_logger.log_request(
                 model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None
+                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
             )
             stats_tracker.record_request(provider_name, resolved_model, success=(resp.status_code < 400))
             return result

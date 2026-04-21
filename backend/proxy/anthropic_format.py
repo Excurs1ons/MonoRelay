@@ -632,7 +632,7 @@ async def _stream_messages(
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
-                                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                                request_full=json.dumps(body, ensure_ascii=False, indent=2),
                             )
                             stats_tracker.record_request(provider_name, resolved_model, success=True)
                             event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": error_type}})
@@ -656,7 +656,7 @@ async def _stream_messages(
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=False)
                         event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": error_type}})
@@ -719,7 +719,7 @@ async def _stream_messages(
             
             response_full_obj = {"content": full_content}
             if full_thinking: response_full_obj["reasoning_content"] = full_thinking
-            response_full_str = json.dumps(response_full_obj, ensure_ascii=False)
+            response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
 
             await request_logger.log_request(
                 model=resolved_model,
@@ -731,7 +731,7 @@ async def _stream_messages(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
                 response_preview=resp_preview,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
                 response_full=response_full_str,
             )
             stats_tracker.record_request(
@@ -752,7 +752,7 @@ async def _stream_messages(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
                 error_message=str(e),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}})
@@ -784,7 +784,7 @@ async def _non_stream_messages(
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             error_message=resp.text,
-                            request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                            request_full=json.dumps(body, ensure_ascii=False, indent=2),
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=True)
                         return error_data
@@ -805,7 +805,7 @@ async def _non_stream_messages(
                         key_label=key.key.label, status_code=status_code,
                         latency_ms=round(elapsed * 1000, 2),
                         error_message=resp.text,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        request_full=json.dumps(body, ensure_ascii=False, indent=2),
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
                     return error_data
@@ -841,8 +841,8 @@ async def _non_stream_messages(
                     latency_ms=round(elapsed * 1000, 2),
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                    response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                    request_full=json.dumps(body, ensure_ascii=False, indent=2),
+                    response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                 )
                 stats_tracker.record_request(
                     provider_name, resolved_model,
@@ -1045,7 +1045,7 @@ async def _stream_anthropic_messages_beta(
                         key_label=key.key.label, status_code=response.status_code,
                         latency_ms=round(elapsed * 1000, 2), streaming=True,
                         error_message=error_text,
-                        request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                        request_full=json.dumps(body, ensure_ascii=False, indent=2),
                     )
                     stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
                     event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {error_text}", "type": "proxy_error"}})
@@ -1065,7 +1065,7 @@ async def _stream_anthropic_messages_beta(
                 status_code=response.status_code,
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
         except Exception as e:
@@ -1080,7 +1080,7 @@ async def _stream_anthropic_messages_beta(
                 latency_ms=round(elapsed * 1000, 2),
                 streaming=True,
                 error_message=str(e),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
             event_data = json.dumps({"type": "error", "error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}})
@@ -1109,7 +1109,7 @@ async def _non_stream_anthropic_messages_beta(
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=resp.text,
-                    request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                    request_full=json.dumps(body, ensure_ascii=False, indent=2),
                 )
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
                 return resp.json()
@@ -1130,8 +1130,8 @@ async def _non_stream_anthropic_messages_beta(
                 latency_ms=round(elapsed * 1000, 2),
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
-                response_full=json.dumps(result, ensure_ascii=False) if result else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
+                response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                 response_preview=resp_preview,
             )
             stats_tracker.record_request(
@@ -1154,7 +1154,7 @@ async def _non_stream_anthropic_messages_beta(
                 status_code=500,
                 latency_ms=round(elapsed * 1000, 2),
                 error_message=str(e),
-                request_full=json.dumps(body, ensure_ascii=False) if body else None,
+                request_full=json.dumps(body, ensure_ascii=False, indent=2),
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
