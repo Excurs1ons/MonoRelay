@@ -10,7 +10,7 @@
       </button>
     </div>
 
-    <div v-if="loading" class="loading"><RefreshCw class="spin" /></div>
+    <div v-if="loading" class="loading-full"><RefreshCw class="spin" /></div>
     
     <div v-else>
       <!-- User API Keys View -->
@@ -35,12 +35,12 @@
           </div>
         </div>
         <div v-if="!userKeys.length" class="empty-state">
-          <Key :size="48" class="text-dim mb-2" />
+          <KeyIcon :size="48" class="text-dim mb-2" />
           <p>您还没有创建任何 API 令牌</p>
         </div>
       </div>
 
-      <!-- Admin Providers Keys View (Inherited logic) -->
+      <!-- Admin Providers Keys View -->
       <div v-else class="providers-list">
         <div v-for="(provider, name) in providers" :key="name" class="card mb-4">
           <div class="flex-between mb-4">
@@ -48,7 +48,10 @@
               <Globe :size="18" class="text-accent" />
               <h3 class="font-bold">{{ name }}</h3>
             </div>
-            <button class="btn btn-xs" @click="testProvider(name)">测试连通性</button>
+            <button class="btn btn-xs btn-primary" :disabled="testing[name]" @click="testProvider(name)">
+              <RefreshCw v-if="testing[name]" :size="12" class="spin mr-1" />
+              {{ testing[name] ? '测试中...' : '测试连通性' }}
+            </button>
           </div>
           <div class="keys-table">
             <div v-for="(k, idx) in provider.keys" :key="idx" class="key-row">
@@ -88,9 +91,10 @@
 import { ref, onMounted, computed } from 'vue'
 import { api } from '@/api'
 import { useToastStore } from '@/stores'
-import { Plus, Key, RefreshCw, Copy, Globe, MoreVertical } from 'lucide-vue-next'
+import { Plus, Key as KeyIcon, RefreshCw, Copy, Globe } from 'lucide-vue-next'
 
 const loading = ref(true)
+const testing = ref({})
 const user = ref(null)
 const userKeys = ref([])
 const providers = ref({})
@@ -130,11 +134,20 @@ async function createKey() {
 }
 
 async function testProvider(name) {
+  if (testing.value[name]) return
+  testing.value[name] = true
   try {
     const res = await api.testProvider(name)
-    if (res.success) toast.success(`${name} 测试通过`)
-    else toast.error(`${name} 测试失败: ${res.message}`)
-  } catch (e) { toast.error('测试出错: ' + e.message) }
+    if (res.status === 'success' || res.success === true) {
+      toast.success(`${name} 测试通过`)
+    } else {
+      toast.error(`${name} 测试失败: ${res.message || '未知错误'}`)
+    }
+  } catch (e) {
+    toast.error('测试出错: ' + e.message)
+  } finally {
+    testing.value[name] = false
+  }
 }
 
 function copyToClipboard(text) {
@@ -150,6 +163,7 @@ onMounted(fetchData)
 </script>
 
 <style scoped>
+.loading-full { display: flex; align-items: center; justify-content: center; padding: 100px 0; color: var(--color-accent); }
 .keys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 .key-card { padding: 16px; border: 1px solid var(--color-border); position: relative; }
 .key-tag { font-size: 9px; font-weight: 800; background: var(--color-accent); color: #fff; padding: 1px 4px; border-radius: 4px; margin-right: 8px; }
@@ -166,11 +180,11 @@ onMounted(fetchData)
 .key-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-dim); }
 
 .providers-list { display: flex; flex-direction: column; gap: 16px; }
-.key-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.key-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--color-border); }
 .key-row:last-child { border-bottom: none; }
-.key-info { display: flex; flex-direction: column; }
-.key-info .label { font-size: 11px; color: var(--color-text-dim); }
-.key-info .key-masked { font-family: monospace; font-size: 13px; }
+.key-info { display: flex; flex-direction: column; gap: 4px; }
+.key-info .label { font-size: 12px; font-weight: 600; }
+.key-info .key-masked { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-dim); }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 12px; padding: 24px; width: 100%; max-width: 400px; }
@@ -179,4 +193,8 @@ onMounted(fetchData)
 .empty-state { text-align: center; padding: 64px 0; color: var(--color-text-dim); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .keys-grid { grid-template-columns: 1fr; }
+}
 </style>

@@ -367,6 +367,12 @@ async def handle_embeddings(
     resolved_model, provider_name = router.resolve_model(original_model)
     body["model"] = resolved_model
 
+    # Initialize tracking variables to avoid UnboundLocalError
+    request_text = None
+    response_preview = None
+    result = None
+    resp = None
+    
     # Extract text content
     input_text = body.get("input", "")
     if isinstance(input_text, list):
@@ -471,6 +477,13 @@ async def _stream_chat(
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
+    
+    # Initialize variables for logging to avoid UnboundLocalError
+    request_text = None
+    response_preview = None
+    status_code = 200
+    last_chunk_data = None
+    response_full_str = ""
     
     while attempt <= provider_cfg.retry.max_retries:
         try:
