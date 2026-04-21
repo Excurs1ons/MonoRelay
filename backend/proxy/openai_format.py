@@ -462,6 +462,7 @@ async def _stream_chat(
             output_content = []
             output_thinking = []
             response_preview = None
+            last_id, last_model, last_fingerprint = None, None, None
             
             messages = body.get("messages", [])
             request_text = "\n".join([
@@ -550,7 +551,9 @@ async def _stream_chat(
                                         continue
                                     try:
                                         data = json.loads(data_str)
-                                        last_chunk_data = data
+                                        if not last_id: last_id = data.get("id")
+                                        if not last_model: last_model = data.get("model")
+                                        if not last_fingerprint: last_fingerprint = data.get("system_fingerprint")
                                         usage = data.get("usage")
                                         if usage:
                                             tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
@@ -607,9 +610,30 @@ async def _stream_chat(
             response_preview = _extract_preview(full_output, full_thinking)
             if len(response_preview) > 1000:
                 response_preview = response_preview[:1000] + "..."
-            response_full_obj = {"content": full_output}
+            response_full_obj = {
+                "id": last_id or f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(start_time),
+                "model": last_model or resolved_model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": full_output,
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": tokens_in,
+                    "completion_tokens": tokens_out,
+                    "total_tokens": (tokens_in or 0) + (tokens_out or 0)
+                }
+            }
+            if last_fingerprint: response_full_obj["system_fingerprint"] = last_fingerprint
             if full_thinking:
-                response_full_obj["reasoning_content"] = full_thinking
+                response_full_obj["choices"][0]["message"]["reasoning_content"] = full_thinking
+                if thinking_tokens:
+                    response_full_obj["usage"]["completion_tokens_details"] = {"reasoning_tokens": thinking_tokens}
             response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
 
             # Detailed logging

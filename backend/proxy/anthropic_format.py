@@ -717,8 +717,15 @@ async def _stream_messages(
             resp_preview = _extract_preview(full_content, full_thinking)
             if len(resp_preview) > 1000: resp_preview = resp_preview[:1000] + "..."
             
-            response_full_obj = {"content": full_content}
-            if full_thinking: response_full_obj["reasoning_content"] = full_thinking
+            response_full_obj = {
+                "id": f"msg_{int(time.time())}",
+                "type": "message",
+                "role": "assistant",
+                "model": resolved_model,
+                "content": [{"type": "text", "text": full_content}],
+                "usage": {"input_tokens": tokens_in or 0, "output_tokens": tokens_out or 0}
+            }
+            if full_thinking: response_full_obj["content"].insert(0, {"type": "thinking", "thinking": full_thinking})
             response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
 
             await request_logger.log_request(
