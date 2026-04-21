@@ -1,16 +1,64 @@
 <template>
   <div class="settings-page">
     <style>
-    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-text); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
-    .btn:hover { border-color: var(--color-accent); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
-    .btn-primary:hover { background: var(--color-accent-hover); }
-    .btn-danger { background: #ef4444; border-color: #ef4444; color: #fff; }
-    .btn-danger:hover { background: #dc2626; }
-    .param-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-    .param-input { background: var(--color-bg-input); border: 1px solid var(--color-border); color: var(--color-text); border-radius: 4px; padding: 6px 10px; font-size: 12px; }
-    @media (max-width: 600px) { .btn { width: 100%; justify-content: center; } }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-card);
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      border-color: var(--color-accent);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--color-accent-hover);
+    }
+    .btn-danger {
+      background: #ef4444;
+      border-color: #ef4444;
+      color: #fff;
+    }
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+    .param-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .param-input {
+      background: var(--color-bg-input);
+      border: 1px solid var(--color-border);
+      color: var(--color-text);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    @media (max-width: 600px) {
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
     </style>
     <div class="flex-between mb-4">
       <h2 class="section-title">系统设置</h2>
@@ -53,8 +101,7 @@
               </button>
             </div>
           </div>
-          <p v-if="!config.server.access_key" class="help-text" style="color:#f59e0b">首次使用，请复制并妥善保管此 Key！</p>
-          <p v-else class="help-text">用于 API 鉴权的密码。</p>
+          <p class="help-text">用于 API 鉴权的密码。</p>
         </div>
         <div class="form-group border-t pt-4 mt-4">
           <div class="flex-between mb-2">
@@ -195,7 +242,33 @@
             <option value="prismaauth">PrismaAuth</option>
           </select>
         </div>
-        <div class="form-group">
+        <div v-if="config.sso.provider === 'github'" class="space-y-3">
+          <div class="form-group">
+            <label>GitHub Client ID</label>
+            <input v-model="config.sso.github_client_id" type="text" class="form-input" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>GitHub Client Secret</label>
+            <input v-model="config.sso.github_client_secret" type="password" class="form-input" autocomplete="off" />
+          </div>
+        </div>
+        <div v-if="config.sso.provider === 'google'" class="space-y-3">
+          <div class="form-group">
+            <label>Google Client ID</label>
+            <input v-model="config.sso.google_client_id" type="text" class="form-input" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>Google Client Secret</label>
+            <input v-model="config.sso.google_client_secret" type="password" class="form-input" autocomplete="off" />
+          </div>
+        </div>
+        <div v-if="config.sso.provider === 'prismaauth'" class="space-y-3">
+          <div class="form-group">
+            <label>PrismaAuth URL</label>
+            <input v-model="config.sso.prismaauth_url" type="text" class="form-input" />
+          </div>
+        </div>
+        <div class="form-group border-t pt-4 mt-4">
           <div class="flex-between mb-2">
             <label class="m-0">强制 SSO 登录</label>
             <label class="switch">
@@ -203,6 +276,7 @@
               <span class="slider"></span>
             </label>
           </div>
+          <p class="help-text">开启后将禁用普通的用户名密码登录。</p>
         </div>
         <div class="form-group">
           <label>管理员名单 (GitHub 用户名, 以逗号分隔)</label>
@@ -225,6 +299,17 @@
           </button>
         </div>
       </div>
+      <div class="card border-red-900/50 bg-red-950/10 danger-card">
+        <div class="danger-content">
+          <div class="danger-text">
+            <h4 class="font-medium text-sm mb-1">清空所有数据</h4>
+            <p class="text-xs text-dim">此操作将删除所有用户、密钥、日志和配置文件。MonoRelay 将恢复到初始状态并自动停止。</p>
+          </div>
+          <button class="btn btn-danger" @click="confirmClearData" style="display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid #ef4444;background:#ef4444;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;">
+            <Trash2 :size="14" class="mr-1" /> 清空数据
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -242,7 +327,7 @@ const toast = useToastStore()
 const adminUsernamesText = ref('')
 
 const config = ref({
-  server: { public_host: '', access_key: '', access_key_enabled: true, log_level: 'INFO', port: 8787 },
+  server: { public_host: '', access_key: '', access_key_enabled: true, log_level: 'INFO', port: 8787, turnstile_enabled: false },
   model_routing: { global_params: { enabled: false, mode: 'default', params: {}, system_prompt: '' } },
   key_selection: { strategy: 'round-robin' },
   tool_calling: { auto_downgrade: true },
@@ -263,7 +348,12 @@ async function fetchFullConfig() {
 async function saveConfig() {
   saving.value = true
   try {
-    await api.updateFullConfig(config.value)
+    const secrets = {
+      github_client_secret: config.value.sso.github_client_secret,
+      google_client_secret: config.value.sso.google_client_secret,
+      turnstile_secret_key: config.value.server.turnstile_secret_key,
+    }
+    await api.updateFullConfig({ ...config.value, secrets })
     toast.success('设置已保存并热重载')
   } catch (e) { toast.error('保存失败: ' + e.message) } finally { saving.value = false }
 }
@@ -296,19 +386,19 @@ async function confirmClearStats() {
   } catch (e) { toast.error('清空失败: ' + e.message) }
 }
 
-onMounted(fetchLogs)
-
-// Fix confirmClearData mock or missing
 async function confirmClearData() {
   const code = Math.floor(1000 + Math.random() * 9000);
   const input = prompt(`警告：此操作将永久删除所有数据！\n请输入验证码 [ ${code} ] 以继续：`);
   if (input === String(code)) {
     try {
       await api.clearAllData();
-      toast.success('数据已清空');
+      toast.success('数据已清空，正在退出...');
+      setTimeout(() => window.location.href = '/', 2000);
     } catch (e) { toast.error('清空失败: ' + e.message); }
   }
 }
+
+onMounted(fetchFullConfig)
 </script>
 
 <style scoped>
