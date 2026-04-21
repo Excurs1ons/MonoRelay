@@ -1046,13 +1046,16 @@ async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_siz
 # OpenAI-compatible endpoints
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    body = await request.json()
-    result = await handle_chat_completions(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
-    )
-    if isinstance(result, dict) and "error" in result:
-        return JSONResponse(status_code=503, content=result)
-    return result
+    try:
+        body = await request.json()
+        result = await handle_chat_completions(
+            body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        )
+        if isinstance(result, dict) and "error" in result:
+            return JSONResponse(status_code=503, content=result)
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": {"message": str(e), "type": "internal_error"}})
 
 
 @app.post("/v1/responses")
