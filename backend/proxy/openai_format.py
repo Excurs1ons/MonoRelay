@@ -481,7 +481,6 @@ async def _stream_chat(
             output_thinking = []
             response_preview = None
             last_id, last_model, last_fingerprint = None, None, None
-            stream_done = False
             
             messages = body.get("messages", [])
             request_text = "\n".join([
@@ -561,18 +560,13 @@ async def _stream_chat(
 
                         # Parse SSE events from buffer
                         while b"\n\n" in buffer:
-                            if stream_done:
-                                break
                             event, buffer = buffer.split(b"\n\n", 1)
                             for line in event.decode("utf-8", errors="replace").split("\n"):
                                 line = line.strip()
-                                if not line:
-                                    continue
                                 if line.startswith("data: "):
                                     data_str = line[6:]
                                     if data_str == "[DONE]":
-                                        stream_done = True
-                                        break
+                                        continue
                                     try:
                                         data = json.loads(data_str)
                                         if not last_id: last_id = data.get("id")
