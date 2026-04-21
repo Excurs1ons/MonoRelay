@@ -1048,7 +1048,7 @@ async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_siz
 async def chat_completions(request: Request):
     body = await request.json()
     result = await handle_chat_completions(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None)
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1123,7 +1123,7 @@ async def audio_transcriptions(
     if temperature is not None:
         form_data["temperature"] = temperature
     result = await handle_audio_transcriptions(
-        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None) config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -3572,8 +3572,8 @@ def run():
 if __name__ == "__main__":
     run()
 
-# --- Multi-tenant User API Endpoints ---
 
+# --- Multi-tenant API Endpoints ---
 @app.get("/api/user/keys")
 async def api_user_keys(request: Request):
     user_id = getattr(request.state, "user_id", None)
@@ -3594,12 +3594,14 @@ async def api_user_stats(request: Request):
     user_id = getattr(request.state, "user_id", None)
     if user_id is None: raise HTTPException(status_code=401)
     user = await user_manager.get_user_by_id(user_id)
+    from .usage_tracker import usage_tracker
     stats = usage_tracker.get_stats(str(user_id))
     return api_response(data={
         "balance": user.balance,
-        "quota_used": user.balance - stats.get("cost", 0), # Simplified for now
+        "quota_used": user.balance - stats.get("cost", 0),
         "total_requests": stats.get("total_requests", 0),
-        "total_cost": stats.get("cost", 0)
+        "total_cost": stats.get("cost", 0),
+        "requests_by_model": stats.get("requests_by_model", {})
     })
 
 @app.get("/api/user/logs")
@@ -3609,12 +3611,9 @@ async def api_user_logs(request: Request, limit: int = 50):
     logs = await request_logger.get_recent_requests(limit, user_id=user_id)
     return api_response(data=logs)
 
-# --- Multi-tenant Admin API Endpoints ---
-
 @app.get("/api/admin/users")
 async def api_admin_users(request: Request):
     if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    # Using raw SQL for quick user list
     cursor = await user_manager._db.execute("SELECT id, username, email, role, balance, created_at FROM users")
     rows = await cursor.fetchall()
     return api_response(data=[dict(r) for r in rows])
@@ -3634,8 +3633,6 @@ async def api_admin_user_delete(user_id: int, request: Request):
     await user_manager._db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await user_manager._db.commit()
     return api_response(message="用户已删除")
-
-# --- Billing & Redemption API Endpoints ---
 
 @app.get("/api/admin/redemption-codes")
 async def api_admin_codes(request: Request):
@@ -3659,9 +3656,7 @@ async def api_user_redeem(request: Request, body: dict):
     if user_id is None: raise HTTPException(status_code=401)
     code = body.get("code", "").strip()
     if not code: raise HTTPException(status_code=400, detail="Missing code")
-    
     amount = await user_manager.redeem_code(user_id, code)
     if amount is None:
         raise HTTPException(status_code=400, detail="Invalid or already used redemption code")
-    
     return api_response(message=f"成功兑换 ${amount:.2f}", data={"amount": amount})

@@ -20,20 +20,21 @@ from .anthropic_format import handle_messages, handle_openai_to_anthropic
 from .streaming import stream_openai_response, extract_stream_usage
 
 logger = logging.getLogger("monorelay.openai_proxy")
-async def _check_user_balance(user_id, config: AppConfig):
-    if not config.billing.enabled or user_id == 0: return True
+
+
+async def _check_user_balance(user_id: Optional[int], config: AppConfig) -> bool:
+    if not config.billing.enabled or user_id == 0 or user_id is None: return True
     from ..main import user_manager
     user = await user_manager.get_user_by_id(user_id)
     if not user: return False
     if config.billing.enforce_balance and user.balance <= 0: return False
     return True
 
-def _calculate_credits(provider_cfg: ProviderConfig, model: str, input_tokens: int, output_tokens: int) -> float:
+def _calculate_credits(provider_cfg: Any, model: str, input_tokens: int, output_tokens: int) -> float:
     rate = provider_cfg.model_rates.get(model)
     rate_in = rate.input if rate else provider_cfg.cost_per_m_input
     rate_out = rate.output if rate else provider_cfg.cost_per_m_output
     return (input_tokens * rate_in + output_tokens * rate_out) / 1000000
-
 
 def _extract_preview(content: str = "", reasoning: str = "") -> str:
     """Extract content and thinking into a unified preview string."""
@@ -189,7 +190,7 @@ async def _handle_cascade_chat(
             return StreamingResponse(
                 _stream_chat(
                     provider_cfg, url, headers, request_body, key, key_manager, provider_name,
-                    model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
+                    model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -223,6 +224,7 @@ async def handle_chat_completions(
     router: ModelRouter,
     request_logger: RequestLogger,
     stats_tracker: StatsTracker,
+    user_id: int = None,
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
@@ -235,6 +237,12 @@ async def handle_chat_completions(
         )
 
     original_body = body.copy()
+    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
+    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
+    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
+    original_body = body.copy()
+    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
+    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
     if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
@@ -279,7 +287,7 @@ async def handle_chat_completions(
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
+                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
             ),
             media_type="text/event-stream",
             headers={
@@ -293,7 +301,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, user_id=user_id,
         )
 
 
@@ -398,19 +406,7 @@ async def handle_embeddings(
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
-                        # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                        await request_logger.log_request(
                             user_id=user_id, model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
@@ -435,19 +431,7 @@ async def handle_embeddings(
                 
                 key_manager.report_success(key, 0)
                 logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
-                # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                await request_logger.log_request(
                     user_id=user_id, model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
@@ -483,7 +467,7 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, user_id=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -530,20 +514,8 @@ async def _stream_chat(
                         if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
-                            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
-                                model=resolved_model, provider=provider_name,
+                            await request_logger.log_request(
+                                user_id=user_id, model=resolved_model, provider=provider_name,
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
@@ -567,19 +539,7 @@ async def _stream_chat(
                         logger.error(f"Upstream error {status_code}: {error_text}")
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
-                        # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                        await request_logger.log_request(
                             user_id=user_id, model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
@@ -732,18 +692,6 @@ async def _stream_chat(
             log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
             logger.info(" | ".join(log_parts))
 
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -781,18 +729,6 @@ async def _stream_chat(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -817,7 +753,7 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, user_id=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
 ) -> dict:
     from ..cache import response_cache
     
@@ -855,19 +791,7 @@ async def _non_stream_chat(
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
-                        # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                        await request_logger.log_request(
                             user_id=user_id, model=resolved_model,
                             provider=provider_name,
                             key_label=key.key.label,
@@ -895,20 +819,8 @@ async def _non_stream_chat(
                             continue
                     
                     key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
-                        model=resolved_model,
+                    await request_logger.log_request(
+                        user_id=user_id, model=resolved_model,
                         provider=provider_name,
                         key_label=key.key.label,
                         status_code=status_code,
@@ -963,19 +875,7 @@ async def _non_stream_chat(
                 log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
                 logger.info(" | ".join(log_parts))
 
-                # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                await request_logger.log_request(
                     user_id=user_id, model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
@@ -1011,19 +911,7 @@ async def _non_stream_chat(
             if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                 logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
                 elapsed = time.time() - start_time
-                # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                await request_logger.log_request(
                     user_id=user_id, model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
@@ -1046,18 +934,6 @@ async def _non_stream_chat(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1102,20 +978,8 @@ async def _stream_completion(
                         if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
-                            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
-                                model=resolved_model, provider=provider_name,
+                            await request_logger.log_request(
+                                user_id=user_id, model=resolved_model, provider=provider_name,
                                 key_label=key.key.label, status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
@@ -1139,19 +1003,7 @@ async def _stream_completion(
                         logger.error(f"Completion upstream error {status_code}: {error_text}")
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
-                        # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                        await request_logger.log_request(
                             user_id=user_id, model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
@@ -1214,18 +1066,6 @@ async def _stream_completion(
             log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
             logger.info(" | ".join(log_parts))
 
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1247,18 +1087,6 @@ async def _stream_completion(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"流式Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1294,19 +1122,7 @@ async def _non_stream_completion(
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
-                        # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                        await request_logger.log_request(
                             user_id=user_id, model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
@@ -1353,19 +1169,7 @@ async def _non_stream_completion(
                 log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
                 logger.info(" | ".join(log_parts))
 
-                # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            await request_logger.log_request(
+                await request_logger.log_request(
                     user_id=user_id, model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
@@ -1405,7 +1209,7 @@ async def _non_stream_completion(
     return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
 
 
-async def handle_models_list(config: AppConfig, user_id: Optional[int] = None) -> dict:
+async def handle_models_list(config: AppConfig) -> dict:
     """Return only explicitly enabled models from all providers."""
     all_models = []
     for name, pc in config.providers.items():
@@ -1489,18 +1293,6 @@ async def _handle_web_reverse_chat(
         else:
             key_manager.report_success(key, 0)
             elapsed = time.time() - start_time
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1516,7 +1308,7 @@ async def _handle_web_reverse_chat(
         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
         elapsed = time.time() - start_time
         await request_logger.log_request(
-            model=resolved_model,
+                user_id=user_id, model=resolved_model,
             provider=provider_name,
             key_label=key.key.label,
             status_code=500,
@@ -1544,7 +1336,7 @@ async def _wrap_web_reverse_stream(
     key_manager.report_success(key, 0)
     elapsed = time.time() - start_time
     await request_logger.log_request(
-        model=resolved_model,
+                user_id=user_id, model=resolved_model,
         provider=provider_name,
         key_label=key.key.label,
         status_code=200,
@@ -1603,18 +1395,6 @@ async def handle_audio_transcriptions(
                 return resp.json()
             key_manager.report_success(key, 0)
             logger.info(f"Audio Transcription | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1674,18 +1454,6 @@ async def handle_image_generations(
                 return resp.json()
             key_manager.report_success(key, 0)
             logger.info(f"Image Generation | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model,
                 provider=provider_name,
@@ -1720,18 +1488,6 @@ async def _handle_generic_get(path: str, config: AppConfig, key_manager: KeyMana
                 result = resp.json()
             except Exception: 
                 result = {"error": {"message": resp.text, "type": "upstream_error"}}
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=path, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
@@ -1767,18 +1523,6 @@ async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_man
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             else:
                 key_manager.report_success(key, 0)
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
@@ -1821,18 +1565,6 @@ async def _handle_generic_multipart(path: str, body: dict, files: dict, config: 
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             else:
                 key_manager.report_success(key, 0)
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
-            # Billing: deduct credits
-            if config.billing.enabled and user_id and user_id != 0:
-                cost = _calculate_credits(provider_cfg, resolved_model, tokens_in or 0, tokens_out or 0)
-                from ..main import user_manager
-                await user_manager.update_balance(user_id, -cost)
-            
             await request_logger.log_request(
                 user_id=user_id, model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
@@ -1851,16 +1583,16 @@ async def handle_image_variations(body, file, config, key_manager, router, reque
 async def handle_image_edits(body, image, mask, config, key_manager, router, request_logger, stats_tracker):
     return await _handle_generic_multipart("/images/edits", body, {"image": image, "mask": mask}, config, key_manager, router, request_logger, stats_tracker)
 
-async def handle_moderations(body, config, key_manager, router, request_logger, stats_tracker, user_id=None):
+async def handle_moderations(body, config, key_manager, router, request_logger, stats_tracker):
     return await _handle_generic_post("/moderations", body, config, key_manager, router, request_logger, stats_tracker)
 
-async def handle_responses(body, config, key_manager, router, request_logger, stats_tracker, user_id=None):
+async def handle_responses(body, config, key_manager, router, request_logger, stats_tracker):
     return await _handle_generic_post("/responses", body, config, key_manager, router, request_logger, stats_tracker)
 
 from ..usage_tracker import usage_tracker
 from ..auth_utils import verify_token
 
-async def handle_credits(config, key_manager, request_logger, auth_header, user_id=None):
+async def handle_credits(config, key_manager, request_logger, auth_header):
     client_id = "anonymous"
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
