@@ -392,6 +392,11 @@ async def handle_embeddings(
                     except Exception:
                         error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
@@ -780,6 +785,11 @@ async def _non_stream_chat(
                     except Exception:
                         error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
@@ -1114,6 +1124,11 @@ async def _non_stream_completion(
                     except Exception:
                         error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
