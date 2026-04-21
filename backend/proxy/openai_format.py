@@ -602,8 +602,19 @@ async def _stream_chat(
 
             key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
-            tokens_in = int(tokens_in) if tokens_in is not None else None
-            tokens_out = int(tokens_out) if tokens_out is not None else None
+            # Fallback estimation if upstream usage was missing
+            is_estimated_in = False
+            if tokens_in is None:
+                tokens_in = _estimate_input_tokens(body.get("messages", []))
+                is_estimated_in = True
+                
+            is_estimated_out = False
+            if tokens_out is None:
+                tokens_out = _estimate_tokens(full_output) + _estimate_tokens(full_thinking)
+                is_estimated_out = True
+                
+            tokens_in = int(tokens_in) if tokens_in is not None else 0
+            tokens_out = int(tokens_out) if tokens_out is not None else 0
 
             full_output = "".join(output_content)
             full_thinking = "".join(output_thinking)
@@ -1011,8 +1022,19 @@ async def _stream_completion(
 
             key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
-            tokens_in = int(tokens_in) if tokens_in is not None else None
-            tokens_out = int(tokens_out) if tokens_out is not None else None
+            # Fallback estimation if upstream usage was missing
+            is_estimated_in = False
+            if tokens_in is None:
+                tokens_in = _estimate_input_tokens(body.get("messages", []))
+                is_estimated_in = True
+                
+            is_estimated_out = False
+            if tokens_out is None:
+                tokens_out = _estimate_tokens(full_output) + _estimate_tokens(full_thinking)
+                is_estimated_out = True
+                
+            tokens_in = int(tokens_in) if tokens_in is not None else 0
+            tokens_out = int(tokens_out) if tokens_out is not None else 0
 
             log_parts = [f"流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
             if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
