@@ -1,19 +1,23 @@
 const BASE = ''
 
-function getToken() {
+export function getToken() {
   return localStorage.getItem('access_token') || localStorage.getItem('token') || ''
 }
 
-function setToken(token) {
+export function setToken(token) {
   localStorage.setItem('access_token', token)
   localStorage.setItem('token', token)
+}
+
+export function setAccessKey(key) {
+  localStorage.setItem('access_key', key)
 }
 
 async function request(url, options = {}) {
   const token = getToken()
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
     ...(options.headers || {})
   }
 
@@ -36,41 +40,28 @@ async function request(url, options = {}) {
 }
 
 export const api = {
-  // Auth
   login: (username, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   register: (username, password, email) => request('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password, email }) }),
   getMe: () => request('/api/auth/me'),
   hasUsers: () => request('/api/auth/has_users'),
-
-  // Admin Config
   getFullConfig: () => request('/api/config/full'),
   updateFullConfig: (config) => request('/api/config/full', { method: 'POST', body: JSON.stringify(config) }),
-  
-  // Admin Stats & Logs
   getStats: () => request('/api/stats'),
-  getLogs: (limit = 50) => request(`/api/logs?limit=${limit}`),
-  getLogDetail: (id) => request(`/api/logs/${id}`),
+  getLogs: (limit = 50) => request('/api/logs?limit=' + limit),
+  getLogDetail: (id) => request('/api/logs/' + id),
   clearLogs: () => request('/api/logs/clear', { method: 'POST' }),
   resetStats: () => request('/api/stats/reset', { method: 'POST' }),
-  
-  // Admin Providers & Keys
   getProviders: () => request('/api/providers'),
-  updateProvider: (name, config) => request(`/api/providers/${name}`, { method: 'POST', body: JSON.stringify(config) }),
-  testProvider: (name) => request(`/api/providers/${name}/test`, { method: 'POST' }),
-  deleteProvider: (name) => request(`/api/providers/${name}`, { method: 'DELETE' }),
-
-  // Multi-tenant User API
+  updateProvider: (name, config) => request('/api/providers/' + name, { method: 'POST', body: JSON.stringify(config) }),
+  testProvider: (name) => request('/api/providers/' + name + '/test', { method: 'POST' }),
+  deleteProvider: (name) => request('/api/providers/' + name, { method: 'DELETE' }),
   getUserKeys: () => request('/api/user/keys'),
   createUserKey: (label) => request('/api/user/keys', { method: 'POST', body: JSON.stringify({ label }) }),
   getUserStats: () => request('/api/user/stats'),
-  getUserLogs: (limit = 50) => request(`/api/user/logs?limit=${limit}`),
-
-  // Users Management (Admin)
+  getUserLogs: (limit = 50) => request('/api/user/logs?limit=' + limit),
   getUsers: () => request('/api/admin/users'),
-  updateUserBalance: (id, adjustment) => request(`/api/admin/users/${id}/balance`, { method: 'POST', body: JSON.stringify({ adjustment }) }),
-  deleteUser: (id) => request(`/api/admin/users/${id}`, { method: 'DELETE' }),
-  
-  // Enhanced Features
+  updateUserBalance: (id, adjustment) => request('/api/admin/users/' + id + '/balance', { method: 'POST', body: JSON.stringify({ adjustment }) }),
+  deleteUser: (id) => request('/api/admin/users/' + id, { method: 'DELETE' }),
   getEnhancedStats: () => request('/api/stats/enhanced'),
   getModelsPricing: () => request('/api/models/pricing'),
   clearAllData: () => request('/api/config/clear', { method: 'POST' }),
