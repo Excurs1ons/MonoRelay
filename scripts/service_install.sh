@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SERVICE_NAME="mono-api-relay"
+SERVICE_NAME="monorelay"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 echo "Installing ${SERVICE_NAME} as a systemd service..."
@@ -27,7 +27,7 @@ Type=simple
 User=${USER}
 Group=${GROUP}
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=${PYTHON_PATH} -m backend.main
+ExecStart=${PYTHON_PATH} -m backend.main --port 8787 --host 0.0.0.0
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -47,8 +47,9 @@ echo "=========================================="
 echo "${SERVICE_NAME} installed and started!"
 echo "=========================================="
 echo ""
-echo "Check status:  systemctl status ${SERVICE_NAME}"
-echo "View logs:     journalctl -u ${SERVICE_NAME} -f"
-echo "Stop:          systemctl stop ${SERVICE_NAME}"
-echo "Restart:       systemctl restart ${SERVICE_NAME}"
+echo "Check status:  sudo systemctl status ${SERVICE_NAME}"
+echo "View logs:     sudo journalctl -u ${SERVICE_NAME} -f"
+echo "Stop:          sudo systemctl stop ${SERVICE_NAME}"
+echo "Restart:       sudo systemctl restart ${SERVICE_NAME}"
+echo "Uninstall:      sudo bash scripts/service_uninstall.sh"
 echo ""

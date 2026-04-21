@@ -218,16 +218,16 @@ sudo bash scripts/service_install.sh
 #### 管理命令
 ```bash
 # 查看状态
-sudo systemctl status mono-api-relay
+sudo systemctl status monorelay
 
 # 查看日志
-sudo journalctl -u mono-api-relay -f
+sudo journalctl -u monorelay -f
 
 # 重启
-sudo systemctl restart mono-api-relay
+sudo systemctl restart monorelay
 
 # 停止
-sudo systemctl stop mono-api-relay
+sudo systemctl stop monorelay
 
 # 卸载
 sudo bash scripts/service_uninstall.sh
@@ -281,10 +281,10 @@ docker compose up -d
 docker compose up
 
 # 查看日志
-docker compose logs -f mono-api-relay
+docker compose logs -f monorelay
 
 # 重启
-docker compose restart
+docker compose restart monorelay
 
 # 停止
 docker compose down
@@ -299,7 +299,7 @@ docker compose ps
 | `TZ` | 时区 | `Asia/Shanghai` |
 
 #### 数据持久化
-Docker 部署会自动创建 `mono-data` 卷，持久化存储：
+Docker 部署会自动创建 `monorelay-data` 卷，持久化存储：
 - 用户数据 (`data/users.db`)
 - 请求日志 (`data/requests.db`)
 - 统计数据 (`data/stats.json`)
