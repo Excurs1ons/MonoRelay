@@ -98,6 +98,7 @@ export const api = {
 
   // Info & Health
   getInfo: () => request('/api/info'),
+  getSystemInfo: () => request('/api/system/info'),
   health: (turnstileToken = '') => request('/health' + (turnstileToken ? `?turnstile_token=${turnstileToken}` : '')),
 
   // Stats
