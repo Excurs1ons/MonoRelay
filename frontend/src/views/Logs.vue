@@ -66,7 +66,7 @@
                         <div class="content-label">
                           Request
                           <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
-                            {{ isFullRequest(log.id) ? '显示预览' : '显示完整' }}
+                            {{ isFullRequest(log.id) ? '显示预览' : '显示原始请求' }}
                           </button>
                         </div>
                         <pre class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
@@ -83,7 +83,7 @@
                         <div class="content-label">
                           Response
                           <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
-                            {{ isFullResponse(log.id) ? '显示预览' : '显示完整' }}
+                            {{ isFullResponse(log.id) ? '显示预览' : '显示原始响应' }}
                           </button>
                         </div>
                         <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
