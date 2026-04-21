@@ -262,7 +262,7 @@ async def handle_chat_completions(
         return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/chat/completions")
-    headers = _build_headers(provider_cfg, key.key.key)
+headers = _build_headers(provider_cfg, key.key.key)
 
     is_stream = body.get("stream", False)
     start_time = time.time()
