@@ -144,6 +144,16 @@ class ProviderConfig(BaseModel):
     cost_per_m_output: float = 0.0
     retry: RetryConfig = Field(default_factory=RetryConfig)
     ignore: IgnoreConfig = Field(default_factory=IgnoreConfig)
+    params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
+    model_params: list[ModelParamsConfig] = Field(default_factory=list)
+
+
+class ModelParamsConfig(BaseModel):
+    """Model-specific request parameters."""
+    model_pattern: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
 
 
 class ComplexityConfig(BaseModel):
@@ -190,6 +200,7 @@ class ModelRoutingConfig(BaseModel):
     cascade: CascadeConfig = Field(default_factory=CascadeConfig)
     payload_transformation: PayloadTransformation = Field(default_factory=PayloadTransformation)
     global_params: GlobalRequestParamsConfig = Field(default_factory=GlobalRequestParamsConfig)
+    model_params: list[ModelParamsConfig] = Field(default_factory=list)
 
 
 class ToolCallingConfig(BaseModel):

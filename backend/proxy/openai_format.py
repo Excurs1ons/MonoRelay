@@ -235,14 +235,19 @@ async def handle_chat_completions(
     body["model"] = resolved_model
 
     body = router.apply_transformation(body, resolved_model)
-
-    if not router.supports_tools(resolved_model):
-        body = router.strip_tools(body)
-
+    
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
-        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+    
+    if provider_cfg.params:
+        for key, value in provider_cfg.params.items():
+            body[key] = value
+    if provider_cfg.system_prompt:
+        messages = body.get("messages", [])
+        if isinstance(messages, list):
+            messages.insert(0, {"role": "system", "content": provider_cfg.system_prompt})
+            body["messages"] = messages
 
     if provider_cfg.provider_type == "web_reverse":
         return await _handle_web_reverse_chat(
@@ -262,7 +267,7 @@ async def handle_chat_completions(
         return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
 
     url = _build_url(provider_cfg.base_url, "/chat/completions")
-headers = _build_headers(provider_cfg, key.key.key)
+    headers = _build_headers(provider_cfg, key.key.key)
 
     is_stream = body.get("stream", False)
     start_time = time.time()
