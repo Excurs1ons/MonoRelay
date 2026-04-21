@@ -472,6 +472,8 @@ async def _stream_chat(
     attempt = 0
     last_error = None
     
+    yielded_any_data = False
+    
     while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
@@ -527,7 +529,7 @@ async def _stream_chat(
                             yield b"data: [DONE]\n\n"
                             return
 
-                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        if not yielded_any_data and key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
@@ -555,6 +557,7 @@ async def _stream_chat(
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
+                            yielded_any_data = True
                         buffer += chunk
                         stream_chunks += 1
 
@@ -964,6 +967,8 @@ async def _stream_completion(
     attempt = 0
     last_error = None
     
+    yielded_any_data = False
+    
     while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
@@ -999,7 +1004,7 @@ async def _stream_completion(
                             yield b"data: [DONE]\n\n"
                             return
 
-                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        if not yielded_any_data and key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
@@ -1027,6 +1032,7 @@ async def _stream_completion(
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
+                            yielded_any_data = True
                         buffer += chunk
                         stream_chunks += 1
 
