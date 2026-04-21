@@ -268,7 +268,8 @@ async def handle_chat_completions(
     start_time = time.time()
 
     mode = "流式" if is_stream else "非流式"
-    logger.info(f"请求发送 | {mode} | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
+    import traceback
+    logger.info(f"请求发送 | {mode} | 模型={resolved_model} | 提供商={provider_name} | URL={url} | 调用栈={traceback.format_stack()[:3]}")
 
     if is_stream:
         return StreamingResponse(
