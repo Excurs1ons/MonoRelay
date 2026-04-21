@@ -248,14 +248,19 @@ async def handle_chat_completions(
     body["model"] = resolved_model
 
     body = router.apply_transformation(body, resolved_model)
-
-    if not router.supports_tools(resolved_model):
-        body = router.strip_tools(body)
-
+    
     provider_cfg = config.providers.get(provider_name)
     if not provider_cfg or not provider_cfg.enabled:
-        stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
+    
+    if provider_cfg.params:
+        for key, value in provider_cfg.params.items():
+            body[key] = value
+    if provider_cfg.system_prompt:
+        messages = body.get("messages", [])
+        if isinstance(messages, list):
+            messages.insert(0, {"role": "system", "content": provider_cfg.system_prompt})
+            body["messages"] = messages
 
     if provider_cfg.provider_type == "web_reverse":
         return await _handle_web_reverse_chat(
@@ -406,8 +411,16 @@ async def handle_embeddings(
                 )
                 elapsed = time.time() - start_time
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
@@ -473,10 +486,12 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, user_id=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
+    
+    yielded_any_data = False
     
     # Initialize variables for logging to avoid UnboundLocalError
     request_text = None
@@ -540,7 +555,7 @@ async def _stream_chat(
                             yield b"data: [DONE]\n\n"
                             return
 
-                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        if not yielded_any_data and key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
@@ -568,6 +583,7 @@ async def _stream_chat(
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
+                            yielded_any_data = True
                         buffer += chunk
                         stream_chunks += 1
 
@@ -738,6 +754,7 @@ async def _stream_chat(
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
+            return
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -798,8 +815,16 @@ async def _non_stream_chat(
                 elapsed = time.time() - start_time
 
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
@@ -969,6 +994,8 @@ async def _stream_completion(
     attempt = 0
     last_error = None
     
+    yielded_any_data = False
+    
     while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
@@ -1004,7 +1031,7 @@ async def _stream_completion(
                             yield b"data: [DONE]\n\n"
                             return
 
-                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        if not yielded_any_data and key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
@@ -1032,6 +1059,7 @@ async def _stream_completion(
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
+                            yielded_any_data = True
                         buffer += chunk
                         stream_chunks += 1
 
@@ -1096,6 +1124,7 @@ async def _stream_completion(
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
+            return
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -1129,8 +1158,16 @@ async def _non_stream_completion(
                 resp = await client.post(url, headers=headers, json=body)
                 elapsed = time.time() - start_time
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
+                    if error_type == "upstream_error":
+                        error_data = {"error": {"code": "upstream_error", "message": f"[{provider_name}] {resp.text}"}}
+                    else:
+                        error_data["error"]["code"] = error_type
+                        error_data["error"]["message"] = f"[{provider_name}] {error_data['error'].get('message', resp.text)}"
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
@@ -1288,7 +1325,7 @@ async def _handle_web_reverse_chat(
             return StreamingResponse(
                 _wrap_web_reverse_stream(
                     result, key, key_manager, provider_name, resolved_model,
-                    original_model, request_logger, start_time, stats_tracker,
+                    original_model, request_logger, start_time, stats_tracker, user_id=user_id,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1321,7 +1358,8 @@ async def _handle_web_reverse_chat(
         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
         elapsed = time.time() - start_time
         await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+            user_id=user_id,
+            model=resolved_model,
             provider=provider_name,
             key_label=key.key.label,
             status_code=500,
@@ -1343,13 +1381,15 @@ async def _wrap_web_reverse_stream(
     request_logger: RequestLogger,
     start_time: float,
     stats_tracker: StatsTracker,
+    user_id: int = None,
 ) -> AsyncGenerator[bytes, None]:
     async for chunk in stream_gen:
         yield chunk
     key_manager.report_success(key, 0)
     elapsed = time.time() - start_time
     await request_logger.log_request(
-                user_id=user_id, model=resolved_model,
+        user_id=user_id,
+        model=resolved_model,
         provider=provider_name,
         key_label=key.key.label,
         status_code=200,

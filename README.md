@@ -204,4 +204,155 @@ sso:
 
 ## 许可证
 
+---
+
+## 部署指南
+
+### 方式一：systemd 服务（推荐 Linux 生产环境）
+
+#### 安装服务
+```bash
+sudo bash scripts/service_install.sh
+```
+
+#### 管理命令
+```bash
+# 查看状态
+sudo systemctl status monorelay
+
+# 查看日志
+sudo journalctl -u monorelay -f
+
+# 重启
+sudo systemctl restart monorelay
+
+# 停止
+sudo systemctl stop monorelay
+
+# 卸载
+sudo bash scripts/service_uninstall.sh
+```
+
+### 方式二：后台运行脚本
+
+```bash
+# 后台启动
+./start-bg.sh start
+
+# 查看状态
+./start-bg.sh status
+
+# 重启
+./start-bg.sh restart
+
+# 停止
+./start-bg.sh stop
+```
+
+### 方式三：Docker
+
+#### 快速部署
+```bash
+# 1. 复制配置
+cp config.yml.example config.yml
+
+# 2. 编辑配置（填入 API Key）
+vim config.yml
+
+# 3. 启动
+docker compose up -d
+
+# 4. 查看日志
+docker compose logs -f
+
+# 5. 停止
+docker compose down
+```
+
+#### Docker Compose 命令
+```bash
+# 构建镜像
+docker compose build
+
+# 启动（后台）
+docker compose up -d
+
+# 启动（前台调试）
+docker compose up
+
+# 查看日志
+docker compose logs -f monorelay
+
+# 重启
+docker compose restart monorelay
+
+# 停止
+docker compose down
+
+# 查看状态
+docker compose ps
+```
+
+#### Docker 环境变量
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `TZ` | 时区 | `Asia/Shanghai` |
+
+#### 数据持久化
+Docker 部署会自动创建 `monorelay-data` 卷，持久化存储：
+- 用户数据 (`data/users.db`)
+- 请求日志 (`data/requests.db`)
+- 统计数据 (`data/stats.json`)
+- 配置文件 (`data/config.yml`)
+
+### 方式四：PM2 进程管理
+
+```bash
+# 安装依赖
+npm install -g pm2
+
+# 启动
+pm2 start "python -m backend.main" --name monorelay
+
+# 查看状态
+pm2 status
+
+# 查看日志
+pm2 logs monorelay
+
+# 重启
+pm2 restart monorelay
+
+# 停止
+pm2 stop monorelay
+
+# 开机自启
+pm2 save
+pm2 startup
+```
+
+### 方式五：直接运行
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 启动
+python -m backend.main
+
+# 指定端口
+python -m backend.main --port 9000
+
+# 指定配置文件
+python -m backend.main --config /path/to/config.yml
+```
+
+### 常用端口
+| 端口 | 服务 |
+|------|------|
+| 8787 | MonoRelay API |
+| 9090 | Sing-box Clash API |
+
+## 许可证
+
 MIT

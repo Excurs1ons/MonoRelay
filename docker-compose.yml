@@ -1,15 +1,15 @@
 version: "3.8"
 
 services:
-  mono-relay:
+  monorelay:
     build: .
-    container_name: mono-api-relay
+    container_name: monorelay
     restart: unless-stopped
     ports:
       - "8787:8787"
     volumes:
       - ./config.yml:/app/config.yml:ro
-      - mono-data:/app/data
+      - monorelay-data:/app/data
     environment:
       - TZ=Asia/Shanghai
     healthcheck:
@@ -20,5 +20,5 @@ services:
       start_period: 10s
 
 volumes:
-  mono-data:
+  monorelay-data:
     driver: local

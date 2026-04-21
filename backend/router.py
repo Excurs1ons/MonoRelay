@@ -210,6 +210,17 @@ class ModelRouter:
     def apply_transformation(self, body: dict, model: str) -> dict:
         body = body.copy()
         
+        for mp in self.config.model_routing.model_params:
+            if mp.model_pattern and fnmatch.fnmatch(model.lower(), mp.model_pattern.lower()):
+                for key, value in mp.params.items():
+                    body[key] = value
+                if mp.system_prompt:
+                    messages = body.get("messages", [])
+                    if isinstance(messages, list):
+                        messages.insert(0, {"role": "system", "content": mp.system_prompt})
+                        body["messages"] = messages
+                break
+        
         # 1. Payload Transformation Rules
         pt = self.config.model_routing.payload_transformation
         if pt.enabled:
@@ -236,17 +247,14 @@ class ModelRouter:
                             if "." in key: self._set_nested(body, key, value)
                             else: body[key] = value
             
-            # Handle System Prompt injection
             if gp.system_prompt:
                 messages = body.get("messages", [])
                 if isinstance(messages, list):
                     if gp.mode == "override":
-                        # Remove all existing system messages
                         messages = [m for m in messages if m.get("role") != "system"]
-                        # Prepend the global system prompt
                         messages.insert(0, {"role": "system", "content": gp.system_prompt})
                         body["messages"] = messages
-                    else: # "default" mode -> Combination
+                    else:
                         found_system = False
                         for m in messages:
                             if m.get("role") == "system":
@@ -258,7 +266,7 @@ class ModelRouter:
                         if not found_system:
                             messages.insert(0, {"role": "system", "content": gp.system_prompt})
                             body["messages"] = messages
-                        
+        
         return body
 
     def _set_nested(self, d: dict, path: str, value: Any) -> None:

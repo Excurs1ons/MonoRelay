@@ -21,15 +21,34 @@ async function request(url, options = {}) {
     ...(options.headers || {})
   }
 
-  const response = await fetch(url, { ...options, headers })
+  const resp = await fetch(url, { ...options, headers })
   
-  if (response.status === 401 && !url.includes('/api/auth/login')) {
+  if (resp.status === 401 && !url.includes('/api/auth/login')) {
     localStorage.removeItem('access_token')
     window.location.href = '/login'
     throw new Error('Unauthorized')
   }
 
-  const json = await response.json()
+  const contentType = resp.headers.get('content-type') || ''
+  let json
+  if (!resp.ok || !contentType.includes('application/json')) {
+    const text = await resp.text()
+    if (!resp.ok) {
+      throw new Error(text || `Error ${resp.status}`)
+    }
+    try {
+      json = JSON.parse(text)
+    } catch {
+      json = {}
+    }
+  } else {
+    json = await resp.json()
+  }
+  
+  if (!resp.ok) {
+    throw new Error(json?.detail || json?.message || json?.error?.message || `Error ${resp.status}`)
+  }
+  
   if (json && json.success === true && json.data !== undefined) {
     return json.data
   }

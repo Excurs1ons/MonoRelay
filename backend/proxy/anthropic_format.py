@@ -603,6 +603,8 @@ async def _stream_messages(
     attempt = 0
     last_error = None
     
+    yielded_any_data = False
+    
     while attempt <= provider_cfg.retry.max_retries:
         try:
             tokens_in = None
@@ -639,7 +641,7 @@ async def _stream_messages(
                             yield f"event: error\ndata: {event_data}\n\n".encode()
                             return
 
-                        if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        if not yielded_any_data and key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
@@ -666,6 +668,7 @@ async def _stream_messages(
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
+                            yielded_any_data = True
                             buffer += chunk
                         stream_chunks += 1
 
@@ -747,6 +750,7 @@ async def _stream_messages(
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
+            return
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
@@ -780,7 +784,10 @@ async def _non_stream_messages(
                 elapsed = time.time() - start_time
 
                 if resp.status_code >= 400:
-                    error_data = resp.json() if resp.content else {}
+                    try:
+                        error_data = resp.json() if resp.content else {}
+                    except Exception:
+                        error_data = {"error": {"message": resp.text, "type": "upstream_error"}}
                     error_type = error_data.get("error", {}).get("type", "upstream_error")
                     status_code = resp.status_code
                     

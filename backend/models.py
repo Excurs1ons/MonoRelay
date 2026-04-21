@@ -73,16 +73,132 @@ class ProviderConfig(BaseModel):
     # Default rates for this provider
     cost_per_m_input: float = 0.0
     cost_per_m_output: float = 0.0
+<<<<<<< HEAD
     # Fine-grained rates per model ID
     model_rates: Dict[str, ModelRate] = Field(default_factory=dict)
     retry: Any = Field(default_factory=dict)
     ignore: Any = Field(default_factory=dict)
+=======
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    ignore: IgnoreConfig = Field(default_factory=IgnoreConfig)
+    params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
+    model_params: list[ModelParamsConfig] = Field(default_factory=list)
+
+
+class ModelParamsConfig(BaseModel):
+    """Model-specific request parameters."""
+    model_pattern: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
+>>>>>>> main
 
 
 class BillingConfig(BaseModel):
     enabled: bool = False
+<<<<<<< HEAD
     enforce_balance: bool = True  # Block request if balance <= 0
     free_quota: float = 0.0       # Initial balance for new users
+=======
+    simple: str = "openai/gpt-4o-mini"
+    moderate: str = "openai/gpt-4o"
+    complex: str = "anthropic/claude-sonnet-4-20250514"
+
+
+class CascadeConfig(BaseModel):
+    enabled: bool = False
+    models: list[str] = Field(default_factory=list)
+    max_retries: int = 2
+
+
+class TransformationRule(BaseModel):
+    """Rule for transforming request payloads based on model patterns."""
+    models: list[str] = Field(default_factory=list)  # fnmatch patterns
+    inject_params: dict[str, Any] = Field(default_factory=dict)  # params to add
+    override_params: dict[str, Any] = Field(default_factory=dict)  # params to override
+
+
+class PayloadTransformation(BaseModel):
+    """Configuration for request payload transformation."""
+    enabled: bool = False
+    rules: list[TransformationRule] = Field(default_factory=list)
+
+
+class GlobalRequestParamsConfig(BaseModel):
+    """Global request parameters with combination or override mode."""
+    enabled: bool = False
+    mode: str = "default"  # "default" (combination/missing) or "override" (always)
+    params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
+
+
+class ModelRoutingConfig(BaseModel):
+    enabled: bool = True
+    mode: str = "passthrough"
+    aliases: dict[str, str] = Field(default_factory=dict)
+    provider_mapping: dict[str, str] = Field(default_factory=dict)
+    model_overrides: dict[str, str] = Field(default_factory=dict)
+    complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
+    cascade: CascadeConfig = Field(default_factory=CascadeConfig)
+    payload_transformation: PayloadTransformation = Field(default_factory=PayloadTransformation)
+    global_params: GlobalRequestParamsConfig = Field(default_factory=GlobalRequestParamsConfig)
+    model_params: list[ModelParamsConfig] = Field(default_factory=list)
+
+
+class ToolCallingConfig(BaseModel):
+    auto_downgrade: bool = True
+    unsupported_models: list[str] = Field(default_factory=list)
+
+
+class LoggingConfig(BaseModel):
+    enabled: bool = True
+    db_path: str = "./data/requests.db"
+    max_age_days: int = 30
+    content_preview_length: int = 200
+
+
+class ServerConfig(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8787
+    access_key: str = ""
+    access_key_enabled: bool = True
+    log_level: str = "INFO"
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    public_host: str = ""
+    turnstile_enabled: bool = False
+    turnstile_site_key: str = ""
+
+    jwt_secret: str = Field(default="", exclude=True)
+    turnstile_secret_key: str = Field(default="", exclude=True)
+
+
+class KeySelectionConfig(BaseModel):
+    strategy: str = "round-robin"
+
+
+class SyncConfig(BaseModel):
+    enabled: bool = False
+    gist_id: str = ""
+    gist_id_stats: str = ""
+
+
+class SSOConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "github"
+    prismaauth_url: str = "http://localhost:8080"
+    client_id: str = ""
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile", "email"])
+    github_client_id: str = ""
+    google_client_id: str = ""
+    local_sso_enabled: bool = False
+    sso_only: bool = False
+    admin_usernames: list[str] = Field(default_factory=list)
+
+    client_secret: str = Field(default="", exclude=True)
+    github_client_secret: str = Field(default="", exclude=True)
+    google_client_secret: str = Field(default="", exclude=True)
+    local_sso_secret: str = Field(default="", exclude=True)
+>>>>>>> main
 
 
 class AppConfig(BaseModel):
