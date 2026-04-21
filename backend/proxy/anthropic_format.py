@@ -750,6 +750,7 @@ async def _stream_messages(
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
+            return
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
