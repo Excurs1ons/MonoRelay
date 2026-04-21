@@ -315,7 +315,7 @@ tr:last-child td { border-bottom: none; }
 
 /* Chat Container Styles */
 .chat-container { display: flex; flex-direction: column; gap: 12px; background: rgba(0,0,0,0.1); padding: 16px; border-radius: 10px; border: 1px solid var(--color-border); }
-.message-item { display: flex; flex-direction: column; max-width: 90%; }
+.message-item { display: flex; flex-direction: column; max-width: 85%; }
 .msg-user { align-self: flex-end; align-items: flex-end; }
 .msg-assistant { align-self: flex-start; align-items: flex-start; }
 .msg-system { align-self: center; align-items: center; max-width: 100%; }
@@ -326,6 +326,14 @@ tr:last-child td { border-bottom: none; }
 .msg-user .message-bubble { background: var(--color-accent); color: #fff; border-bottom-right-radius: 2px; }
 .msg-assistant .message-bubble { background: var(--color-bg-input); color: var(--color-text); border: 1px solid var(--color-border); border-bottom-left-radius: 2px; }
 .msg-system .message-bubble { background: rgba(255,255,255,0.05); color: var(--color-text-dim); font-size: 11px; border: 1px dashed var(--color-border); border-radius: 6px; font-style: italic; }
+
+@media (max-width: 640px) {
+  .chat-container { padding: 10px; gap: 8px; }
+  .message-item { max-width: 95%; }
+  .message-bubble { padding: 8px 12px; font-size: 11.5px; }
+  .expand-content { padding: 12px 10px; }
+  .content-text { padding: 10px; font-size: 11px; }
+}
 
 .thinking-sub-block { margin-top: 12px; padding-left: 12px; border-left: 2px solid rgba(168, 85, 247, 0.3); }
 .sub-label { font-size: 10px; font-weight: 600; color: #a855f7; text-transform: uppercase; margin-bottom: 6px; }
