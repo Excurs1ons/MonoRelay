@@ -1611,3 +1611,7 @@ async def handle_runs_retrieve(thread_id, run_id, config, key_manager, request_l
 
 async def handle_runs_cancel(thread_id, run_id, config, key_manager, request_logger, stats_tracker):
     return await _handle_generic_post(f"/threads/{thread_id}/runs/{run_id}/cancel", {}, config, key_manager, None, request_logger, stats_tracker)
+
+async def handle_audio_translations(body, file, config, key_manager, router, request_logger, stats_tracker):
+    return await _handle_generic_multipart("/audio/translations", body, {"file": file}, config, key_manager, router, request_logger, stats_tracker)
+
