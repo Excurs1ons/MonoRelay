@@ -278,7 +278,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body=original_body,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
         )
 
 
