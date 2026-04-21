@@ -222,17 +222,42 @@ class ModelRouter:
                         if "." in key: self._set_nested(body, key, value)
                         else: body[key] = value
         
-        # 2. Global Request Parameters
+        # 2. Global Request Parameters & System Prompt
         gp = self.config.model_routing.global_params
-        if gp.enabled and gp.params:
-            for key, value in gp.params.items():
-                if gp.mode == "override":
-                    if "." in key: self._set_nested(body, key, value)
-                    else: body[key] = value
-                else: # "default"
-                    if key not in body:
+        if gp.enabled:
+            # Handle standard params
+            if gp.params:
+                for key, value in gp.params.items():
+                    if gp.mode == "override":
                         if "." in key: self._set_nested(body, key, value)
                         else: body[key] = value
+                    else: # "default" mode (Combination/Fill)
+                        if key not in body:
+                            if "." in key: self._set_nested(body, key, value)
+                            else: body[key] = value
+            
+            # Handle System Prompt injection
+            if gp.system_prompt:
+                messages = body.get("messages", [])
+                if isinstance(messages, list):
+                    if gp.mode == "override":
+                        # Remove all existing system messages
+                        messages = [m for m in messages if m.get("role") != "system"]
+                        # Prepend the global system prompt
+                        messages.insert(0, {"role": "system", "content": gp.system_prompt})
+                        body["messages"] = messages
+                    else: # "default" mode -> Combination
+                        found_system = False
+                        for m in messages:
+                            if m.get("role") == "system":
+                                current_content = m.get("content", "")
+                                if isinstance(current_content, str):
+                                    m["content"] = f"{gp.system_prompt}\n\n{current_content}"
+                                    found_system = True
+                                    break
+                        if not found_system:
+                            messages.insert(0, {"role": "system", "content": gp.system_prompt})
+                            body["messages"] = messages
                         
         return body
 

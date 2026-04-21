@@ -173,10 +173,11 @@ class PayloadTransformation(BaseModel):
 
 
 class GlobalRequestParamsConfig(BaseModel):
-    """Global request parameters with default or override mode."""
+    """Global request parameters with combination or override mode."""
     enabled: bool = False
-    mode: str = "default"  # "default" (if missing) or "override" (always)
+    mode: str = "default"  # "default" (combination/missing) or "override" (always)
     params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
 
 
 class ModelRoutingConfig(BaseModel):
