@@ -175,7 +175,7 @@ async def _handle_cascade_chat(
             return StreamingResponse(
                 _stream_chat(
                     provider_cfg, url, headers, request_body, key, key_manager, provider_name,
-                    model, original_model, request_logger, start_time, stats_tracker,
+                    model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -264,7 +264,7 @@ async def handle_chat_completions(
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker,
+                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
             ),
             media_type="text/event-stream",
             headers={
