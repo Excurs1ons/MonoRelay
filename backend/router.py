@@ -246,13 +246,15 @@ class ModelRouter:
                         # Prepend the global system prompt
                         messages.insert(0, {"role": "system", "content": gp.system_prompt})
                         body["messages"] = messages
-                    else: # "default" mode -> Combination
+else: # "default" mode -> Combination
                         found_system = False
                         for m in messages:
                             if m.get("role") == "system":
-                                # 如果已有 system prompt，忽略注入
-                                found_system = True
-                                break
+                                current_content = m.get("content", "")
+                                if isinstance(current_content, str):
+                                    m["content"] = f"{gp.system_prompt}\n\n{current_content}"
+                                    found_system = True
+                                    break
                         if not found_system:
                             messages.insert(0, {"role": "system", "content": gp.system_prompt})
                             body["messages"] = messages
