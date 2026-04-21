@@ -32,6 +32,10 @@
             <Globe :size="18" />
             <span>提供商管理</span>
           </router-link>
+                    <router-link to="/redemptions" class="nav-item">
+            <Ticket :size="18" />
+            <span>兑换码管理</span>
+          </router-link>
           <router-link to="/users" class="nav-item">
             <Users :size="18" />
             <span>用户管理</span>

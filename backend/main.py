@@ -3634,3 +3634,34 @@ async def api_admin_user_delete(user_id: int, request: Request):
     await user_manager._db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await user_manager._db.commit()
     return api_response(message="用户已删除")
+
+# --- Billing & Redemption API Endpoints ---
+
+@app.get("/api/admin/redemption-codes")
+async def api_admin_codes(request: Request):
+    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    cursor = await user_manager._db.execute("SELECT * FROM redemption_codes ORDER BY id DESC")
+    rows = await cursor.fetchall()
+    return api_response(data=[dict(r) for r in rows])
+
+@app.post("/api/admin/redemption-codes")
+async def api_admin_codes_create(request: Request, body: dict):
+    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    amount = body.get("amount", 0.0)
+    count = body.get("count", 1)
+    prefix = body.get("prefix", "PRISMA-")
+    codes = await user_manager.generate_codes(amount, count, prefix)
+    return api_response(data=codes)
+
+@app.post("/api/user/redeem")
+async def api_user_redeem(request: Request, body: dict):
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None: raise HTTPException(status_code=401)
+    code = body.get("code", "").strip()
+    if not code: raise HTTPException(status_code=400, detail="Missing code")
+    
+    amount = await user_manager.redeem_code(user_id, code)
+    if amount is None:
+        raise HTTPException(status_code=400, detail="Invalid or already used redemption code")
+    
+    return api_response(message=f"成功兑换 ${amount:.2f}", data={"amount": amount})
