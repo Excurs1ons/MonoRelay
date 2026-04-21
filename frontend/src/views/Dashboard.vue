@@ -123,7 +123,7 @@ async function fetchData() {
       const userStats = await api.getUserStats()
       stats.value = {
         total_requests: userStats.total_requests,
-        total_errors: 0, # To be improved in backend
+        total_errors: 0, // To be improved in backend
         requests_by_model: userStats.requests_by_model || {}
       }
       userBalance.value = userStats.balance
