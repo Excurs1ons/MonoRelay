@@ -50,6 +50,7 @@
                <tr v-if="expanded[log.id]" class="expand-row">
                  <td colspan="9">
                    <div class="expand-content">
+                     <!-- Params Block -->
                      <div v-if="log.temperature || log.top_p || log.presence_penalty || log.frequency_penalty || log.max_tokens" class="params-block">
                        <div class="content-label">参数</div>
                        <div class="params-grid">
@@ -66,27 +67,27 @@
                         <div class="content-label">
                           Request
                           <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
-                            {{ isFullRequest(log.id) ? '显示预览' : '显示原始请求' }}
+                            {{ isFullRequest(log.id) ? '显示请求文本' : '显示原始请求' }}
                           </button>
                         </div>
                         <pre class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                       </div>
 
-                      <!-- Thinking Section (If available) -->
-                      <div v-if="getThinkingContent(log.id)" class="content-block">
-                        <div class="content-label thinking-label">Thinking</div>
-                        <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
-                      </div>
-
-                      <!-- Response Section -->
+                      <!-- Response Section (Now includes Thinking) -->
                       <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
                         <div class="content-label">
                           Response
                           <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
-                            {{ isFullResponse(log.id) ? '显示预览' : '显示原始响应' }}
+                            {{ isFullResponse(log.id) ? '显示响应文本' : '显示原始响应' }}
                           </button>
                         </div>
                         <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
+                        
+                        <!-- Thinking Sub-section inside Response -->
+                        <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block">
+                          <div class="sub-label">Thinking Process</div>
+                          <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
+                        </div>
                       </div>
 
                       <!-- Error Section -->
@@ -152,7 +153,6 @@ async function loadFullContent(id) {
   try {
     const data = await api.getLogDetail(id)
     fullContent.value[id] = data
-    // Auto-show full for errors
     if (data.error_message) {
       showFullReqState.value[id] = true
       showFullResState.value[id] = true
@@ -290,6 +290,8 @@ tr:last-child td { border-bottom: none; }
 .content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; margin: 0; }
 .error-text { color: var(--color-red); border-color: rgba(231,76,60,0.3); background: rgba(231,76,60,0.05); }
 
-.thinking-label { color: #a855f7; }
-.thinking-text { border-color: rgba(168, 85, 247, 0.2); background: rgba(168, 85, 247, 0.03); color: var(--color-text-dim); font-style: italic; }
+.thinking-sub-block { margin-top: 12px; padding-left: 12px; border-left: 2px solid rgba(168, 85, 247, 0.3); }
+.sub-label { font-size: 10px; font-weight: 600; color: #a855f7; text-transform: uppercase; margin-bottom: 6px; }
+.thinking-text { background: rgba(168, 85, 247, 0.02); border-color: rgba(168, 85, 247, 0.1); color: var(--color-text-dim); font-style: italic; }
+.mt-4 { margin-top: 16px; }
 </style>
