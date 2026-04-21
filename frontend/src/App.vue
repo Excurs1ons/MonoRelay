@@ -1,971 +1,195 @@
 <template>
-<Toast />
-  <!-- Main app -->
-  <div class="app">
-    <div class="bg-layer">
-      <div class="bg-gradient"></div>
-    </div>
+  <div class="app-container" :class="{ 'light': isLight }">
+    <!-- Sidebar -->
+    <aside class="sidebar" :class="{ 'collapsed': isCollapsed, 'mobile-open': isMobileOpen }">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-box">PR</div>
+          <span class="logo-text">MonoRelay</span>
+        </div>
+      </div>
 
-    <!-- Header - 全屏固定浮层 -->
-    <header class="header">
-      <div class="header-inner">
-        <button class="btn btn-ghost btn-xs hamburger-btn" @click="mobileMenuOpen = !mobileMenuOpen">
-          <Menu :size="20" />
-        </button>
-        <h1 class="header-title" @click="$router.push('/dashboard')">
-          <svg class="header-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-            <path d="M2 17l10 5 10-5"/>
-            <path d="M2 12l10 5 10-5"/>
-          </svg>
-          MonoRelay
-          <span class="status-dot"></span>
-        </h1>
-        <div class="header-right">
-          <div class="locale-dropdown" v-if="localeDropdownOpen">
-            <button class="locale-option" @click="localeStore.set('zh'); localeDropdownOpen = false">中文</button>
-            <button class="locale-option" @click="localeStore.set('en'); localeDropdownOpen = false">EN</button>
+      <nav class="nav-menu">
+        <router-link to="/" class="nav-item">
+          <LayoutDashboard :size="18" />
+          <span>{{ $t('nav.dashboard') }}</span>
+        </router-link>
+        
+        <router-link to="/keys" class="nav-item">
+          <Key :size="18" />
+          <span>{{ userRole === 'admin' ? '上游密钥' : '我的令牌' }}</span>
+        </router-link>
+
+        <router-link to="/logs" class="nav-item">
+          <Activity :size="18" />
+          <span>{{ $t('nav.logs') }}</span>
+        </router-link>
+
+        <!-- Admin Only Menu -->
+        <template v-if="userRole === 'admin'">
+          <div class="nav-divider">管理</div>
+          <router-link to="/providers" class="nav-item">
+            <Globe :size="18" />
+            <span>提供商管理</span>
+          </router-link>
+          <router-link to="/users" class="nav-item">
+            <Users :size="18" />
+            <span>用户管理</span>
+          </router-link>
+          <router-link to="/analytics" class="nav-item">
+            <BarChart3 :size="18" />
+            <span>增强统计</span>
+          </router-link>
+          <router-link to="/settings" class="nav-item">
+            <Settings :size="18" />
+            <span>{{ $t('nav.settings') }}</span>
+          </router-link>
+        </template>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-info" v-if="user">
+          <div class="avatar">{{ user.username[0].toUpperCase() }}</div>
+          <div class="details">
+            <div class="name">{{ user.username }}</div>
+            <div class="role-badge">{{ userRole }}</div>
           </div>
-          <button class="btn btn-ghost btn-xs" @click="themeStore.toggle()">
-            <Sun :size="14" v-if="themeStore.isDark" />
-            <Moon :size="14" v-else />
-          </button>
-          <button class="btn btn-ghost btn-xs" @click="localeDropdownOpen = !localeDropdownOpen">
-            <Languages :size="14" />
+          <button class="logout-btn" @click="logout" title="退出登录">
+            <LogOut :size="16" />
           </button>
         </div>
       </div>
-    </header>
+    </aside>
 
-    <!-- Mobile Menu Overlay -->
-    <div class="mobile-menu-overlay" v-show="mobileMenuOpen" @click="mobileMenuOpen = false"></div>
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="top-header">
+        <div class="flex items-center gap-4">
+          <button class="menu-toggle" @click="isMobileOpen = !isMobileOpen">
+            <Menu :size="20" />
+          </button>
+          <div class="breadcrumb">
+            <span class="text-dim">Prisma</span> / <span>{{ currentRouteName }}</span>
+          </div>
+        </div>
 
-    <!-- Mobile Menu -->
-    <div class="mobile-menu" :class="{ open: mobileMenuOpen }" v-show="authed">
-      <nav class="mobile-tabs">
-        <button
-          v-for="tab in filteredTabs"
-          :key="tab.path"
-          class="mobile-tab"
-          :class="{ active: route.path === tab.path }"
-          @click="$router.push(tab.path); mobileMenuOpen = false"
-        >
-          <component :is="tab.icon" :size="18" />
-          {{ tab.label.startsWith('common.') ? $t(tab.label) : tab.label }}
-        </button>
-      </nav>
-    </div>
+        <div class="header-actions">
+          <div class="balance-display" v-if="user && userRole === 'user'">
+            <CreditCard :size="14" />
+            <span>余额: ${{ user.balance?.toFixed(2) }}</span>
+          </div>
+          <button class="theme-toggle" @click="toggleTheme">
+            <Sun v-if="!isLight" :size="18" />
+            <Moon v-else :size="18" />
+          </button>
+        </div>
+      </header>
 
-    <div class="container" :class="{ 'no-tabs': !authed }">
-      <!-- Segmented tabs - 登录后显示 -->
-      <nav class="tabs" v-if="authed">
-        <button
-          v-for="tab in filteredTabs"
-          :key="tab.path"
-          class="tab"
-          :class="{ active: route.path === tab.path }"
-          @click="$router.push(tab.path)"
-        >
-          <component :is="tab.icon" :size="16" />
-          {{ tab.label.startsWith('common.') ? $t(tab.label) : tab.label }}
-        </button>
-      </nav>
+      <div class="page-content">
+        <router-view v-slot="{ Component }">
+          <transition name="fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
+      </div>
+    </main>
 
-      <!-- Page content -->
-      <router-view />
-    </div>
+    <div class="mobile-overlay" v-if="isMobileOpen" @click="isMobileOpen = false"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { useAuthStore, useLocaleStore, useThemeStore } from '@/stores'
-import Toast from '@/components/Toast.vue'
-import { api, setAccessKey, setToken } from '@/api'
-import { LayoutDashboard, Server, FileText, SlidersHorizontal, LogOut, Languages, BarChart3, Key, Boxes, Info, Users, User, Settings, Sun, Moon, Menu } from 'lucide-vue-next'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { api } from './api'
+import { 
+  LayoutDashboard, Key, Activity, Globe, Settings, 
+  Users, BarChart3, LogOut, Menu, Sun, Moon, CreditCard 
+} from 'lucide-vue-next'
 
+const isCollapsed = ref(false)
+const isMobileOpen = ref(false)
+const isLight = ref(localStorage.getItem('theme') === 'light')
+const user = ref(null)
+const router = useRouter()
 const route = useRoute()
-const authStore = useAuthStore()
-const localeStore = useLocaleStore()
-const themeStore = useThemeStore()
-const inputKey = ref('')
-const mobileMenuOpen = ref(false)
-const localeDropdownOpen = ref(false)
-const loginError = ref(false)
-const authError = ref('')
-const serverInfo = ref('')
-const authed = computed(() => !!authStore.token)
-const isSetupMode = ref(false)
-const userData = ref(null)
-const authMode = ref('key') // 'key' or 'user' or 'sso'
-const accessKeyEnabled = ref(true)
-const turnstileSiteKey = ref('')
-const turnstileToken = ref('')
-const ssoEnabled = ref(false)
-const ssoOnly = ref(false)
-const ssoLoading = ref(false)
-let ssoPopup = null
 
-// Turnstile verify callback
-window.onTurnstileVerify = (token) => {
-  console.log('Turnstile verified')
-  turnstileToken.value = token
-}
+const userRole = computed(() => user.value?.role || (user.value?.is_admin ? 'admin' : 'user'))
+const currentRouteName = computed(() => route.path === '/' ? 'Dashboard' : route.path.slice(1).charAt(0).toUpperCase() + route.path.slice(2))
 
-window.onTurnstileExpired = () => {
-  console.log('Turnstile expired')
-  turnstileToken.value = ''
-}
-
-const loginForm = ref({
-username: '',
-password: ''
-})
-
-const registerForm = ref({
-username: '',
-email: '',
-password: '',
-confirmPassword: ''
-})
-
-const tabs = [
-  { path: '/dashboard', label: 'common.dashboard', icon: LayoutDashboard },
-  { path: '/providers', label: 'common.providers', icon: Server },
-  { path: '/keys', label: 'common.keys', icon: Key },
-  { path: '/models', label: 'common.models', icon: Boxes },
-  { path: '/analytics', label: 'common.analytics', icon: BarChart3 },
-  { path: '/logs', label: 'common.logs', icon: FileText },
-  { path: '/config', label: 'common.config', icon: SlidersHorizontal },
-  { path: '/settings', label: '设置', icon: Settings, adminOnly: true },
-  { path: '/users', label: '用户', icon: Users, adminOnly: true },
-  { path: '/account', label: '账户', icon: User },
-  { path: '/about', label: '关于', icon: Info },
-]
-
-const filteredTabs = computed(() => {
-  return tabs.filter(tab => {
-    if (tab.adminOnly) {
-      if (userData.value && (userData.value.is_admin || userData.value.is_super_admin)) {
-        return true
-      }
-      if (authed.value) {
-        return true
-      }
-      return false
-    }
-    return true
-  })
-})
-
-async function checkSetup() {
-try {
-const status = await api.checkSetupStatus()
-isSetupMode.value = status.needs_setup
-
-// Check SSO status
-const ssoStatus = await api.getSSOStatus()
-ssoEnabled.value = ssoStatus.enabled
-ssoOnly.value = ssoStatus.sso_only || false
-
-// Check if access key is enabled
-const info = await api.getInfo()
-accessKeyEnabled.value = info.access_key_enabled !== false
-turnstileSiteKey.value = info.turnstile_site_key || ''
-
-if (turnstileSiteKey.value) {
-  // Inject Turnstile script
-  if (!document.getElementById('turnstile-script')) {
-    const script = document.createElement('script')
-    script.id = 'turnstile-script'
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
-    script.async = true
-    script.defer = true
-    document.head.appendChild(script)
+async function fetchUser() {
+  if (route.meta.public) return
+  try {
+    user.value = await api.getMe()
+  } catch (e) {
+    if (!route.meta.public) router.push('/login')
   }
 }
 
-// If SSO-only mode, auto-select SSO login
-if (ssoOnly.value && ssoEnabled.value) {
-authMode.value = 'sso'
-} else if (!accessKeyEnabled.value && authMode.value === 'key') {
-  authMode.value = 'user'
+function toggleTheme() {
+  isLight.value = !isLight.value
+  localStorage.setItem('theme', isLight.value ? 'light' : 'dark')
 }
 
-// Only check for SSO token if NOT already logged in
-if (!authStore.token) {
-const ssoToken = localStorage.getItem('sso_token')
-if (ssoToken) {
-localStorage.removeItem('sso_token')
-setToken(ssoToken)
-authStore.setToken(ssoToken)
-fetchInfo()
-window.history.replaceState({}, document.title, window.location.pathname)
-}
-}
-} catch (e) {
-isSetupMode.value = false
-ssoEnabled.value = false
-ssoOnly.value = false
-}
+function logout() {
+  localStorage.removeItem('access_token')
+  router.push('/login')
 }
 
-async function handleSSOLogin() {
-ssoLoading.value = true
-loginError.value = false
-
-try {
-const result = await api.getSSOLoginUrl(window.location.origin)
-const loginUrl = result.login_url
-const state = result.state
-
-// Open popup window
-ssoPopup = window.open(
-loginUrl,
-'SSO Login',
-'width=500,height=600,scrollbars=yes,resizable=yes'
-)
-
-if (!ssoPopup) {
-ssoLoading.value = false
-loginError.value = localeStore.locale === 'zh' ? '请允许弹出窗口' : 'Please allow popup windows'
-return
-}
-
-// Listen for messages from popup
-const handleMessage = (event) => {
-console.log('handleMessage: received', event.data)
-if (event.data && event.data.type === 'SSO_CALLBACK') {
-window.removeEventListener('message', handleMessage)
-clearInterval(checkClosed)
-
-if (!event.data.success) {
-ssoLoading.value = false
-loginError.value = event.data.error || (localeStore.locale === 'zh' ? 'SSO登录失败' : 'SSO login failed')
-return
-}
-
-const { access_token: token, state: callbackState } = event.data
-if (callbackState !== state) {
-ssoLoading.value = false
-loginError.value = localeStore.locale === 'zh' ? '状态验证失败' : 'State mismatch'
-return
-}
-
-if (token) {
-setToken(token)
-authStore.setToken(token)
-fetchInfo()
-}
-ssoLoading.value = false
-} else if (event.data && event.data.type === 'SSO_LOGIN_SUCCESS') {
-console.log('handleMessage: SSO_LOGIN_SUCCESS received')
-window.removeEventListener('message', handleMessage)
-clearInterval(checkClosed)
-if (event.data.token) {
-setToken(event.data.token)
-authStore.setToken(event.data.token)
-fetchInfo()
-}
-ssoLoading.value = false
-ssoPopup = null
-}
-}
-
-window.addEventListener('message', handleMessage)
-
-// Check if popup was closed without completing
-const checkClosed = setInterval(() => {
-if (ssoPopup && ssoPopup.closed) {
-clearInterval(checkClosed)
-window.removeEventListener('message', handleMessage)
-ssoLoading.value = false
-ssoPopup = null
-}
-}, 500)
-
-} catch (e) {
-console.error('SSO login failed:', e)
-loginError.value = true
-ssoLoading.value = false
-}
-}
-
-async function handleKeyLogin() {
-loginError.value = false
-setAccessKey(inputKey.value)
-setToken('')
-try {
-    await api.health(turnstileToken.value)
-    authStore.setToken(inputKey.value)
-
-fetchInfo()
-} catch {
-loginError.value = true
-}
-}
-
-async function handleUserLogin() {
-loginError.value = false
-try {
-const result = await api.login(loginForm.value.username, loginForm.value.password, turnstileToken.value)
-setToken(result.access_token)
-authStore.setToken(result.access_token)
-fetchInfo()
-} catch (e) {
-loginError.value = true
-}
-}
-
-async function handleRegister() {
-authError.value = ''
-
-if (registerForm.value.password !== registerForm.value.confirmPassword) {
-authError.value = localeStore.locale === 'zh' ? '两次输入的密码不一致' : 'Passwords do not match'
-return
-}
-
-if (registerForm.value.password.length < 8) {
-authError.value = localeStore.locale === 'zh' ? '密码长度至少8位' : 'Password must be at least 8 characters'
-return
-}
-
-try {
-const result = await api.register(
-registerForm.value.username,
-registerForm.value.email,
-registerForm.value.password,
-turnstileToken.value
-)
-setToken(result.access_token)
-authStore.setToken(result.access_token)
-isSetupMode.value = false
-fetchInfo()
-} catch (e) {
-authError.value = e.message || (localeStore.locale === 'zh' ? '注册失败' : 'Registration failed')
-}
-}
-function handleLogout() {
-  authStore.clearToken()
-  inputKey.value = ''
-  loginForm.value = { username: '', password: '' }
-  registerForm.value = { username: '', email: '', password: '', confirmPassword: '' }
-  window.location.href = '/login'
-}
-
-async function fetchInfo() {
-try {
-console.log('fetchInfo: calling api.getInfo()...')
-const data = await api.getInfo()
-console.log('fetchInfo: got data:', data)
-serverInfo.value = `${data.local_ip || '127.0.0.1'}:${data.port || 8787}`
-
-// Fetch user info for admin check
-try {
-  const me = await api.getMe()
-  userData.value = me
-  console.log('userData:', userData.value)
-} catch (e) {
-  console.log('Failed to fetch user info - using localStorage fallback')
-  const stored = localStorage.getItem('userData')
-  if (stored) {
-    userData.value = JSON.parse(stored)
-  }
-}
-} catch (e) {
-console.error('fetchInfo: error:', e)
-serverInfo.value = 'localhost:8787'
-}
-}
+watch(() => route.path, () => {
+  isMobileOpen.value = false
+  fetchUser()
+})
 
 onMounted(() => {
-if (authed.value) {
-  fetchInfo()
-} else {
-  checkSetup()
-}
-
-// Listen for storage changes (from SSO callback in popup)
-window.addEventListener('storage', (e) => {
-if (e.key === 'sso_token' && e.newValue) {
-console.log('Storage event: sso_token changed')
-localStorage.removeItem('sso_token')
-setToken(e.newValue)
-authStore.setToken(e.newValue)
-fetchInfo()
-}
-})
+  fetchUser()
 })
 </script>
 
-<style scoped>
-.auth-screen {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--color-bg);
-  position: relative;
-  overflow: hidden;
-}
-.auth-screen .bg-layer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-.auth-screen .bg-gradient {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: 
-    radial-gradient(ellipse 100% 60% at 15% 20%, rgba(249, 115, 22, 0.12) 0%, transparent 50%),
-    radial-gradient(ellipse 80% 50% at 85% 80%, rgba(124, 58, 237, 0.1) 0%, transparent 45%),
-    radial-gradient(ellipse 60% 40% at 50% 60%, rgba(219, 39, 119, 0.08) 0%, transparent 40%);
-  animation: gradientPulse 25s ease-in-out infinite alternate;
-}
-.auth-screen .bg-grain {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  opacity: 0.025;
-}
-@keyframes gradientPulse {
-  0% { opacity: 0.7; transform: scale(1); }
-  100% { opacity: 1; transform: scale(1.03); }
-}
-.auth-card {
-  width: 100%;
-  max-width: 380px;
-  background: rgba(24, 24, 27, 0.6);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 40px 32px;
-  text-align: center;
-  position: relative;
-  z-index: 1;
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-.auth-icon {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 20px;
-  color: var(--color-accent);
-  animation: float 3s ease-in-out infinite;
-}
-.auth-icon svg {
-  width: 100%;
-  height: 100%;
-}
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
-}
-.auth-title {
-  font-size: 28px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  background: linear-gradient(135deg, var(--color-text), var(--color-text-dim));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin-bottom: 8px;
-}
-.auth-subtitle {
-  font-size: 14px;
-  color: var(--color-text-dim);
-  margin-bottom: 28px;
-}
-.auth-input {
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-input);
-  color: var(--color-text);
-  font-size: 14px;
-  font-family: var(--font-mono);
-  transition: border-color 0.15s, box-shadow 0.15s;
-  margin-bottom: 14px;
-}
-.auth-input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
-}
-.auth-input::placeholder {
-  color: var(--color-text-dim);
-  opacity: 0.6;
-}
-.auth-error {
-  font-size: 12px;
-  color: var(--color-red);
-  margin-bottom: 14px;
-}
-.auth-footer {
-  margin-top: 24px;
-  display: flex;
-  justify-content: center;
-}
-.lang-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-dim);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: var(--font-mono);
-}
-.lang-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-.auth-toggle {
-display: flex;
-gap: 8px;
-margin-bottom: 24px;
-justify-content: center;
-}
-.auth-toggle-btn {
-padding: 8px 18px;
-border-radius: 6px;
-border: 1px solid var(--color-border);
-background: transparent;
-color: var(--color-text-dim);
-font-size: 13px;
-cursor: pointer;
-transition: all 0.15s;
-font-family: var(--font-mono);
-}
-.auth-toggle-btn:hover {
-border-color: var(--color-accent);
-color: var(--color-accent);
-}
-.auth-toggle-btn.active {
-background: var(--color-accent);
-color: #fff;
-border-color: var(--color-accent);
-}
-.auth-sso-hint {
-  font-size: 13px;
-  color: var(--color-text-dim);
-  margin-bottom: 16px;
-}
-.auth-sso-loading {
-  padding: 32px 0;
-  text-align: center;
-}
-.auth-sso-spinner {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 20px;
-  position: relative;
-}
-.auth-sso-spinner-ring {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  border: 3px solid transparent;
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: auth-sso-spin 1.2s linear infinite;
-}
-.auth-sso-spinner-ring:nth-child(2) {
-  width: 80%;
-  height: 80%;
-  top: 10%;
-  left: 10%;
-  border-top-color: var(--color-accent);
-  opacity: 0.6;
-  animation-duration: 1.5s;
-  animation-direction: reverse;
-}
-.auth-sso-spinner-ring:nth-child(3) {
-  width: 60%;
-  height: 60%;
-  top: 20%;
-  left: 20%;
-  border-top-color: var(--color-accent);
-  opacity: 0.3;
-  animation-duration: 0.9s;
-}
-@keyframes auth-sso-spin {
-  to { transform: rotate(360deg); }
-}
-.auth-sso-loading-text {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-text);
-  margin-bottom: 8px;
-}
-.auth-sso-loading-hint {
-  font-size: 13px;
-  color: var(--color-text-dim);
-  margin-bottom: 16px;
-}
-.auth-sso-dots {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-}
-.auth-sso-dots span {
-  width: 6px;
-  height: 6px;
-  background: var(--color-accent);
-  border-radius: 50%;
-  animation: auth-sso-dot 1.4s ease-in-out infinite;
-}
-.auth-sso-dots span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-.auth-sso-dots span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-@keyframes auth-sso-dot {
-  0%, 80%, 100% {
-    transform: scale(1);
-    opacity: 0.5;
-  }
-  40% {
-    transform: scale(1.3);
-    opacity: 1;
-  }
+<style>
+/* Style inherited from v0.5.0 but optimized for multi-tenant */
+:root {
+  --color-bg: #09090b;
+  --color-bg-card: #121217;
+  --color-bg-input: #18181b;
+  --color-border: #27272a;
+  --color-text: #fafafa;
+  --color-text-dim: #a1a1aa;
+  --color-accent: #f97316;
+  --color-accent-hover: #ea580c;
+  --radius: 12px;
 }
 
-.app {
-  min-height: 100vh;
-  background: var(--color-bg);
-  color: var(--color-text);
-  position: relative;
-  overflow: hidden;
-}
-.app .bg-layer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-.app .bg-gradient {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: 
-    radial-gradient(ellipse 100% 60% at 15% 20%, rgba(249, 115, 22, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 80% 50% at 85% 80%, rgba(124, 58, 237, 0.06) 0%, transparent 45%);
-  animation: gradientPulse 25s ease-in-out infinite alternate;
-}
-.container {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 80px 24px 24px;
-  position: relative;
-  z-index: 1;
-}
-.container.no-tabs {
-  padding-top: 24px;
+.light {
+  --color-bg: #f8fafc;
+  --color-bg-card: #ffffff;
+  --color-bg-input: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-text: #0f172a;
+  --color-text-dim: #64748b;
 }
 
-/* Header */
-.header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 56px;
-  background: rgba(24, 24, 27, 0.5);
-  -webkit-backdrop-filter: blur(5px) saturate(100%);
-  backdrop-filter: blur(5px) saturate(100%);
-  border-bottom: 1px solid var(--color-border);
-  z-index: 100;
-}
+.app-container { display: flex; min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: 'Inter', sans-serif; }
+.sidebar { width: 260px; background: var(--color-bg-card); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; transition: all 0.3s; z-index: 100; }
+.main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.top-header { height: 64px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--color-bg); }
 
-.light .header {
-  background: rgba(255, 255, 255, 0.1);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
-  backdrop-filter: blur(8px) saturate(150%);
-}
+.nav-menu { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; color: var(--color-text-dim); text-decoration: none; transition: all 0.2s; font-size: 14px; font-weight: 500; }
+.nav-item:hover, .router-link-active { background: rgba(249, 115, 22, 0.1); color: var(--color-accent); }
+.nav-divider { padding: 16px 12px 8px; font-size: 11px; font-weight: 700; color: var(--color-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
 
-.header-inner {
-  max-width: 1120px;
-  margin: 0 auto;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-}
+.user-info { padding: 16px; border-top: 1px solid var(--color-border); display: flex; align-items: center; gap: 12px; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--color-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+.details { flex: 1; min-width: 0; }
+.name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.role-badge { font-size: 10px; background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 4px; display: inline-block; }
 
-.header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 18px;
-  font-weight: 700;
-  font-family: var(--font-sans);
-  color: var(--color-text);
-  margin: 0;
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.header-title:hover {
-  opacity: 0.8;
-}
-
-.header-logo {
-  width: 24px;
-  height: 24px;
-  color: var(--color-accent);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  position: relative;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  background: var(--color-green);
-  border-radius: 50%;
-  animation: pulse 2s ease-in-out infinite;
-  margin-left: 8px;
-}
-
-.locale-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 8px;
-  background: rgba(24, 24, 27, 0.5);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 80px;
-  z-index: 101;
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-
-.light .locale-dropdown {
-  background: rgba(255, 255, 255, 0.3);
-}
-
-.locale-option {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  border: none;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 6px;
-  text-align: left;
-  transition: all 0.15s;
-}
-
-.locale-option:hover {
-  background: var(--color-bg-input);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-card);
-  color: var(--color-text);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.btn-ghost {
-  background: transparent;
-  border-color: transparent;
-}
-.btn-xs {
-  padding: 6px 10px;
-  font-size: 13px;
-}
-.btn:hover {
-  background: var(--color-bg-input);
-  border-color: var(--color-accent);
-}
-
-/* Tabs */
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 12px 0;
-  margin-bottom: 4px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-.tabs::-webkit-scrollbar {
-  display: none;
-}
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-dim);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.tab:hover {
-  color: var(--color-text);
-  background: var(--color-bg-card);
-}
-.tab.active {
-  background: var(--color-accent);
-  color: #fff;
-  border-color: var(--color-accent);
-}
-
-/* Mobile Menu */
-.hamburger-btn {
-  display: none;
-}
-
-.mobile-menu-overlay {
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: transparent;
-  z-index: 99;
-}
-
-.mobile-menu {
-  display: none;
-  position: fixed;
-  top: 56px;
-  left: 0;
-  bottom: 0;
-  width: 160px;
-  background: rgba(24, 24, 27, 0.5);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border-right: 1px solid var(--color-border);
-  z-index: 100;
-  overflow-y: auto;
-  transform: translateX(-100%);
-  transition: transform 0.3s ease;
-}
-
-.light .mobile-menu {
-  background: rgba(255, 255, 255, 0.3);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-
-.mobile-menu.open {
-  transform: translateX(0);
-}
-
-.mobile-tabs {
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-}
-
-.mobile-tab {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-dim);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  text-align: left;
-}
-
-.mobile-tab:hover {
-  color: var(--color-text);
-  background: var(--color-bg-card);
-}
-
-.mobile-tab.active {
-  background: var(--color-accent);
-  color: #fff;
-  border-color: var(--color-accent);
-}
+.balance-display { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--color-accent); background: rgba(249, 115, 22, 0.1); padding: 4px 10px; border-radius: 20px; }
 
 @media (max-width: 768px) {
-  .hamburger-btn {
-    display: inline-flex;
-  }
-
-  .mobile-menu-overlay {
-    display: block;
-  }
-
-  .mobile-menu {
-    display: block;
-  }
-
-  .tabs {
-    display: none;
-  }
-
-  .header-title {
-    font-size: 16px;
-  }
-
-  .header-right {
-    gap: 8px;
-  }
-
-  .btn-ghost.btn-xs {
-    padding: 6px 8px;
-  }
+  .sidebar { position: fixed; left: -260px; height: 100vh; }
+  .sidebar.mobile-open { left: 0; }
+  .mobile-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 90; backdrop-filter: blur(2px); }
 }
 </style>

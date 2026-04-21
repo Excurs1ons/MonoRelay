@@ -1,87 +1,72 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useAuthStore } from '@/stores'
+import { api } from './api'
 
 const routes = [
-  { path: '/', redirect: '/login' },
-  {
-    path: '/login',
-    name: 'Login',
-    component: () => import('@/views/Login.vue'),
+  { path: '/login', component: () => import('./views/Login.vue'), meta: { public: true } },
+  { 
+    path: '/', 
+    component: () => import('./views/Dashboard.vue'),
+    meta: { roles: ['admin', 'user'] } 
   },
-  {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('@/views/Dashboard.vue'),
+  { 
+    path: '/keys', 
+    component: () => import('./views/Keys.vue'),
+    meta: { roles: ['admin', 'user'] } 
   },
-  {
-    path: '/providers',
-    name: 'Providers',
-    component: () => import('@/views/Providers.vue'),
+  { 
+    path: '/logs', 
+    component: () => import('./views/Logs.vue'),
+    meta: { roles: ['admin', 'user'] } 
   },
-  {
-    path: '/keys',
-    name: 'Keys',
-    component: () => import('@/views/Keys.vue'),
+  { 
+    path: '/providers', 
+    component: () => import('./views/Providers.vue'),
+    meta: { roles: ['admin'] } 
   },
-  {
-    path: '/models',
-    name: 'Models',
-    component: () => import('@/views/Models.vue'),
+  { 
+    path: '/settings', 
+    component: () => import('./views/Settings.vue'),
+    meta: { roles: ['admin'] } 
   },
-  {
-    path: '/logs',
-    name: 'Logs',
-    component: () => import('@/views/Logs.vue'),
+  { 
+    path: '/users', 
+    component: () => import('./views/Users.vue'),
+    meta: { roles: ['admin'] } 
   },
-  {
-    path: '/config',
-    name: 'Config',
-    component: () => import('@/views/Config.vue'),
+  { 
+    path: '/analytics', 
+    component: () => import('./views/Analytics.vue'),
+    meta: { roles: ['admin'] } 
   },
-  {
-    path: '/analytics',
-    name: 'Analytics',
-    component: () => import('@/views/Analytics.vue'),
-  },
-  {
-    path: '/help',
-    name: 'Help',
-    component: () => import('@/views/Help.vue'),
-  },
-  {
-    path: '/about',
-    name: 'About',
-    component: () => import('@/views/About.vue'),
-  },
-  {
-    path: '/users',
-    name: 'Users',
-    component: () => import('@/views/Users.vue'),
-  },
-  {
-    path: '/settings',
-    name: 'Settings',
-    component: () => import('@/views/Settings.vue'),
-  },
-  {
-    path: '/account',
-    name: 'Account',
-    component: () => import('@/views/Account.vue'),
-  },
+  { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes,
+  routes
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to, from, next) => {
+  if (to.meta.public) return next()
+
   const token = localStorage.getItem('access_token')
-  if (!token && to.path !== '/login') {
-    return '/login'
-  }
-  if (token && to.path === '/login') {
-    return '/dashboard'
+  if (!token) return next('/login')
+
+  try {
+    // We cache user info in state or fetch if missing
+    const user = await api.getMe()
+    if (!user) throw new Error('Unauthorized')
+    
+    const userRole = user.role || (user.is_admin ? 'admin' : 'user')
+    
+    if (to.meta.roles && !to.meta.roles.includes(userRole)) {
+      console.warn('Access denied for role:', userRole)
+      return next('/')
+    }
+    next()
+  } catch (e) {
+    localStorage.removeItem('access_token')
+    next('/login')
   }
 })
 

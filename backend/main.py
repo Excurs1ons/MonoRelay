@@ -1123,7 +1123,7 @@ async def audio_transcriptions(
     if temperature is not None:
         form_data["temperature"] = temperature
     result = await handle_audio_transcriptions(
-        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None) config_manager.config, key_manager, model_router, request_logger, stats_tracker,
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -3571,3 +3571,40 @@ def run():
 
 if __name__ == "__main__":
     run()
+
+# --- Multi-tenant User API Endpoints ---
+
+@app.get("/api/user/keys")
+async def api_user_keys(request: Request):
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None: raise HTTPException(status_code=401)
+    keys = await user_manager.get_user_api_keys(user_id)
+    return api_response(data=keys)
+
+@app.post("/api/user/keys")
+async def api_user_key_create(request: Request, body: dict):
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None: raise HTTPException(status_code=401)
+    label = body.get("label", "default")
+    key = await user_manager.create_api_key(user_id, label)
+    return api_response(data=key)
+
+@app.get("/api/user/stats")
+async def api_user_stats(request: Request):
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None: raise HTTPException(status_code=401)
+    user = await user_manager.get_user_by_id(user_id)
+    stats = usage_tracker.get_stats(str(user_id))
+    return api_response(data={
+        "balance": user.balance,
+        "quota_used": user.balance - stats.get("cost", 0), # Simplified for now
+        "total_requests": stats.get("total_requests", 0),
+        "total_cost": stats.get("cost", 0)
+    })
+
+@app.get("/api/user/logs")
+async def api_user_logs(request: Request, limit: int = 50):
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None: raise HTTPException(status_code=401)
+    logs = await request_logger.get_recent_requests(limit, user_id=user_id)
+    return api_response(data=logs)
