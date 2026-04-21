@@ -204,6 +204,7 @@ async def _handle_cascade_chat(
 
 async def handle_chat_completions(
     body: dict,
+    body: dict,
     config: AppConfig,
     key_manager: KeyManager,
     router: ModelRouter,
@@ -220,6 +221,7 @@ async def handle_chat_completions(
             original_model, messages,
         )
 
+    original_body = body.copy()
     original_body = body.copy()
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
