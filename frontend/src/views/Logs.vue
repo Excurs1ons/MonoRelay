@@ -73,7 +73,7 @@
                         <pre class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                       </div>
 
-                      <!-- Response Section (Now includes Thinking) -->
+                      <!-- Response Section -->
                       <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
                         <div class="content-label">
                           Response
@@ -81,13 +81,14 @@
                             {{ isFullResponse(log.id) ? '显示响应文本' : '显示原始响应' }}
                           </button>
                         </div>
-                        <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
-                        
-                        <!-- Thinking Sub-section inside Response -->
-                        <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block">
+
+                        <!-- Thinking Sub-section (Now between title and content) -->
+                        <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
                           <div class="sub-label">Thinking Process</div>
                           <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
                         </div>
+
+                        <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
                       </div>
 
                       <!-- Error Section -->
