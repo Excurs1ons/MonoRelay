@@ -197,13 +197,13 @@ class TenantManager:
         await self.user_manager._db.commit()
         return await self.get_tenant_provider(provider_id)
 
-    async def delete_tenant_provider(self, provider_id: int) -> bool:
-        """Delete a tenant provider."""
+    async def delete_tenant_provider(self, provider_id: int, user_id: int) -> bool:
+        """Delete a tenant provider (verifies ownership)."""
         if not self.user_manager._db:
             await self.user_manager.init()
         cursor = await self.user_manager._db.execute(
-            "DELETE FROM tenant_providers WHERE id = ?",
-            (provider_id,)
+            "DELETE FROM tenant_providers WHERE id = ? AND user_id = ?",
+            (provider_id, user_id)
         )
         await self.user_manager._db.commit()
         return cursor.rowcount > 0
@@ -330,13 +330,13 @@ class TenantManager:
         await self.user_manager._db.commit()
         return await self.get_tenant_api_key(key_id)
 
-    async def delete_tenant_api_key(self, key_id: int) -> bool:
-        """Delete a tenant API key."""
+    async def delete_tenant_api_key(self, key_id: int, user_id: int) -> bool:
+        """Delete a tenant API key (verifies ownership)."""
         if not self.user_manager._db:
             await self.user_manager.init()
         cursor = await self.user_manager._db.execute(
-            "DELETE FROM tenant_api_keys WHERE id = ?",
-            (key_id,)
+            "DELETE FROM tenant_api_keys WHERE id = ? AND user_id = ?",
+            (key_id, user_id)
         )
         await self.user_manager._db.commit()
         return cursor.rowcount > 0

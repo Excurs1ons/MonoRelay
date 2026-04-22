@@ -279,6 +279,7 @@ async def auth_middleware(request: Request, call_next):
                 user = await auth_service.user_manager.get_user_by_id(user_id)
                 if user and user.is_active:
                     request.state.user = user
+                    request.state.user_id = user_id
                     request.state.client_id = user.username
                     response = await call_next(request)
                     return response

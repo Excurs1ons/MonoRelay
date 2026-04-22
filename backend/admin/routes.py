@@ -414,7 +414,7 @@ async def delete_tenant_provider(user_id: int, provider_id: int, request: Reques
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    success = await tenant_manager.delete_tenant_provider(provider_id)
+    success = await tenant_manager.delete_tenant_provider(provider_id, user_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete tenant provider")
     
@@ -493,7 +493,7 @@ async def delete_tenant_key(user_id: int, key_id: int, request: Request, _admin:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    success = await tenant_manager.delete_tenant_api_key(key_id)
+    success = await tenant_manager.delete_tenant_api_key(key_id, user_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete tenant API key")
     
