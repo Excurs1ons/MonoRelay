@@ -60,6 +60,36 @@
       </div>
     </div>
 
+    <div class="stats-grid" style="margin-top: 16px;">
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">CPU</span>
+          <BarChart3 :size="18" class="stat-icon accent" />
+        </div>
+        <div class="stat-value">{{ system.cpu_percent?.toFixed(1) || 0 }}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">内存</span>
+          <Zap :size="18" :class="['stat-icon', system.memory_percent > 80 ? 'red' : 'green']" />
+        </div>
+        <div class="stat-value" :class="system.memory_percent > 80 ? 'red' : 'green'">
+          {{ formatMem(system.memory_used) }} / {{ formatMem(system.memory_total) }}
+        </div>
+        <div class="stat-detail">{{ system.memory_percent?.toFixed(1) || 0 }}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">硬盘</span>
+          <Clock :size="18" :class="['stat-icon', system.disk_percent > 80 ? 'red' : 'green']" />
+        </div>
+        <div class="stat-value" :class="system.disk_percent > 80 ? 'red' : 'green'">
+          {{ formatMem(system.disk_used) }} / {{ formatMem(system.disk_total) }}
+        </div>
+        <div class="stat-detail">{{ system.disk_percent?.toFixed(1) || 0 }}%</div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">{{ $t('dashboard.modelStats') }}</div>
       <div v-if="modelList.length" class="table-wrap">
@@ -150,20 +180,34 @@ function formatNum(n) {
   return n?.toString() || '0'
 }
 
+const system = ref({})
+
 function formatToken(n) {
   if (!n) return '0'
   return n.toLocaleString()
 }
 
+function formatMem(n) {
+  if (!n) return '0'
+  if (n >= 1e12) return (n / 1e12).toFixed(1) + ' TB'
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB'
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB'
+  return (n / 1e3).toFixed(1) + ' KB'
+}
+
 async function fetch() {
   try {
-    rawStats.value = await api.getStats()
-    const info = await api.getInfo()
+    const [stats, info] = await Promise.all([
+      api.getStats(),
+      api.getInfo()
+    ])
+    rawStats.value = stats
     serverInfo.value = { 
       local_ip: info.local_ip || '127.0.0.1', 
       port: info.port || 8787,
       base_url: info.base_url || ''
     }
+    system.value = info.system || {}
   } catch (e) { console.error(e) }
   finally { loading.value = false }
 }
