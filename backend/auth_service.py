@@ -123,6 +123,7 @@ class AuthService:
                 "username": user.username,
                 "email": user.email,
                 "is_admin": user.is_admin,
+                "is_super_admin": user.is_super_admin,
             }
         )
     

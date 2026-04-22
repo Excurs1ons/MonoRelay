@@ -978,7 +978,7 @@ async def chat_completions(request: Request):
 async def responses(request: Request):
     body = await request.json()
     result = await handle_responses(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -989,7 +989,7 @@ async def responses(request: Request):
 async def completions(request: Request):
     body = await request.json()
     result = await handle_completions(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1000,7 +1000,7 @@ async def completions(request: Request):
 async def embeddings(request: Request):
     body = await request.json()
     result = await handle_embeddings(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1016,7 +1016,7 @@ async def models_list():
 async def credits(request: Request):
     auth_header = request.headers.get("authorization", "")
     result = await handle_credits(
-        config_manager.config, key_manager, request_logger, auth_header,
+        config_manager.config, key_manager, request_logger, auth_header, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=401 if "auth_error" in result.get("error", {}).get("type", "") else 503, content=result)
@@ -1042,7 +1042,7 @@ async def audio_transcriptions(
     if temperature is not None:
         form_data["temperature"] = temperature
     result = await handle_audio_transcriptions(
-        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1056,7 +1056,7 @@ async def audio_translations(
 ):
     form_data = {"model": model}
     result = await handle_audio_translations(
-        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1067,7 +1067,7 @@ async def audio_translations(
 async def images_generations(request: Request):
     body = await request.json()
     result = await handle_image_generations(
-        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1090,7 +1090,7 @@ async def images_variations(
     if response_format:
         form_data["response_format"] = response_format
     result = await handle_image_variations(
-        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, file, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1115,7 +1115,7 @@ async def images_edits(
     if response_format:
         form_data["response_format"] = response_format
     result = await handle_image_edits(
-        form_data, image, mask, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        form_data, image, mask, config_manager.config, key_manager, model_router, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
