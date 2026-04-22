@@ -518,7 +518,7 @@ async def api_auth_me(request: Request):
         "is_admin": user.is_admin,
         "is_super_admin": getattr(user, 'is_super_admin', False),
         "sso_provider": user.sso_provider,
-        "sso_id": user.sso_id
+        "sso_id": user.sso_provider_id
     }
 
 
