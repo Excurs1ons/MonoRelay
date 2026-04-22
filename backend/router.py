@@ -28,8 +28,9 @@ CODE_KEYWORDS = [
 
 
 class ModelRouter:
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, tenant_manager: Optional[TenantManager] = None):
         self.config = config
+        self.tenant_manager = tenant_manager
 
     def resolve_model(self, model: str, messages: list[dict] | None = None) -> tuple[str, str]:
         """Resolve model by alias, provider_mapping, override, then provider matching."""
@@ -277,3 +278,99 @@ class ModelRouter:
             if key not in current: current[key] = {}
             current = current[key]
         current[keys[-1]] = value
+
+    async def get_providers_for_user(self, user_id: Optional[int] = None) -> dict[str, Any]:
+        """Get providers for a specific user, checking tenant-specific providers first."""
+        if user_id and self.tenant_manager:
+            tenant_providers = await self.tenant_manager.get_tenant_providers(user_id)
+            if tenant_providers:
+                logger.info(f"Using tenant-specific providers for user {user_id}")
+                return self._build_tenant_provider_dict(tenant_providers)
+        
+        return self.config.providers
+
+    def _build_tenant_provider_dict(self, tenant_providers: list) -> dict[str, Any]:
+        """Build a provider dict from tenant-specific providers."""
+        providers = {}
+        for tp in tenant_providers:
+            if not tp.enabled:
+                continue
+            
+            providers[tp.provider_name] = {
+                "enabled": True,
+                "base_url": tp.base_url,
+                "headers": json.loads(tp.headers_json) if tp.headers_json else {},
+                "models": json.loads(tp.models_json) if tp.models_json else {"include": [], "exclude": []},
+                "priority": tp.priority
+            }
+        
+        return providers
+
+    async def resolve_model_for_user(
+        self,
+        model: str,
+        user_id: Optional[int] = None,
+        messages: list[dict] | None = None
+    ) -> tuple[str, str]:
+        """Resolve model for a specific user, using tenant-specific providers if available."""
+        if user_id and self.tenant_manager:
+            tenant_providers = await self.tenant_manager.get_tenant_providers(user_id)
+            if tenant_providers:
+                logger.info(f"Resolving model for user {user_id} using tenant-specific providers")
+                return self._resolve_model_with_providers(model, messages, tenant_providers)
+        
+        return self.resolve_model(model, messages)
+
+    def _resolve_model_with_providers(
+        self,
+        model: str,
+        messages: list[dict] | None,
+        tenant_providers: list
+    ) -> tuple[str, str]:
+        """Resolve model using tenant-specific providers."""
+        original_model = model
+
+        if "@" in model:
+            parts = model.rsplit("@", 1)
+            if len(parts) == 2:
+                resolved_model = parts[0]
+                explicit_provider_raw = parts[1]
+                
+                norm_requested = self._normalize_id(explicit_provider_raw)
+                
+                for tp in tenant_providers:
+                    if self._normalize_id(tp.provider_name) == norm_requested and tp.enabled:
+                        return resolved_model, tp.provider_name
+        
+        aliased = self._resolve_alias(model)
+        if aliased:
+            model = aliased
+            logger.info(f"Model alias: '{original_model}' -> '{model}'")
+
+        model = self._apply_override(model)
+
+        if self.config.model_routing.complexity.enabled and messages:
+            model = self._complexity_route(messages)
+
+        for tp in tenant_providers:
+            if not tp.enabled:
+                continue
+            
+            models = json.loads(tp.models_json) if tp.models_json else {"include": [], "exclude": []}
+            enabled_models = models.get("include", [])
+            
+            if model in enabled_models:
+                return model, tp.provider_name
+            
+            model_norm = self._normalize_id(model)
+            for em in enabled_models:
+                em_norm = self._normalize_id(em)
+                if em_norm == model_norm:
+                    return em, tp.provider_name
+                if em_norm in model_norm or model_norm in em_norm:
+                    return em, tp.provider_name
+            
+            if not enabled_models:
+                return model, tp.provider_name
+        
+        return model, "openrouter"

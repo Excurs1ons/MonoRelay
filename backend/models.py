@@ -99,3 +99,41 @@ class AppConfig(BaseModel):
     logging: Any = Field(default_factory=dict)
     sync: Any = Field(default_factory=dict)
     sso: Any = Field(default_factory=dict)
+
+
+class TenantConfig(BaseModel):
+    """Per-tenant configuration stored as JSON blob."""
+    user_id: int
+    config_json: str
+    created_at: float
+    updated_at: float
+
+
+class TenantProvider(BaseModel):
+    """Per-tenant provider definition."""
+    id: int
+    user_id: int
+    provider_name: str
+    enabled: bool = True
+    base_url: str = ""
+    headers_json: str = ""
+    models_json: str = ""
+    priority: int = 100
+    created_at: float
+    updated_at: float
+
+
+class TenantAPIKey(BaseModel):
+    """Per-tenant API key."""
+    id: int
+    user_id: int
+    provider_name: str
+    key_value: str
+    label: str = "default"
+    enabled: bool = True
+    weight: int = 1
+    rate_limit: int = 0
+    cooldown: int = 0
+    created_at: float
+    last_used_at: Optional[float] = None
+

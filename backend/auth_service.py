@@ -34,10 +34,10 @@ class AuthService:
             is_admin = is_first_user
             is_super_admin = is_first_user
             user = await self.user_manager.create_user(user_data, is_admin=is_admin, is_super_admin=is_super_admin)
-            
+
             access_token = create_access_token(user.id, config_secret=self.jwt_secret)
             refresh_token = create_refresh_token(user.id, config_secret=self.jwt_secret)
-            
+
             logger.info(f"User registered: {user.username} (admin={is_admin}, super_admin={is_super_admin})")
             
             return Token(
@@ -49,6 +49,7 @@ class AuthService:
                     "username": user.username,
                     "email": user.email,
                     "is_admin": user.is_admin,
+                    "is_super_admin": user.is_super_admin,
                 }
             )
         except ValueError as e:
@@ -84,6 +85,7 @@ class AuthService:
                 "username": user.username,
                 "email": user.email,
                 "is_admin": user.is_admin,
+                "is_super_admin": user.is_super_admin,
             }
         )
     

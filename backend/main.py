@@ -78,6 +78,7 @@ from .sync_storage import SyncStorage
 from .secrets import secrets_manager
 from .cache import response_cache
 from .usage_tracker import usage_tracker
+from .admin import admin_router, user_router
 
 
 class VerifyRequest(BaseModel):
@@ -125,31 +126,37 @@ stats_tracker = StatsTracker()
 model_router = ModelRouter(AppConfig())
 sync_storage = SyncStorage()
 auth_service = AuthService(jwt_secret="")
+tenant_manager = None
 sso_validator = None
 
 
 def init_components(cfg: AppConfig):
-    global model_router, auth_service, sso_validator
+    global model_router, auth_service, sso_validator, tenant_manager, key_manager, config_manager
     from .sso import OAuthValidator, create_sso_config_from_dict, SSOConfig
+    from .tenant_manager import TenantManager
     
-    model_router = ModelRouter(cfg)
-    auth_service.jwt_secret = cfg.server.jwt_secret or ""
-    
-    if cfg.sync and cfg.sync.gist_id:
-        sync_storage.gist_id = cfg.sync.gist_id
+    tenant_manager = TenantManager(auth_service.user_manager)
+    key_manager = KeyManager(tenant_manager)
+    model_router = ModelRouter(cfg, tenant_manager)
+    config_manager._tenant_manager = tenant_manager
 
-    if cfg.sso and cfg.sso.enabled:
+    auth_service.jwt_secret = cfg.server.get('jwt_secret', '') or ""
+
+    if cfg.sync and cfg.sync.get('gist_id'):
+        sync_storage.gist_id = cfg.sync.get('gist_id')
+
+    if cfg.sso and cfg.sso.get('enabled'):
         sso_dump = {
-            "enabled": cfg.sso.enabled,
-            "provider": cfg.sso.provider,
-            "prismaauth_url": cfg.sso.prismaauth_url,
-            "client_id": cfg.sso.client_id,
-            "client_secret": cfg.sso.client_secret,
-            "scopes": cfg.sso.scopes,
-            "github_client_id": cfg.sso.github_client_id,
-            "github_client_secret": cfg.sso.github_client_secret,
-            "google_client_id": cfg.sso.google_client_id,
-            "google_client_secret": cfg.sso.google_client_secret,
+            "enabled": cfg.sso.get('enabled', False),
+            "provider": cfg.sso.get('provider', 'github'),
+            "prismaauth_url": cfg.sso.get('prismaauth_url', ''),
+            "client_id": cfg.sso.get('client_id', ''),
+            "client_secret": cfg.sso.get('client_secret', ''),
+            "scopes": cfg.sso.get('scopes', []),
+            "github_client_id": cfg.sso.get('github_client_id', ''),
+            "github_client_secret": cfg.sso.get('github_client_secret', ''),
+            "google_client_id": cfg.sso.get('google_client_id', ''),
+            "google_client_secret": cfg.sso.get('google_client_secret', ''),
         }
         sso_config = create_sso_config_from_dict(sso_dump)
         if sso_config.is_configured:
@@ -171,7 +178,7 @@ def init_components(cfg: AppConfig):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging(config_manager.config.server.log_level)
+    setup_logging(config_manager.config.server.get('log_level', 'INFO'))
     logger.info("=" * 60)
     logger.info("MonoRelay starting...")
     logger.info("=" * 60)
@@ -182,14 +189,14 @@ async def lifespan(app: FastAPI):
     os.makedirs("./data", exist_ok=True)
     await auth_service.init()
 
-    if cfg.logging.enabled:
-        os.makedirs(os.path.dirname(cfg.logging.db_path) or ".", exist_ok=True)
-        request_logger.db_path = cfg.logging.db_path
-        request_logger.max_age_days = cfg.logging.max_age_days
-        request_logger.content_preview_length = cfg.logging.content_preview_length
+    if cfg.logging.get('enabled', False):
+        os.makedirs(os.path.dirname(cfg.logging.get('db_path', './data/requests.db')) or ".", exist_ok=True)
+        request_logger.db_path = cfg.logging.get('db_path', './data/requests.db')
+        request_logger.max_age_days = cfg.logging.get('max_age_days', 7)
+        request_logger.content_preview_length = cfg.logging.get('content_preview_length', 200)
         await request_logger.init()
 
-    logger.info(f"Server: {cfg.server.host}:{cfg.server.port}")
+    logger.info(f"Server: {cfg.server.get('host', '0.0.0.0')}:{cfg.server.get('port', 8787)}")
     logger.info(f"Enabled providers: {[n for n, p in cfg.providers.items() if p.enabled]}")
 
     import asyncio
@@ -217,11 +224,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config_manager.config.server.cors_origins,
+    allow_origins=config_manager.config.server.get('cors_origins', []),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(admin_router)
+app.include_router(user_router)
 
 
 @app.middleware("http")
@@ -263,7 +273,7 @@ async def auth_middleware(request: Request, call_next):
         if token:
             from .auth_utils import verify_token
 
-            jwt_secret = config_manager.config.server.jwt_secret or ""
+            jwt_secret = config_manager.config.server.get('jwt_secret', '') or ""
             user_id = verify_token(token, config_secret=jwt_secret)
             if user_id:
                 user = await auth_service.user_manager.get_user_by_id(user_id)
@@ -275,8 +285,8 @@ async def auth_middleware(request: Request, call_next):
 
         # Fallback to access_key authentication (for backward compatibility)
         # ONLY if enabled in config
-        if config_manager.config.server.access_key_enabled:
-            access_key = config_manager.config.server.access_key
+        if config_manager.config.server.get('access_key_enabled', False):
+            access_key = config_manager.config.server.get('access_key', '')
             if token == access_key:
                 request.state.client_id = token[:16] if len(token) >= 16 else token
                 response = await call_next(request)
@@ -372,51 +382,6 @@ async def catch_all_middleware(request: Request, call_next):
     return response
 
 
-@app.get("/api/admin/users")
-async def api_admin_users(request: Request):
-    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    users = await auth_service.user_manager.list_users()
-    return api_response(data=[u.model_dump() for u in users])
-
-@app.post("/api/admin/users/{user_id}/balance")
-async def api_admin_user_balance(user_id: int, body: dict, request: Request):
-    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    adjustment = body.get("adjustment", 0.0)
-    success = await auth_service.user_manager.update_balance(user_id, adjustment)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    return api_response(message="余额已更新")
-
-@app.delete("/api/admin/users/{user_id}")
-async def api_admin_user_delete(user_id: int, request: Request):
-    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    if user_id == 0:
-        raise HTTPException(status_code=400, detail="Cannot delete system admin")
-    success = await auth_service.user_manager.delete_user(user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    return api_response(message="用户已删除")
-
-@app.get("/api/admin/redemption-codes")
-async def api_admin_codes(request: Request):
-    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    codes = await auth_service.user_manager.list_redemption_codes()
-    return api_response(data=[c.model_dump() for c in codes])
-
-@app.post("/api/admin/redemption-codes")
-async def api_admin_codes_create(request: Request, body: dict):
-    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    amount = body.get("amount", 0.0)
-    count = body.get("count", 1)
-    prefix = body.get("prefix", "PRISMA-")
-    codes = await auth_service.user_manager.generate_codes(amount, count, prefix)
-    return api_response(data=codes)
-
 @app.post("/api/user/redeem")
 async def api_user_redeem(request: Request, body: dict):
     user = getattr(request.state, "user", None)
@@ -443,18 +408,18 @@ async def api_setup_status():
 async def verify_turnstile(token: str) -> bool:
     """Verify Cloudflare Turnstile token."""
     cfg = config_manager.config.server
-    if not cfg.turnstile_enabled or not cfg.turnstile_secret_key:
+    if not cfg.get('turnstile_enabled', False) or not cfg.get('turnstile_secret_key', ''):
         return True
-    
+
     if not token:
         return False
-        
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 "https://challenges.cloudflare.com/turnstile/v0/siteverify",
                 data={
-                    "secret": cfg.turnstile_secret_key,
+                    "secret": cfg.get('turnstile_secret_key', ''),
                     "response": token,
                 },
                 timeout=10.0
@@ -669,10 +634,10 @@ async def api_auth_sso_callback(request: Request):
     sso_user = await sso_validator.get_user_info(tokens["access_token"])
     if not sso_user:
         return HTMLResponse(content=_build_callback_html(error="Failed to get user info", state=state))
-    
+
     try:
         cfg = config_manager.config
-        is_admin_configured = sso_user.username in cfg.sso.admin_usernames
+        is_admin_configured = sso_user.username in cfg.sso.get('admin_usernames', [])
         
         # Find or create user in database
         user = await auth_service.user_manager.get_user_by_sso(sso_user.provider, sso_user.provider_id)
@@ -714,7 +679,7 @@ async def api_auth_sso_callback(request: Request):
         from .auth_utils import create_access_token
         local_token = create_access_token(
             user_id=user.id,
-            config_secret=config_manager.config.server.jwt_secret or ""
+            config_secret=config_manager.config.server.get('jwt_secret', '') or ""
         )
         
         logger.info(f"SSO callback success for user: {user.username}")
@@ -858,21 +823,21 @@ def _build_callback_html(
 async def api_auth_sso_status():
     """Check SSO configuration status."""
     cfg = config_manager.config
-    if not cfg.sso or not cfg.sso.enabled:
+    if not cfg.sso or not cfg.sso.get('enabled'):
         return {"enabled": False, "provider": None, "configured": False}
-    
-    provider = cfg.sso.provider or "github"
+
+    provider = cfg.sso.get('provider', 'github') or "github"
     configured = bool(
-        (provider == "prismaauth" and cfg.sso.prismaauth_url and cfg.sso.client_id and cfg.sso.client_secret) or
-        (provider == "github" and cfg.sso.github_client_id and cfg.sso.github_client_secret) or
-        (provider == "google" and cfg.sso.google_client_id and cfg.sso.google_client_secret)
+        (provider == "prismaauth" and cfg.sso.get('prismaauth_url') and cfg.sso.get('client_id') and cfg.sso.get('client_secret')) or
+        (provider == "github" and cfg.sso.get('github_client_id') and cfg.sso.get('github_client_secret')) or
+        (provider == "google" and cfg.sso.get('google_client_id') and cfg.sso.get('google_client_secret'))
     )
-    
+
     return {
         "enabled": True,
         "provider": provider,
         "configured": configured,
-        "sso_only": cfg.sso.sso_only,
+        "sso_only": cfg.sso.get('sso_only', False),
     }
 
 
@@ -880,106 +845,20 @@ async def api_auth_sso_status():
 async def api_auth_sso_logout(request: Request):
     """Logout from SSO."""
     cfg = config_manager.config
-    if not cfg.sso or not cfg.sso.enabled:
+    if not cfg.sso or not cfg.sso.get('enabled'):
         raise HTTPException(status_code=400, detail="SSO is not enabled")
 
     body = await request.json()
     id_token = body.get("id_token")
 
-    logout_url = f"{cfg.sso.keycloak_url}/realms/{cfg.sso.realm}/protocol/openid-connect/logout"
+    logout_url = f"{cfg.sso.get('keycloak_url', '')}/realms/{cfg.sso.get('realm', '')}/protocol/openid-connect/logout"
     if id_token:
         logout_url = f"{logout_url}?id_token_hint={id_token}"
 
-    if cfg.sso.post_logout_uri:
-        logout_url = f"{logout_url}&post_logout_redirect_uri={cfg.sso.post_logout_uri}"
+    if cfg.sso.get('post_logout_uri'):
+        logout_url = f"{logout_url}&post_logout_redirect_uri={cfg.sso.get('post_logout_uri')}"
 
     return {"logout_url": logout_url}
-
-
-@app.get("/api/users")
-async def api_list_users(request: Request):
-    """List all users (admin only)."""
-    user = getattr(request.state, "user", None)
-    if not user or not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    users = await auth_service.user_manager.list_users()
-    return {"users": [u.model_dump() for u in users]}
-
-
-@app.put("/api/users/{user_id}")
-async def api_update_user(user_id: int, request: Request):
-    """Update user info (admin only)."""
-    user = getattr(request.state, "user", None)
-    if not user or not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    body = await request.json()
-    # Don't allow updating sensitive fields like id or password_hash here
-    allowed_updates = {k: v for k, v in body.items() if k in {"is_active", "is_admin", "email"}}
-    updated = await auth_service.user_manager.update_user(user_id, **allowed_updates)
-    if not updated:
-        raise HTTPException(status_code=404, detail="User not found")
-    return updated
-
-
-@app.delete("/api/users/{user_id}")
-async def api_delete_user(user_id: int, request: Request):
-    """Delete user (admin only)."""
-    user = getattr(request.state, "user", None)
-    if not user or not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    if user.id == user_id:
-        raise HTTPException(status_code=400, detail="Cannot delete yourself")
-        
-    success = await auth_service.user_manager.delete_user(user_id)
-    return {"success": success}
-
-
-@app.post("/api/admin/clear-data")
-async def api_admin_clear_data(request: Request):
-    """Clear all local data and reset system (admin only)."""
-    user = getattr(request.state, "user", None)
-    if not user or not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    logger.warning(f"SYSTEM RESET INITIATED BY {user.username}")
-    
-    try:
-        import os
-        import shutil
-        from pathlib import Path
-        
-        data_dir = Path("./data")
-        config_file = Path("./config.yml")
-        
-        # 1. Close database connections first
-        await auth_service.user_manager.close()
-        
-        # 2. Delete data directory contents
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
-            data_dir.mkdir(exist_ok=True)
-            logger.info("Data directory cleared")
-            
-        # 3. Reset config file to example if exists
-        if config_file.exists():
-            example = Path("./config.yml.example")
-            if example.exists():
-                shutil.copy(example, config_file)
-            else:
-                config_file.unlink()
-            logger.info("Config file reset")
-            
-        # 4. Schedule self-termination
-        import signal
-        os.kill(os.getpid(), signal.SIGINT)
-        
-        return {"status": "ok", "message": "System reset initiated"}
-    except Exception as e:
-        logger.error(f"Reset failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/info")
@@ -1025,7 +904,7 @@ async def api_info():
             except Exception:
                 local_ip = "127.0.0.1"
 
-    base_url = f"http://{local_ip}:{cfg.server.port}/v1"
+    base_url = f"http://{local_ip}:{cfg.server.get('port', 8787)}/v1"
     if public_host:
         if public_host.startswith("http"):
             clean_url = public_host.rstrip("/")
@@ -1035,7 +914,7 @@ async def api_info():
         elif "." in public_host and not any(c.isdigit() for c in public_host.split('.')[-1]):
             base_url = f"https://{public_host.rstrip('/')}/v1"
         else:
-            base_url = f"http://{public_host.rstrip('/')}:{cfg.server.port}/v1"
+            base_url = f"http://{public_host.rstrip('/')}:{cfg.server.get('port', 8787)}/v1"
 
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
@@ -1043,11 +922,11 @@ async def api_info():
     
     return {
         "local_ip": local_ip,
-        "host": cfg.server.host,
-        "port": cfg.server.port,
-        "access_key": cfg.server.access_key,
-        "access_key_enabled": cfg.server.access_key_enabled,
-        "turnstile_site_key": cfg.server.turnstile_site_key,
+        "host": cfg.server.get('host', '0.0.0.0'),
+        "port": cfg.server.get('port', 8787),
+        "access_key": cfg.server.get('access_key', ''),
+        "access_key_enabled": cfg.server.get('access_key_enabled', False),
+        "turnstile_site_key": cfg.server.get('turnstile_site_key', ''),
         "base_url": base_url,
         "system": {
             "cpu_percent": cpu_percent,
@@ -1077,42 +956,6 @@ async def health(turnstile_token: str = ""):
             for name, pc in config_manager.config.providers.items()
         },
     }
-
-
-# Per-client usage tracking
-@app.get("/api/usage/stats")
-async def api_usage_stats(client_id: str | None = None):
-    return api_response(data=usage_tracker.get_stats(client_id))
-
-
-@app.post("/api/usage/clear")
-async def api_usage_clear(client_id: str | None = None):
-    """Clear usage stats, optionally for a specific client."""
-    usage_tracker.clear(client_id)
-    return {"status": "ok", "message": f"Usage stats cleared{' for: ' + client_id if client_id else ''}"}
-
-
-# Response cache management
-@app.get("/api/cache/stats")
-async def api_cache_stats():
-    """Get response cache statistics."""
-    return response_cache.stats()
-
-
-@app.post("/api/cache/clear")
-async def api_cache_clear(model: str | None = None):
-    """Clear response cache, optionally for a specific model only."""
-    response_cache.invalidate(model)
-    return {"status": "ok", "message": f"Cache cleared{' for model: ' + model if model else ''}"}
-
-
-@app.post("/api/cache/enable")
-async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_size: int = 1000):
-    """Enable/disable response cache and configure parameters."""
-    if enabled:
-        response_cache._max_size = max_size
-        response_cache._ttl_seconds = ttl_seconds
-    return {"status": "ok", "enabled": enabled, "ttl_seconds": response_cache._ttl_seconds, "max_size": response_cache._max_size}
 
 
 # OpenAI-compatible endpoints
@@ -2036,9 +1879,9 @@ async def _push_to_gist(sync, content, stats_content, cfg):
     logger.info(f"后台推送: token_len={len(sync._token)}, gist_id={sync.gist_id}")
     try:
         ok = await sync.push(content, stats_content)
-        if ok and sync.gist_id and sync.gist_id != cfg.sync.gist_id:
+        if ok and sync.gist_id and sync.gist_id != cfg.sync.get('gist_id'):
             new_cfg = cfg.model_copy(deep=True)
-            new_cfg.sync.gist_id = sync.gist_id
+            new_cfg.sync['gist_id'] = sync.gist_id
             config_manager.save(new_cfg)
     except Exception as e:
         logger.warning(f"自动同步推送失败: {e}")
@@ -3270,14 +3113,14 @@ async def api_sync_setup(request: Request):
         
         # 保存 token 到本地存储
         sync_storage.gist_token = token
-        
+
         cfg = config_manager.config.model_copy(deep=True)
-        cfg.sync.enabled = True
+        cfg.sync['enabled'] = True
 
         from .sync import GistSync
         import logging
         logger = logging.getLogger("monorelay.sync")
-        
+
         sync = GistSync(token, gist_id)
         logger.info(f"同步配置: token_len={len(token)}, gist_id={gist_id or '空'}")
 
@@ -3285,7 +3128,7 @@ async def api_sync_setup(request: Request):
         if not gist_id:
             found_id = await sync.find_gist_by_description()
             if found_id:
-                cfg.sync.gist_id = found_id
+                cfg.sync['gist_id'] = found_id
                 sync = GistSync(token, found_id)
                 logger.info(f"找到已有 Gist: {found_id}")
             else:
@@ -3294,7 +3137,7 @@ async def api_sync_setup(request: Request):
                 ok = await sync.push("{}")
                 if not ok:
                     raise HTTPException(status_code=500, detail="创建 Gist 失败")
-                cfg.sync.gist_id = sync.gist_id
+                cfg.sync['gist_id'] = sync.gist_id
                 logger.info(f"Gist 创建成功: {sync.gist_id}")
 
         # 保存配置（含 gist_id）
@@ -3362,7 +3205,7 @@ async def api_sync_push():
         sync_storage.last_sync_version = version
         if sync.gist_id and sync.gist_id != sc.gist_id:
             cfg = config_manager.config.model_copy(deep=True)
-            cfg.sync.gist_id = sync.gist_id
+            cfg.sync['gist_id'] = sync.gist_id
             config_manager.save(cfg)
         return {"status": "ok", "message": "原始配置和统计已推送到 Gist", "gist_id": sync.gist_id, "version": version}
     raise HTTPException(status_code=500, detail="推送到 Gist 失败")
@@ -3637,9 +3480,9 @@ def run():
         config_manager = ConfigManager(args.config)
 
     cfg = config_manager.config
-    host = args.host or cfg.server.host
-    port = args.port or cfg.server.port
-    log_level = args.log_level or cfg.server.log_level
+    host = args.host or cfg.server.get('host', '0.0.0.0')
+    port = args.port or cfg.server.get('port', 8787)
+    log_level = args.log_level or cfg.server.get('log_level', 'INFO')
 
     setup_logging(log_level)
     logger.info(f"Starting MonoRelay on {host}:{port}")

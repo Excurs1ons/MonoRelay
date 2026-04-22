@@ -9,6 +9,7 @@ import time
 from typing import Optional
 
 from .models import ProviderConfig, ProviderKey
+from .tenant_manager import TenantManager
 
 logger = logging.getLogger("monorelay.key_manager")
 
@@ -131,9 +132,10 @@ class KeyEntry:
 class KeyManager:
     USAGE_FILE = "./data/key_usage.json"
 
-    def __init__(self):
+    def __init__(self, tenant_manager: Optional[TenantManager] = None):
         self._entries: dict[str, list[KeyEntry]] = {}
         self._round_robin_index: dict[str, int] = {}
+        self._tenant_manager = tenant_manager
         self._load_usage()
 
     def _load_usage(self):
@@ -230,6 +232,58 @@ class KeyManager:
 
         entry.use()
         self._save_usage()
+        return entry
+
+    async def select_key_for_user(
+        self,
+        provider_name: str,
+        user_id: Optional[int] = None,
+        strategy: str = "round-robin"
+    ) -> Optional[KeyEntry]:
+        """Select a key for a specific user, checking tenant-specific keys first."""
+        if user_id and self._tenant_manager:
+            tenant_keys = await self._tenant_manager.get_tenant_api_keys(user_id)
+            user_keys_for_provider = [
+                k for k in tenant_keys
+                if k.provider_name == provider_name and k.enabled
+            ]
+
+            if user_keys_for_provider:
+                logger.info(f"Using tenant-specific key for user {user_id}, provider {provider_name}")
+                return self._select_from_tenant_keys(user_keys_for_provider, strategy)
+
+        return self.select_key(provider_name, strategy)
+
+    def _select_from_tenant_keys(
+        self,
+        tenant_keys: list,
+        strategy: str = "round-robin"
+    ) -> Optional[KeyEntry]:
+        if not tenant_keys:
+            return None
+
+        if strategy == "random":
+            selected = random.choice(tenant_keys)
+        elif strategy == "weighted":
+            weights = [k.weight for k in tenant_keys]
+            selected = random.choices(tenant_keys, weights=weights, k=1)[0]
+        else:
+            selected = tenant_keys[0]
+
+        provider_key = ProviderKey(
+            key=selected.key_value,
+            label=selected.label,
+            weight=selected.weight,
+            enabled=selected.enabled,
+            quota_limit=0,
+            quota_used=0,
+            rate_limit_rps=selected.rate_limit,
+            expires_at="",
+            metadata={}
+        )
+
+        entry = KeyEntry(provider_key)
+        entry.use()
         return entry
 
     def report_failure(self, provider_name: str, key: KeyEntry, cooldown: int = 60):

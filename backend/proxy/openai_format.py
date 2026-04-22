@@ -173,7 +173,7 @@ async def _handle_cascade_chat(
         if not router.supports_tools(model):
             request_body = router.strip_tools(request_body)
 
-        key = key_manager.select_key(provider_name, config.key_selection.strategy)
+        key = await key_manager.select_key_for_user(provider_name, user_id, config.key_selection.strategy)
         if not key:
             last_error = f"No available keys for '{provider_name}'"
             continue
@@ -238,13 +238,9 @@ async def handle_chat_completions(
 
     original_body = body.copy()
     if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
     original_body = body.copy()
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    if not await _check_user_balance(user_id, config): return {"error": {"message": "Insufficient balance", "type": "insufficient_balance"}}
-    resolved_model, provider_name = router.resolve_model(original_model, messages)
+    
+    resolved_model, provider_name = await router.resolve_model_for_user(original_model, user_id, messages)
     body["model"] = resolved_model
 
     body = router.apply_transformation(body, resolved_model)
