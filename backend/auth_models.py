@@ -88,12 +88,15 @@ class UserManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 email TEXT,
-                hashed_password TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 0,
-                role TEXT DEFAULT 'user',
-                balance REAL DEFAULT 0.0,
+                is_super_admin INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
                 created_at REAL,
-                updated_at REAL
+                last_login REAL,
+                sso_provider TEXT,
+                sso_id TEXT,
+                balance REAL DEFAULT 0.0
             )
         """)
         
@@ -126,6 +129,59 @@ class UserManager:
                 FOREIGN KEY (used_by) REFERENCES users (id)
             )
         """)
+
+        # Table: tenant_configs (per-tenant configuration)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS tenant_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE,
+                config_json TEXT NOT NULL,
+                created_at REAL,
+                updated_at REAL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # Table: tenant_providers (per-tenant provider definitions)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS tenant_providers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                provider_name TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                base_url TEXT,
+                headers_json TEXT,
+                models_json TEXT,
+                priority INTEGER DEFAULT 100,
+                created_at REAL,
+                updated_at REAL,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, provider_name)
+            )
+        """)
+
+        # Table: tenant_api_keys (per-tenant API keys)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS tenant_api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                provider_name TEXT NOT NULL,
+                key_value TEXT NOT NULL,
+                label TEXT DEFAULT 'default',
+                enabled INTEGER DEFAULT 1,
+                weight INTEGER DEFAULT 1,
+                rate_limit INTEGER DEFAULT 0,
+                cooldown INTEGER DEFAULT 0,
+                created_at REAL,
+                last_used_at REAL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # Indexes for performance
+        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_tenant_providers_user ON tenant_providers(user_id)")
+        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_user ON tenant_api_keys(user_id)")
+
         
         # Migrations
         try:
@@ -140,25 +196,25 @@ class UserManager:
         try:
             await self._db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         except: pass
-        try:
-            await self._db.execute("ALTER TABLE users ADD COLUMN is_super_admin INTEGER DEFAULT 0")
         except: pass
-                
+
         await self._db.commit()
 
-    async def create_user(self, user_in: UserCreate, is_admin: bool = False) -> Optional[User]:
+    async def create_user(self, user_in: UserCreate, is_admin: bool = False, is_super_admin: bool = False) -> Optional[User]:
         if not self._db: await self.init()
         hashed = hashlib.sha256(user_in.password.encode()).hexdigest()
         now = time.time()
         role = "admin" if is_admin else "user"
         try:
             cursor = await self._db.execute(
-                "INSERT INTO users (username, email, hashed_password, is_admin, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_in.username, user_in.email, hashed, 1 if is_admin else 0, role, now, now)
+                "INSERT INTO users (username, email, password_hash, is_admin, is_super_admin, is_active, created_at, last_login, balance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_in.username, user_in.email, hashed, 1 if is_admin else 0, 1 if is_super_admin else 0, 1, now, None, 0.0)
             )
             await self._db.commit()
             return await self.get_user_by_id(cursor.lastrowid)
-        except: return None
+        except Exception as e:
+            logger.error(f"Failed to create user: {e}")
+            return None
 
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
         if not self._db: await self.init()
@@ -173,11 +229,11 @@ class UserManager:
         return self._row_to_user(row) if row else None
 
     def _row_to_user(self, row) -> User:
-        return User(id=row["id"], username=row["username"], email=row["email"], hashed_password=row["hashed_password"],
-                    is_admin=bool(row["is_admin"]), is_active=bool(row.get("is_active", 1)), 
-                    is_super_admin=bool(row.get("is_super_admin", 0)), role=row["role"], balance=row["balance"],
-                    sso_provider=row.get("sso_provider"), sso_provider_id=row.get("sso_provider_id"),
-                    created_at=row["created_at"], updated_at=row["updated_at"])
+        return User(id=row["id"], username=row["username"], email=row["email"], hashed_password=row["password_hash"],
+                    is_admin=bool(row["is_admin"]), is_active=bool(row["is_active"] if "is_active" in row.keys() else 1),
+                    is_super_admin=bool(row["is_super_admin"] if "is_super_admin" in row.keys() else 0), role="admin" if row["is_admin"] else "user", balance=row["balance"] if "balance" in row.keys() else 0.0,
+                    sso_provider=row["sso_provider"] if "sso_provider" in row.keys() else None, sso_provider_id=row["sso_provider_id"] if "sso_provider_id" in row.keys() else None,
+                    created_at=row["created_at"], updated_at=row["created_at"])
 
     # --- Billing & Balance ---
     async def update_balance(self, user_id: int, amount: float) -> bool:
@@ -270,7 +326,7 @@ class UserManager:
         if not row:
             return None
         hashed = hashlib.sha256(password.encode()).hexdigest()
-        if hashed != row["hashed_password"]:
+        if hashed != row["password_hash"]:
             return None
         return self._row_to_user(row)
 
@@ -281,7 +337,7 @@ class UserManager:
         now = time.time()
         try:
             await self._db.execute(
-                "UPDATE users SET hashed_password = ?, updated_at = ? WHERE id = ?",
+                "UPDATE users SET password_hash = ?, last_login = ? WHERE id = ?",
                 (hashed, now, user_id)
             )
             await self._db.commit()
