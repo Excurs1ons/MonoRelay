@@ -13,6 +13,11 @@ export function setAccessKey(key) {
   localStorage.setItem('access_key', key)
 }
 
+export function clearToken() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('token')
+}
+
 async function request(url, options = {}) {
   const token = getToken()
   const headers = {
@@ -65,6 +70,29 @@ export const api = {
   hasUsers: () => request('/api/auth/has_users'),
   getFullConfig: () => request('/api/config/full'),
   updateFullConfig: (config) => request('/api/config/full', { method: 'POST', body: JSON.stringify(config) }),
+  changePassword: (oldPassword, newPassword) => request('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+  }),
+  logout: () => {
+    clearToken()
+    return Promise.resolve({ ok: true })
+  },
+
+  // SSO
+  getSSOStatus: () => request('/api/auth/sso/status'),
+  getSSOLoginUrl: (redirectUri) => request('/api/auth/sso/login' + (redirectUri ? '?redirect_uri=' + encodeURIComponent(redirectUri) : '')),
+  ssoLogout: (idToken) => request('/api/auth/sso/logout', {
+    method: 'POST',
+    body: JSON.stringify({ id_token: idToken })
+  }),
+
+  // Info & Health
+  getInfo: () => request('/api/info'),
+  getSystemInfo: () => request('/api/system/info'),
+  health: (turnstileToken = '') => request('/health' + (turnstileToken ? `?turnstile_token=${turnstileToken}` : '')),
+
+  // Stats
   getStats: () => request('/api/stats'),
   getLogs: (limit = 50) => request('/api/logs?limit=' + limit),
   getLogDetail: (id) => request('/api/logs/' + id),

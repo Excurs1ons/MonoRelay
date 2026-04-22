@@ -171,12 +171,74 @@ class RequestLogger:
     async def clear_all(self, user_id: Optional[int] = None):
         if not self._db:
             await self.init()
-            
+
         if user_id is not None:
             await self._db.execute("DELETE FROM requests WHERE user_id = ?", (user_id,))
         else:
             await self._db.execute("DELETE FROM requests")
         await self._db.commit()
+        deleted = self._db.total_changes
+        if deleted:
+            logger.info(f"Cleaned up {deleted} log entries")
+
+    async def get_stats_summary(self) -> dict:
+        if not self._db:
+            logger.info("get_stats_summary: DB not initialized, initializing now")
+            await self.init()
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                COUNT(*) as total_requests,
+                COALESCE(SUM(estimated_cost), 0) as total_cost,
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM requests
+            """
+        )
+        row = await cursor.fetchone()
+        result = dict(zip([c[0] for c in cursor.description], row))
+        result["input_tokens"] = result.pop("total_input_tokens", 0)
+        result["output_tokens"] = result.pop("total_output_tokens", 0)
+        return result
+
+    async def get_provider_stats(self) -> list[dict]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            """
+            SELECT
+                provider,
+                COUNT(*) as request_count,
+                COALESCE(SUM(estimated_cost), 0) as total_cost,
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms,
+                COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) as error_count
+            FROM requests
+            GROUP BY provider
+            ORDER BY request_count DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_model_stats(self) -> list[dict]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            """
+            SELECT
+                model,
+                COUNT(*) as request_count,
+                COALESCE(SUM(estimated_cost), 0) as total_cost,
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+            FROM requests
+            GROUP BY model
+            ORDER BY request_count DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
     def truncate_content(self, content: str) -> str:
         if not content:

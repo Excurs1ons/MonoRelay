@@ -9,7 +9,7 @@
           <div class="logo-text">
             <h3>MonoRelay</h3>
             <p class="version">统一 LLM API 代理服务</p>
-            <p class="build-info">Build: {{ buildTime }}</p>
+            <p class="build-info">Backend: v{{ backendVersion }} | Build: {{ buildTime }}</p>
           </div>
         </div>
         <p class="desc">
@@ -80,12 +80,17 @@ import { api } from '@/api'
 import { CheckCircle, Github, Bug, HelpCircle } from 'lucide-vue-next'
 
 const providers = ref([])
+const backendVersion = ref('1.0.0')
 const buildTime = new Date(__BUILD_TIME__).toLocaleString()
 
 onMounted(async () => {
   try {
-    const health = await api.health()
+    const [health, systemInfo] = await Promise.all([
+      api.health(),
+      api.getSystemInfo()
+    ])
     providers.value = Object.keys(health.providers || {})
+    backendVersion.value = systemInfo.version || '1.0.0'
   } catch (e) {
     console.error(e)
   }

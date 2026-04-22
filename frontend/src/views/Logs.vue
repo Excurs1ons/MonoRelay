@@ -42,10 +42,7 @@
                   <span class="expand-icon" :class="{ rotated: expanded[log.id] }">▶</span>
                 </td>
                 <td class="text-dim text-xs">{{ formatTime(log.timestamp) }}</td>
-<<<<<<< HEAD
                 <td v-if="isAdmin"><span class="badge badge-gray">#{{ log.user_id || 0 }}</span></td>
-=======
->>>>>>> main
                 <td class="mono text-xs">{{ log.model }}</td>
                 <td class="text-dim">{{ log.provider }}</td>
                 <td class="text-center">
@@ -54,13 +51,9 @@
                 <td class="text-right mono text-xs">{{ formatMs(log.latency_ms) }}</td>
                 <td class="text-right mono text-xs">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</td>
               </tr>
-               <tr v-if="expanded[log.id]" class="expand-row">
-<<<<<<< HEAD
-                 <td :colspan="isAdmin ? 8 : 7">
-=======
-                 <td :colspan="isAdmin ? 7 : 6">
->>>>>>> main
-                   <div class="expand-content">
+              <tr v-if="expanded[log.id]" class="expand-row">
+                <td :colspan="isAdmin ? 8 : 7">
+                  <div class="expand-content">
                      <!-- Params Block -->
                      <div v-if="log.temperature || log.top_p || log.max_tokens" class="params-block">
                        <div class="content-label">参数</div>
@@ -146,7 +139,7 @@ async function fetchLogs() {
   loading.value = true
   try {
     user.value = await api.getMe()
-    const data = isAdmin.value ? await api.getLogs(limit.value) : await api.getUserLogs(limit.value)
+    const data = await api.getLogs(limit.value)
     logs.value = data.logs || data || []
   } catch (e) { console.error(e) }
   finally { loading.value = false }

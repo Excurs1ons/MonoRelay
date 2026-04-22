@@ -65,7 +65,7 @@
                 <span class="text-xs text-dim">{{ count }} reqs</span>
               </div>
               <div class="text-xs">
-                错误率: 
+                错误率:
                 <span :class="getErrorClass(provider)">
                   {{ ((stats.errors_by_provider[provider] || 0) / count * 100).toFixed(1) }}%
                 </span>
@@ -86,23 +86,59 @@
             </router-link>
           </div>
         </div>
+
+        <!-- System Resources (Admin Only) -->
+        <div v-if="isAdmin" class="card">
+          <h3 class="card-title">系统资源</h3>
+          <div class="stats-grid" style="margin-top: 0;">
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">CPU</span>
+                <BarChart3 :size="18" class="stat-icon accent" />
+              </div>
+              <div class="stat-value">{{ system.cpu_percent?.toFixed(1) || 0 }}%</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">内存</span>
+                <Zap :size="18" :class="['stat-icon', system.memory_percent > 80 ? 'red' : 'green']" />
+              </div>
+              <div class="stat-value" :class="system.memory_percent > 80 ? 'red' : 'green'">
+                {{ formatMem(system.memory_used) }} / {{ formatMem(system.memory_total) }}
+              </div>
+              <div class="stat-detail">{{ system.memory_percent?.toFixed(1) || 0 }}%</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">硬盘</span>
+                <Clock :size="18" :class="['stat-icon', system.disk_percent > 80 ? 'red' : 'green']" />
+              </div>
+              <div class="stat-value" :class="system.disk_percent > 80 ? 'red' : 'green'">
+                {{ formatMem(system.disk_used) }} / {{ formatMem(system.disk_total) }}
+              </div>
+              <div class="stat-detail">{{ system.disk_percent?.toFixed(1) || 0 }}%</div>
+            </div>
+          </div>
+        </div>
       </div>
     </template>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { api } from '@/api'
-import { 
-  Activity, CheckCircle, CreditCard, Globe, 
-  RefreshCw, Plus 
+import {
+  Activity, CheckCircle, CreditCard, Globe,
+  RefreshCw, Plus, BarChart3, Zap, Clock
 } from 'lucide-vue-next'
 
 const loading = ref(true)
 const stats = ref({})
 const user = ref(null)
 const userBalance = ref(0)
+const system = ref({})
+let timer = null
 
 const isAdmin = computed(() => user.value?.role === 'admin' || user.value?.is_admin)
 
@@ -113,17 +149,37 @@ const sortedModels = computed(() => {
   )
 })
 
+function getErrorClass(provider) {
+  const rate = (stats.value.errors_by_provider[provider] || 0) / stats.value.requests_by_provider[provider]
+  if (rate > 0.2) return 'text-red-500'
+  if (rate > 0.05) return 'text-orange-500'
+  return 'text-green-500'
+}
+
+function formatMem(n) {
+  if (!n) return '0'
+  if (n >= 1e12) return (n / 1e12).toFixed(1) + ' TB'
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB'
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB'
+  return (n / 1e3).toFixed(1) + ' KB'
+}
+
 async function fetchData() {
   loading.value = true
   try {
     user.value = await api.getMe()
     if (isAdmin.value) {
-      stats.value = await api.getStats()
+      const [statsData, info] = await Promise.all([
+        api.getStats(),
+        api.getInfo()
+      ])
+      stats.value = statsData
+      system.value = info.system || {}
     } else {
       const userStats = await api.getUserStats()
       stats.value = {
         total_requests: userStats.total_requests,
-        total_errors: 0, // To be improved in backend
+        total_errors: 0,
         requests_by_model: userStats.requests_by_model || {}
       }
       userBalance.value = userStats.balance
@@ -135,14 +191,14 @@ async function fetchData() {
   }
 }
 
-function getErrorClass(provider) {
-  const rate = (stats.value.errors_by_provider[provider] || 0) / stats.value.requests_by_provider[provider]
-  if (rate > 0.2) return 'text-red-500'
-  if (rate > 0.05) return 'text-orange-500'
-  return 'text-green-500'
-}
+onMounted(() => {
+  fetchData()
+  timer = setInterval(fetchData, 30000)
+})
 
-onMounted(fetchData)
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
 </script>
 
 <style scoped>

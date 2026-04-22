@@ -987,6 +987,7 @@ async def api_info():
     """Return server connection info for dashboard."""
     import socket
     import httpx
+    import psutil
 
     cfg = config_manager.config
     public_host = getattr(cfg.server, 'public_host', None) or ""
@@ -1036,6 +1037,10 @@ async def api_info():
         else:
             base_url = f"http://{public_host.rstrip('/')}:{cfg.server.port}/v1"
 
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
@@ -1044,6 +1049,15 @@ async def api_info():
         "access_key_enabled": cfg.server.access_key_enabled,
         "turnstile_site_key": cfg.server.turnstile_site_key,
         "base_url": base_url,
+        "system": {
+            "cpu_percent": cpu_percent,
+            "memory_total": mem.total,
+            "memory_used": mem.used,
+            "memory_percent": mem.percent,
+            "disk_total": disk.total,
+            "disk_used": disk.used,
+            "disk_percent": disk.percent,
+        }
     }
 
 @app.get("/health")
@@ -1699,6 +1713,8 @@ async def api_analytics_overview(
     
     # Query request logger for date-filtered stats
     db_stats = {}
+    if not request_logger._db:
+        await request_logger.init()
     if request_logger._db:
         cursor = await request_logger._db.execute(
             """
@@ -1763,7 +1779,7 @@ async def api_analytics_overview(
 
 @app.get("/api/analytics/slow-queries")
 async def api_analytics_slow_queries(
-    threshold_ms: int = 5000,
+    threshold_ms: int = 2000,
     start_date: str | None = None,
     end_date: str | None = None,
     limit: int = 100,
@@ -1785,15 +1801,18 @@ async def api_analytics_slow_queries(
     slow_queries = []
     total = 0
     
+    if not request_logger._db:
+        await request_logger.init()
+    
     if request_logger._db:
         cursor = await request_logger._db.execute(
             """
             SELECT 
-                timestamp, model, provider, latency_ms, 
+                timestamp, model, provider, first_token_ms, latency_ms,
                 COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens
             FROM requests
-            WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?
-            ORDER BY latency_ms DESC
+            WHERE timestamp >= ? AND timestamp < ? AND first_token_ms > ?
+            ORDER BY first_token_ms DESC
             LIMIT ?
             """,
             (start_ts, end_ts, threshold_ms, limit)
@@ -1806,8 +1825,9 @@ async def api_analytics_slow_queries(
                 "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S"),
                 "model": row[1],
                 "provider": row[2],
-                "latency_ms": round(row[3], 1) if row[3] else 0,
-                "tokens": row[4] or 0,
+                "first_token_ms": round(row[3], 1) if row[3] else 0,
+                "latency_ms": round(row[4], 1) if row[4] else 0,
+                "tokens": row[5] or 0,
             })
         
         # Get total count
@@ -1846,6 +1866,9 @@ async def api_analytics_cost_distribution(
     provider_costs: dict[str, float] = {}
     model_costs: dict[str, float] = {}
     total_cost = 0.0
+    
+    if not request_logger._db:
+        await request_logger.init()
     
     if request_logger._db:
         cursor = await request_logger._db.execute(

@@ -53,18 +53,16 @@
             <tr>
               <th>模型</th>
               <th>提供商</th>
-              <th class="text-right">延迟</th>
-              <th class="text-right">首Token</th>
-              <th class="text-right">速度</th>
+              <th class="text-right">首字延迟</th>
+              <th class="text-right">总耗时</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="q in slowQueries" :key="q.id">
               <td class="mono">{{ q.model }}</td>
               <td>{{ q.provider }}</td>
-              <td class="text-right">{{ q.latency_ms?.toFixed(0) || '-' }}ms</td>
               <td class="text-right">{{ q.first_token_ms?.toFixed(0) || '-' }}ms</td>
-              <td class="text-right">{{ q.speed_tps?.toFixed(1) || '-' }} t/s</td>
+              <td class="text-right">{{ q.latency_ms?.toFixed(0) || '-' }}ms</td>
             </tr>
           </tbody>
         </table>
@@ -74,11 +72,11 @@
 
     <div class="card">
       <div class="card-title">成本分布</div>
-      <div v-if="costDist?.providers" class="cost-grid">
-        <div v-for="(cost, name) in costDist.providers" :key="name" class="cost-item">
-          <div class="cost-name">{{ name }}</div>
-          <div class="cost-value">${{ (cost.total_cost || 0).toFixed(4) }}</div>
-          <div class="cost-percent">{{ getCostPercent(cost.total_cost) }}%</div>
+      <div v-if="costDist && costDist.by_provider && costDist.by_provider.length > 0" class="cost-grid">
+        <div v-for="item in costDist.by_provider" :key="item.provider" class="cost-item">
+          <div class="cost-name">{{ item.provider }}</div>
+          <div class="cost-value">${{ (item.cost || 0).toFixed(4) }}</div>
+          <div class="cost-percent">{{ item.percentage }}%</div>
         </div>
       </div>
       <div v-else class="empty">暂无成本数据</div>
@@ -86,7 +84,7 @@
 
     <div class="card">
       <div class="card-title">模型统计</div>
-      <div v-if="overview?.by_model" class="table-wrap">
+      <div v-if="overview && overview.by_model && Object.keys(overview.by_model).length > 0" class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -130,7 +128,7 @@ function formatNum(n) {
 
 function getProviderPercent(requests) {
   if (!overview.value?.total_requests) return 0
-  return (requests / overview.value.total_requests * 100).toFixed(1)
+  return ((requests / overview.value.total_requests) * 100).toFixed(1)
 }
 
 function getCostPercent(cost) {
@@ -140,16 +138,15 @@ function getCostPercent(cost) {
 
 async function fetchData() {
   try {
-    const [ov, sq, cd] = await Promise.all([
-      api.getAnalyticsOverview().catch(() => null),
-      api.getAnalyticsSlowQueries(10).catch(() => []),
-      api.getAnalyticsCostDistribution().catch(() => null)
-    ])
+    const ov = await api.getAnalyticsOverview()
+    const sq = await api.getAnalyticsSlowQueries(10)
+    const cd = await api.getAnalyticsCostDistribution()
     overview.value = ov
-    slowQueries.value = sq || []
-    costDist.value = cd
+    slowQueries.value = sq?.slow_queries || []
+    costDist.value = cd || {}
+    console.log('fetchData result:', { overview: overview.value, slowQueries: slowQueries.value, costDist: costDist.value })
   } catch (e) {
-    console.error(e)
+    console.error('fetchData error:', e)
   } finally {
     loading.value = false
   }
