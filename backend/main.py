@@ -929,6 +929,7 @@ async def api_info():
     """Return server connection info for dashboard."""
     import socket
     import httpx
+    import psutil
 
     cfg = config_manager.config
     public_host = getattr(cfg.server, 'public_host', None) or ""
@@ -978,6 +979,10 @@ async def api_info():
         else:
             base_url = f"http://{public_host.rstrip('/')}:{cfg.server.port}/v1"
 
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+    
     return {
         "local_ip": local_ip,
         "host": cfg.server.host,
@@ -986,6 +991,15 @@ async def api_info():
         "access_key_enabled": cfg.server.access_key_enabled,
         "turnstile_site_key": cfg.server.turnstile_site_key,
         "base_url": base_url,
+        "system": {
+            "cpu_percent": cpu_percent,
+            "memory_total": mem.total,
+            "memory_used": mem.used,
+            "memory_percent": mem.percent,
+            "disk_total": disk.total,
+            "disk_used": disk.used,
+            "disk_percent": disk.percent,
+        }
     }
 
 @app.get("/health")
