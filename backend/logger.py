@@ -195,8 +195,8 @@ class RequestLogger:
 
     async def get_stats_summary(self) -> dict:
         if not self._db:
-            logger.warning("get_stats_summary: DB not initialized, returning empty stats")
-            return {"total_requests": 0, "total_cost": 0.0, "avg_latency_ms": 0.0, "input_tokens": 0, "output_tokens": 0}
+            logger.info("get_stats_summary: DB not initialized, initializing now")
+            await self.init()
 
         cursor = await self._db.execute(
             """
@@ -211,7 +211,6 @@ class RequestLogger:
         )
         row = await cursor.fetchone()
         result = dict(zip([c[0] for c in cursor.description], row))
-        logger.warning(f"get_stats_summary DB result: {result}")
         result["input_tokens"] = result.pop("total_input_tokens", 0)
         result["output_tokens"] = result.pop("total_output_tokens", 0)
         return result
