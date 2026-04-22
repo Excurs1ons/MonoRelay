@@ -6,7 +6,8 @@ import logging
 import re
 from typing import Any, Optional
 
-from .models import AppConfig, ModelRoutingConfig
+from .models import AppConfig
+from .tenant_manager import TenantManager
 
 logger = logging.getLogger("monorelay.router")
 
