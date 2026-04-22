@@ -1721,7 +1721,7 @@ async def api_analytics_overview(
 
 @app.get("/api/analytics/slow-queries")
 async def api_analytics_slow_queries(
-    threshold_ms: int = 5000,
+    threshold_ms: int = 2000,
     start_date: str | None = None,
     end_date: str | None = None,
     limit: int = 100,

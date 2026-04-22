@@ -53,18 +53,16 @@
             <tr>
               <th>模型</th>
               <th>提供商</th>
-              <th class="text-right">延迟</th>
-              <th class="text-right">首Token</th>
-              <th class="text-right">速度</th>
+              <th class="text-right">首字延迟</th>
+              <th class="text-right">总耗时</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="q in slowQueries" :key="q.id">
               <td class="mono">{{ q.model }}</td>
               <td>{{ q.provider }}</td>
-              <td class="text-right">{{ q.latency_ms?.toFixed(0) || '-' }}ms</td>
               <td class="text-right">{{ q.first_token_ms?.toFixed(0) || '-' }}ms</td>
-              <td class="text-right">{{ q.speed_tps?.toFixed(1) || '-' }} t/s</td>
+              <td class="text-right">{{ q.latency_ms?.toFixed(0) || '-' }}ms</td>
             </tr>
           </tbody>
         </table>
