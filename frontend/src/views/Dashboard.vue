@@ -133,9 +133,9 @@ const stats = computed(() => {
   const m = s.in_memory || {}
   return {
     totalRequests: p.total_requests || m.total_requests || 0,
-    errorRate: p.error_rate ?? m.error_rate ?? 0,
-    inputTokens: m.input_tokens || 0,
-    outputTokens: m.output_tokens || 0,
+    errorRate: m.error_rate ?? 0,
+    inputTokens: m.total_tokens_in || 0,
+    outputTokens: m.total_tokens_out || 0,
   }
 })
 

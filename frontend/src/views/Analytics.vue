@@ -74,11 +74,11 @@
 
     <div class="card">
       <div class="card-title">成本分布</div>
-      <div v-if="costDist?.providers" class="cost-grid">
-        <div v-for="(cost, name) in costDist.providers" :key="name" class="cost-item">
-          <div class="cost-name">{{ name }}</div>
-          <div class="cost-value">${{ (cost.total_cost || 0).toFixed(4) }}</div>
-          <div class="cost-percent">{{ getCostPercent(cost.total_cost) }}%</div>
+      <div v-if="costDist?.by_provider" class="cost-grid">
+        <div v-for="item in costDist.by_provider" :key="item.provider" class="cost-item">
+          <div class="cost-name">{{ item.provider }}</div>
+          <div class="cost-value">${{ (item.cost || 0).toFixed(4) }}</div>
+          <div class="cost-percent">{{ item.percentage }}%</div>
         </div>
       </div>
       <div v-else class="empty">暂无成本数据</div>
@@ -130,7 +130,7 @@ function formatNum(n) {
 
 function getProviderPercent(requests) {
   if (!overview.value?.total_requests) return 0
-  return (requests / overview.value.total_requests * 100).toFixed(1)
+  return ((requests / overview.value.total_requests) * 100).toFixed(1)
 }
 
 function getCostPercent(cost) {
