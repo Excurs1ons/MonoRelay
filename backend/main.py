@@ -24,10 +24,10 @@ from pydantic import BaseModel
 from .config import ConfigManager
 from .key_manager import KeyManager
 from .logger import RequestLogger
-from .models import AppConfig, ProviderConfig, ProviderKey, SSOConfig
+from .models import AppConfig, ProviderConfig, ProviderKey
 from .router import ModelRouter
 from .stats import StatsTracker
-from .sso import create_sso_config_from_dict, SSOUser
+from .sso import create_sso_config_from_dict, SSOUser, SSOConfig
 from .sso_session import sso_session_manager
 from .auth_service import AuthService
 from .auth_models import UserCreate, UserLogin
@@ -374,50 +374,58 @@ async def catch_all_middleware(request: Request, call_next):
 
 @app.get("/api/admin/users")
 async def api_admin_users(request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    cursor = await user_manager._db.execute("SELECT id, username, email, role, balance, created_at FROM users")
-    rows = await cursor.fetchall()
-    return api_response(data=[dict(r) for r in rows])
+    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    users = await auth_service.user_manager.list_users()
+    return api_response(data=[u.model_dump() for u in users])
 
 @app.post("/api/admin/users/{user_id}/balance")
 async def api_admin_user_balance(user_id: int, body: dict, request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     adjustment = body.get("adjustment", 0.0)
-    await user_manager._db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (adjustment, user_id))
-    await user_manager._db.commit()
+    success = await auth_service.user_manager.update_balance(user_id, adjustment)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
     return api_response(message="余额已更新")
 
 @app.delete("/api/admin/users/{user_id}")
 async def api_admin_user_delete(user_id: int, request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    if user_id == 0: raise HTTPException(status_code=400, detail="Cannot delete system admin")
-    await user_manager._db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    await user_manager._db.commit()
+    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if user_id == 0:
+        raise HTTPException(status_code=400, detail="Cannot delete system admin")
+    success = await auth_service.user_manager.delete_user(user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
     return api_response(message="用户已删除")
 
 @app.get("/api/admin/redemption-codes")
 async def api_admin_codes(request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    cursor = await user_manager._db.execute("SELECT * FROM redemption_codes ORDER BY id DESC")
-    rows = await cursor.fetchall()
-    return api_response(data=[dict(r) for r in rows])
+    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    codes = await auth_service.user_manager.list_redemption_codes()
+    return api_response(data=[c.model_dump() for c in codes])
 
 @app.post("/api/admin/redemption-codes")
 async def api_admin_codes_create(request: Request, body: dict):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
+    if not getattr(request.state, "user", None) or not request.state.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     amount = body.get("amount", 0.0)
     count = body.get("count", 1)
     prefix = body.get("prefix", "PRISMA-")
-    codes = await user_manager.generate_codes(amount, count, prefix)
+    codes = await auth_service.user_manager.generate_codes(amount, count, prefix)
     return api_response(data=codes)
 
 @app.post("/api/user/redeem")
 async def api_user_redeem(request: Request, body: dict):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     code = body.get("code", "").strip()
-    if not code: raise HTTPException(status_code=400, detail="Missing code")
-    amount = await user_manager.redeem_code(user_id, code)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code")
+    amount = await auth_service.user_manager.redeem_code(user.id, code)
     if amount is None:
         raise HTTPException(status_code=400, detail="Invalid or already used redemption code")
     return api_response(message=f"成功兑换 ${amount:.2f}", data={"amount": amount})
@@ -3629,26 +3637,28 @@ if __name__ == "__main__":
 # --- Multi-tenant API Endpoints ---
 @app.get("/api/user/keys")
 async def api_user_keys(request: Request):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
-    keys = await user_manager.get_user_api_keys(user_id)
-    return api_response(data=keys)
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    keys = await auth_service.user_manager.get_user_api_keys(user.id)
+    return api_response(data=[k.model_dump() for k in keys])
 
 @app.post("/api/user/keys")
 async def api_user_key_create(request: Request, body: dict):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     label = body.get("label", "default")
-    key = await user_manager.create_api_key(user_id, label)
-    return api_response(data=key)
+    key = await auth_service.user_manager.create_api_key(user.id, label)
+    return api_response(data=key.model_dump() if key else None)
 
 @app.get("/api/user/stats")
 async def api_user_stats(request: Request):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
-    user = await user_manager.get_user_by_id(user_id)
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     from .usage_tracker import usage_tracker
-    stats = usage_tracker.get_stats(str(user_id))
+    stats = usage_tracker.get_stats(str(user.id))
     return api_response(data={
         "balance": user.balance,
         "quota_used": user.balance - stats.get("cost", 0),
@@ -3659,57 +3669,8 @@ async def api_user_stats(request: Request):
 
 @app.get("/api/user/logs")
 async def api_user_logs(request: Request, limit: int = 50):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
-    logs = await request_logger.get_recent_requests(limit, user_id=user_id)
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    logs = await request_logger.get_recent_requests(limit, user_id=user.id)
     return api_response(data=logs)
-
-@app.get("/api/admin/users")
-async def api_admin_users(request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    cursor = await user_manager._db.execute("SELECT id, username, email, role, balance, created_at FROM users")
-    rows = await cursor.fetchall()
-    return api_response(data=[dict(r) for r in rows])
-
-@app.post("/api/admin/users/{user_id}/balance")
-async def api_admin_user_balance(user_id: int, body: dict, request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    adjustment = body.get("adjustment", 0.0)
-    await user_manager._db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (adjustment, user_id))
-    await user_manager._db.commit()
-    return api_response(message="余额已更新")
-
-@app.delete("/api/admin/users/{user_id}")
-async def api_admin_user_delete(user_id: int, request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    if user_id == 0: raise HTTPException(status_code=400, detail="Cannot delete system admin")
-    await user_manager._db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    await user_manager._db.commit()
-    return api_response(message="用户已删除")
-
-@app.get("/api/admin/redemption-codes")
-async def api_admin_codes(request: Request):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    cursor = await user_manager._db.execute("SELECT * FROM redemption_codes ORDER BY id DESC")
-    rows = await cursor.fetchall()
-    return api_response(data=[dict(r) for r in rows])
-
-@app.post("/api/admin/redemption-codes")
-async def api_admin_codes_create(request: Request, body: dict):
-    if not getattr(request.state, "is_admin", False): raise HTTPException(status_code=403)
-    amount = body.get("amount", 0.0)
-    count = body.get("count", 1)
-    prefix = body.get("prefix", "PRISMA-")
-    codes = await user_manager.generate_codes(amount, count, prefix)
-    return api_response(data=codes)
-
-@app.post("/api/user/redeem")
-async def api_user_redeem(request: Request, body: dict):
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None: raise HTTPException(status_code=401)
-    code = body.get("code", "").strip()
-    if not code: raise HTTPException(status_code=400, detail="Missing code")
-    amount = await user_manager.redeem_code(user_id, code)
-    if amount is None:
-        raise HTTPException(status_code=400, detail="Invalid or already used redemption code")
-    return api_response(message=f"成功兑换 ${amount:.2f}", data={"amount": amount})
