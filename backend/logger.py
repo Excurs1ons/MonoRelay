@@ -209,8 +209,7 @@ class RequestLogger:
             """
         )
         row = await cursor.fetchone()
-        result = dict(row)
-        # Map to expected field names for frontend
+        result = dict(zip([c[0] for c in cursor.description], row))
         result["input_tokens"] = result.pop("total_input_tokens", 0)
         result["output_tokens"] = result.pop("total_output_tokens", 0)
         return result
