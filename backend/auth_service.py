@@ -44,6 +44,7 @@ class AuthService:
                 access_token=access_token,
                 token_type="bearer",
                 expires_in=60 * 60 * 24,  # 24 hours
+                refresh_token=refresh_token,
                 user={
                     "id": user.id,
                     "username": user.username,
@@ -80,6 +81,7 @@ class AuthService:
             access_token=access_token,
             token_type="bearer",
             expires_in=60 * 60 * 24,  # 24 hours
+            refresh_token=refresh_token,
             user={
                 "id": user.id,
                 "username": user.username,

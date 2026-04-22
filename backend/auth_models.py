@@ -466,3 +466,9 @@ class UserManager:
             is_used=bool(row["is_used"]), used_by=row["used_by"], used_at=row["used_at"],
             created_at=row["created_at"]
         )
+
+    async def close(self):
+        """Close the database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
