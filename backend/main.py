@@ -1750,11 +1750,11 @@ async def api_analytics_slow_queries(
         cursor = await request_logger._db.execute(
             """
             SELECT 
-                timestamp, model, provider, latency_ms, 
+                timestamp, model, provider, first_token_ms, latency_ms,
                 COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) as tokens
             FROM requests
-            WHERE timestamp >= ? AND timestamp < ? AND latency_ms > ?
-            ORDER BY latency_ms DESC
+            WHERE timestamp >= ? AND timestamp < ? AND first_token_ms > ?
+            ORDER BY first_token_ms DESC
             LIMIT ?
             """,
             (start_ts, end_ts, threshold_ms, limit)
@@ -1767,8 +1767,9 @@ async def api_analytics_slow_queries(
                 "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S"),
                 "model": row[1],
                 "provider": row[2],
-                "latency_ms": round(row[3], 1) if row[3] else 0,
-                "tokens": row[4] or 0,
+                "first_token_ms": round(row[3], 1) if row[3] else 0,
+                "latency_ms": round(row[4], 1) if row[4] else 0,
+                "tokens": row[5] or 0,
             })
         
         # Get total count
