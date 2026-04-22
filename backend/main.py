@@ -1009,7 +1009,7 @@ async def embeddings(request: Request):
 
 @app.get("/v1/models")
 async def models_list():
-    return await handle_models_list(config_manager.config)
+    return await handle_models_list(config_manager.config, user_id=getattr(request.state, "user_id", None))
 
 
 @app.get("/v1/credits")
@@ -1127,6 +1127,7 @@ async def moderations(request: Request):
     body = await request.json()
     result = await handle_moderations(
         body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1143,7 +1144,7 @@ async def files_list(
 ):
     result = await handle_files_list(
         config_manager.config, key_manager, request_logger, stats_tracker,
-        purpose, limit, order, after, before,
+        purpose, limit, order, after, before, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1154,6 +1155,7 @@ async def files_list(
 async def files_retrieve(file_id: str):
     result = await handle_files_retrieve(
         file_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1164,6 +1166,7 @@ async def files_retrieve(file_id: str):
 async def files_content(file_id: str):
     result = await handle_files_content(
         file_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1177,7 +1180,7 @@ async def fine_tuning_jobs_list(
 ):
     result = await handle_fine_tuning_jobs_list(
         config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, after,
+        limit, after, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1188,7 +1191,7 @@ async def fine_tuning_jobs_list(
 async def fine_tuning_jobs_create(request: Request):
     body = await request.json()
     result = await handle_fine_tuning_jobs_create(
-        body, config_manager.config, key_manager, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1198,7 +1201,7 @@ async def fine_tuning_jobs_create(request: Request):
 @app.get("/v1/fine_tuning/jobs/{job_id}")
 async def fine_tuning_jobs_retrieve(job_id: str):
     result = await handle_fine_tuning_jobs_retrieve(
-        job_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        job_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1208,7 +1211,7 @@ async def fine_tuning_jobs_retrieve(job_id: str):
 @app.post("/v1/fine_tuning/jobs/{job_id}/cancel")
 async def fine_tuning_jobs_cancel(job_id: str):
     result = await handle_fine_tuning_jobs_cancel(
-        job_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        job_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1222,7 +1225,7 @@ async def batches_list(
 ):
     result = await handle_batches_list(
         config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, after,
+        limit, after, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1233,7 +1236,7 @@ async def batches_list(
 async def batches_create(request: Request):
     body = await request.json()
     result = await handle_batches_create(
-        body, config_manager.config, key_manager, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1243,7 +1246,7 @@ async def batches_create(request: Request):
 @app.get("/v1/batches/{batch_id}")
 async def batches_retrieve(batch_id: str):
     result = await handle_batches_retrieve(
-        batch_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        batch_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1259,7 +1262,7 @@ async def assistants_list(
 ):
     result = await handle_assistants_list(
         config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, order, after, before,
+        limit, order, after, before, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1270,7 +1273,7 @@ async def assistants_list(
 async def assistants_create(request: Request):
     body = await request.json()
     result = await handle_assistants_create(
-        body, config_manager.config, key_manager, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1280,7 +1283,7 @@ async def assistants_create(request: Request):
 @app.get("/v1/assistants/{assistant_id}")
 async def assistants_retrieve(assistant_id: str):
     result = await handle_assistants_retrieve(
-        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1291,7 +1294,7 @@ async def assistants_retrieve(assistant_id: str):
 async def assistants_update(assistant_id: str, request: Request):
     body = await request.json()
     result = await handle_assistants_update(
-        assistant_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+        assistant_id, body, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1301,7 +1304,7 @@ async def assistants_update(assistant_id: str, request: Request):
 @app.delete("/v1/assistants/{assistant_id}")
 async def assistants_delete(assistant_id: str):
     result = await handle_assistants_delete(
-        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        assistant_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1317,7 +1320,7 @@ async def threads_list(
 ):
     result = await handle_threads_list(
         config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, order, after, before,
+        limit, order, after, before, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1328,7 +1331,7 @@ async def threads_list(
 async def threads_create(request: Request):
     body = await request.json()
     result = await handle_threads_create(
-        body, config_manager.config, key_manager, request_logger, stats_tracker,
+        body, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1338,7 +1341,7 @@ async def threads_create(request: Request):
 @app.get("/v1/threads/{thread_id}")
 async def threads_retrieve(thread_id: str):
     result = await handle_threads_retrieve(
-        thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        thread_id, config_manager.config, key_manager, request_logger, stats_tracker, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1350,6 +1353,7 @@ async def threads_modify(thread_id: str, request: Request):
     body = await request.json()
     result = await handle_threads_modify(
         thread_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1360,6 +1364,7 @@ async def threads_modify(thread_id: str, request: Request):
 async def threads_delete(thread_id: str):
     result = await handle_threads_delete(
         thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1376,7 +1381,7 @@ async def threads_messages_list(
 ):
     result = await handle_threads_messages_list(
         thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, order, after, before,
+        limit, order, after, before, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1388,6 +1393,7 @@ async def threads_messages_create(thread_id: str, request: Request):
     body = await request.json()
     result = await handle_threads_messages_create(
         thread_id, body, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1404,7 +1410,7 @@ async def runs_list(
 ):
     result = await handle_runs_list(
         thread_id, config_manager.config, key_manager, request_logger, stats_tracker,
-        limit, order, after, before,
+        limit, order, after, before, user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1416,6 +1422,7 @@ async def runs_create(thread_id: str, request: Request):
     body = await request.json()
     result = await handle_runs_create(
         thread_id, body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1426,6 +1433,7 @@ async def runs_create(thread_id: str, request: Request):
 async def runs_retrieve(thread_id: str, run_id: str):
     result = await handle_runs_retrieve(
         thread_id, run_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1436,6 +1444,7 @@ async def runs_retrieve(thread_id: str, run_id: str):
 async def runs_cancel(thread_id: str, run_id: str):
     result = await handle_runs_cancel(
         thread_id, run_id, config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1448,6 +1457,7 @@ async def messages(request: Request):
     body = await request.json()
     result = await handle_messages(
         body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1458,6 +1468,7 @@ async def messages(request: Request):
 async def anthropic_models():
     result = await handle_anthropic_models(
         config_manager.config, key_manager, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
@@ -1469,6 +1480,7 @@ async def anthropic_messages_beta(request: Request):
     body = await request.json()
     result = await handle_anthropic_messages_beta(
         body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+        user_id=getattr(request.state, "user_id", None),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse(status_code=503, content=result)
