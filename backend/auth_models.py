@@ -196,6 +196,8 @@ class UserManager:
         try:
             await self._db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         except: pass
+        try:
+            await self._db.execute("ALTER TABLE users ADD COLUMN is_super_admin INTEGER DEFAULT 0")
         except: pass
 
         await self._db.commit()
