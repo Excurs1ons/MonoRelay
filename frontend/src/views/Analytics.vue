@@ -74,7 +74,7 @@
 
     <div class="card">
       <div class="card-title">成本分布</div>
-      <div v-if="costDist?.by_provider" class="cost-grid">
+      <div v-if="costDist && costDist.by_provider && costDist.by_provider.length > 0" class="cost-grid">
         <div v-for="item in costDist.by_provider" :key="item.provider" class="cost-item">
           <div class="cost-name">{{ item.provider }}</div>
           <div class="cost-value">${{ (item.cost || 0).toFixed(4) }}</div>
@@ -86,7 +86,7 @@
 
     <div class="card">
       <div class="card-title">模型统计</div>
-      <div v-if="overview?.by_model" class="table-wrap">
+      <div v-if="overview && overview.by_model && Object.keys(overview.by_model).length > 0" class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -140,10 +140,13 @@ function getCostPercent(cost) {
 
 async function fetchData() {
   try {
-    overview.value = await api.getAnalyticsOverview()
+    const ov = await api.getAnalyticsOverview()
     const sq = await api.getAnalyticsSlowQueries(10)
-    costDist.value = await api.getAnalyticsCostDistribution()
-    slowQueries.value = sq?.slow_queries || sq || []
+    const cd = await api.getAnalyticsCostDistribution()
+    overview.value = ov
+    slowQueries.value = sq?.slow_queries || []
+    costDist.value = cd || {}
+    console.log('fetchData result:', { overview: overview.value, slowQueries: slowQueries.value, costDist: costDist.value })
   } catch (e) {
     console.error('fetchData error:', e)
   } finally {
