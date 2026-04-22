@@ -140,17 +140,12 @@ function getCostPercent(cost) {
 
 async function fetchData() {
   try {
-    const [ov, sq, cd] = await Promise.all([
-      api.getAnalyticsOverview(),
-      api.getAnalyticsSlowQueries(10),
-      api.getAnalyticsCostDistribution()
-    ])
-    overview.value = ov
-    slowQueries.value = sq?.slow_queries || []
-    costDist.value = cd
-    console.log('API responses - overview:', ov, 'slowQueries:', sq, 'costDist:', cd)
+    overview.value = await api.getAnalyticsOverview()
+    const sq = await api.getAnalyticsSlowQueries(10)
+    costDist.value = await api.getAnalyticsCostDistribution()
+    slowQueries.value = sq?.slow_queries || sq || []
   } catch (e) {
-    console.error(e)
+    console.error('fetchData error:', e)
   } finally {
     loading.value = false
   }
