@@ -242,7 +242,7 @@ class UserManager:
         """Atomic balance update. amount can be positive or negative."""
         if not self._db: await self.init()
         try:
-            await self._db.execute("UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ?", (amount, time.time(), user_id))
+            await self._db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
             await self._db.commit()
             return True
         except: return False

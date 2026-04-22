@@ -246,3 +246,9 @@ class RequestLogger:
         if len(content) <= self.content_preview_length:
             return content
         return content[: self.content_preview_length] + "..."
+
+    async def close(self):
+        """Close the database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
