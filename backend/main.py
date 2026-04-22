@@ -1641,6 +1641,8 @@ async def api_analytics_overview(
     
     # Query request logger for date-filtered stats
     db_stats = {}
+    if not request_logger._db:
+        await request_logger.init()
     if request_logger._db:
         cursor = await request_logger._db.execute(
             """
@@ -1727,6 +1729,9 @@ async def api_analytics_slow_queries(
     slow_queries = []
     total = 0
     
+    if not request_logger._db:
+        await request_logger.init()
+    
     if request_logger._db:
         cursor = await request_logger._db.execute(
             """
@@ -1788,6 +1793,9 @@ async def api_analytics_cost_distribution(
     provider_costs: dict[str, float] = {}
     model_costs: dict[str, float] = {}
     total_cost = 0.0
+    
+    if not request_logger._db:
+        await request_logger.init()
     
     if request_logger._db:
         cursor = await request_logger._db.execute(
