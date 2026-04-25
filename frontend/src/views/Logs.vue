@@ -62,40 +62,44 @@
                        </div>
                      </div>
 
-                      <!-- Request Section -->
-                      <div v-if="log.request_preview || getFullRequest(log.id)" class="content-block">
-                        <div class="content-label">
-                          Request
-                          <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
-                            {{ isFullRequest(log.id) ? '显示请求文本' : '显示原始请求' }}
-                          </button>
-                        </div>
-                        <div v-if="!isFullRequest(log.id) && getParsedMessages(log.id)" class="chat-container">
-                          <div v-for="(msg, idx) in getParsedMessages(log.id)" :key="idx" class="message-item" :class="'msg-' + msg.role">
-                            <div class="message-role">{{ msg.role.toUpperCase() }}</div>
-                            <div class="message-bubble">{{ msg.content }}</div>
-                          </div>
-                        </div>
-                        <pre v-else class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
-                      </div>
+<!-- Request Section -->
+                       <div v-if="log.request_preview || getFullRequest(log.id)" class="content-block">
+                         <div class="content-label">
+                           Request
+                           <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
+                             {{ isFullRequest(log.id) ? '对话式' : 'JSON' }}
+                           </button>
+                         </div>
+                         <div v-if="!isFullRequest(log.id) && getParsedMessages(log.id)" class="text-body">
+                           <div v-for="(msg, idx) in getParsedMessages(log.id)" :key="idx" class="text-msg">
+                             <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                           </div>
+                         </div>
+                         <pre v-else class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
+                       </div>
 
-                      <!-- Response Section -->
-                      <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
-                        <div class="content-label">
-                          Response
-                          <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
-                            {{ isFullResponse(log.id) ? '显示响应文本' : '显示原始响应' }}
-                          </button>
-                        </div>
+                       <!-- Response Section -->
+                       <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
+                         <div class="content-label">
+                           Response
+                           <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
+                             {{ isFullResponse(log.id) ? '对话式' : 'JSON' }}
+                           </button>
+                         </div>
 
-                        <!-- Thinking Sub-section -->
-                        <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
-                          <div class="sub-label">Thinking Process</div>
-                          <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
-                        </div>
+                         <!-- Thinking Sub-section -->
+                         <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
+                           <div class="sub-label">Thinking Process</div>
+                           <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
+                         </div>
 
-                        <pre class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
-                      </div>
+                         <div v-if="!isFullResponse(log.id) && getParsedResponse(log.id)" class="text-body">
+                           <div v-for="(msg, idx) in getParsedResponse(log.id)" :key="idx" class="text-msg">
+                             <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                           </div>
+                         </div>
+                         <pre v-else class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
+                       </div>
 
                       <!-- Error Section -->
                       <div v-if="log.error_message" class="content-block">
@@ -206,6 +210,19 @@ function getParsedMessages(id) {
   return null
 }
 
+function getParsedResponse(id) {
+  const full = fullContent.value[id]
+  if (!full?.response_full) return null
+  try {
+    const obj = typeof full.response_full === 'string' ? JSON.parse(full.response_full) : full.response_full
+    const content = obj.choices?.[0]?.message?.content
+    if (content) {
+      return [{ role: 'assistant', content }]
+    }
+  } catch (e) {}
+  return null
+}
+
 function getThinkingContent(id) {
   const full = fullContent.value[id]
   const log = logs.value.find(l => l.id === id)
@@ -280,9 +297,40 @@ td.text-right { text-align: right; }
 .msg-assistant .message-bubble { background: var(--color-bg-input); border: 1px solid var(--color-border); border-bottom-left-radius: 2px; }
 .msg-system .message-bubble { background: rgba(255,255,255,0.05); color: var(--color-text-dim); border-radius: 6px; font-style: italic; }
 
+/* Text body style (plain text view) */
+.text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.6; }
+.text-msg { margin-bottom: 8px; word-break: break-word; }
+.text-msg:last-child { margin-bottom: 0; }
+.text-role { font-weight: 600; color: var(--color-accent); margin-right: 6px; }
+
 .thinking-sub-block { margin-top: 12px; padding-left: 12px; border-left: 2px solid rgba(168, 85, 247, 0.3); }
 .sub-label { font-size: 10px; font-weight: 600; color: #a855f7; text-transform: uppercase; margin-bottom: 6px; }
 .thinking-text { background: rgba(168, 85, 247, 0.02); border-color: rgba(168, 85, 247, 0.1); color: var(--color-text-dim); font-style: italic; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Params Block */
+.params-block { margin-bottom: 12px; }
+.params-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.params-grid span { display: inline-block; padding: 3px 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--color-border); border-radius: 4px; font-size: 11px; color: var(--color-text-dim); }
+
+/* Mobile responsive */
+@media (max-width: 640px) {
+  .logs-page { padding: 12px; }
+  .section-title { font-size: 14px; }
+  .flex-between { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .flex-between > div:last-child { width: 100%; display: flex; gap: 8px; }
+  .flex-between select, .flex-between button { flex: 1; }
+  .table-wrap { margin: 0 -20px; }
+  th, td { padding: 8px 10px; font-size: 12px; }
+  .expand-content { padding: 12px 14px; }
+  .content-text { font-size: 11px; padding: 10px; }
+  .text-body { font-size: 11px; padding: 10px; }
+  .content-label { font-size: 10px; }
+  .content-toggle { font-size: 9px; padding: 2px 6px; }
+  .chat-container { padding: 10px; gap: 8px; }
+  .message-bubble { padding: 8px 10px; font-size: 11px; }
+  .params-grid { gap: 6px; }
+  .params-grid span { font-size: 10px; padding: 2px 6px; }
+}
 </style>
