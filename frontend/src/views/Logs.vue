@@ -1,19 +1,19 @@
 <template>
   <div class="logs-page">
-    <div class="flex-between mb-4">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
       <div>
-        <h2 class="section-title">{{ $t('logs.title') }}</h2>
-        <p class="text-dim text-sm">{{ isAdmin ? '全站请求记录' : '我的请求记录' }}</p>
+        <h2 class="text-xl font-bold text-white">{{ $t('logs.title') }}</h2>
+        <p class="text-dim text-sm mt-1">{{ isAdmin ? '全站请求记录' : '我的请求记录' }}</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <select v-model="limit" class="select-sm" @change="fetchLogs">
           <option :value="20">最近 20 条</option>
           <option :value="50">最近 50 条</option>
           <option :value="100">最近 100 条</option>
           <option :value="200">最近 200 条</option>
         </select>
-        <button v-if="isAdmin" class="btn-danger btn-sm" @click="clearLogs">清空日志</button>
-        <button class="btn-primary btn-sm" @click="fetchLogs" :disabled="loading">
+        <button v-if="isAdmin" class="btn btn-danger btn-sm" @click="clearLogs">清空日志</button>
+        <button class="btn btn-primary btn-sm" @click="fetchLogs" :disabled="loading">
           <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
           刷新
         </button>
@@ -158,7 +158,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { api } from '@/api'
 import { RefreshCw } from 'lucide-vue-next'
 
@@ -377,10 +377,24 @@ onUnmounted(() => {
 
 <style scoped>
 .logs-page { animation: fade-in 0.3s ease-out; }
+
+/* Tabs */
 .tabs { display: flex; border-bottom: 1px solid var(--color-border); gap: 24px; }
 .tab-btn { padding: 8px 4px; font-size: 14px; color: var(--color-text-dim); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.2s; }
 .tab-btn.active { color: var(--color-accent); border-bottom-color: var(--color-accent); font-weight: 600; }
 
+/* Buttons & Inputs */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-text); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+.btn-danger { color: #ef4444; border-color: rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.05); }
+.btn-danger:hover { background: rgba(239, 68, 68, 0.1); border-color: #ef4444; }
+.btn-sm { padding: 6px 10px; font-size: 12px; }
+.select-sm { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text); font-size: 12px; padding: 4px 8px; outline: none; }
+
+/* Card */
+.card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 12px); padding: 20px; overflow: hidden; }
+
+/* Table */
 .table-wrap { overflow-x: auto; min-height: 400px; }
 .logs-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: fixed; }
 thead { position: sticky; top: 0; z-index: 10; background: var(--color-bg); }
@@ -415,8 +429,20 @@ td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: n
 .text-msg { margin-bottom: 12px; }
 .text-role { font-weight: 700; color: var(--color-accent); margin-right: 8px; }
 
+/* Utilities & Badges */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
+.badge-green { background: rgba(34, 197, 94, 0.1); color: #4ade80; border-color: rgba(34, 197, 94, 0.2); }
+.badge-red { background: rgba(239, 68, 68, 0.1); color: #f87171; border-color: rgba(239, 68, 68, 0.2); }
 .badge-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+.text-dim { color: var(--color-text-dim); }
+.mono { font-family: var(--font-mono); }
 .truncate-cell { overflow: hidden; text-overflow: ellipsis; }
+
+.loading-state { text-align: center; padding: 40px; color: var(--color-text-dim); }
+.empty-state { text-align: center; padding: 40px; color: var(--color-text-dim); font-size: 14px; }
+
+@keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 768px) {
   .logs-table { font-size: 11px; }
