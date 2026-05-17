@@ -245,8 +245,6 @@ async def auth_middleware(request: Request, call_next):
             "/api/info",
             "/api/providers",
             "/api/models/pricing",
-            "/api/logs",
-            "/api/logs/stream",
             "/v1/models",
         ]
 
