@@ -11,10 +11,9 @@ import httpx
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
-from ..config import AppConfig, ProviderConfig
+from ..models import AppConfig, ProviderConfig, ProviderKey
 from ..key_manager import KeyManager, retry_with_backoff
 from ..logger import RequestLogger
-from ..models import ProviderKey
 from ..router import ModelRouter
 from ..stats import StatsTracker, estimate_cost, extract_token_usage
 
