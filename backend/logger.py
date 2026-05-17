@@ -311,12 +311,17 @@ class RequestLogger:
         real_id = cursor.lastrowid
         
         # Publish update event with new ID and ALL final data to ensure UI consistency
-        asyncio.ensure_future(log_bus.publish("log_update", {
+        update_payload = {
             "id": temp_id, 
             "_real_id": real_id,
-            **entry,
-            **final_data
-        }))
+            "status_code": entry.get("status_code"),
+            "latency_ms": entry.get("latency_ms"),
+            "first_token_ms": entry.get("first_token_ms"),
+            "input_tokens": entry.get("input_tokens"),
+            "output_tokens": entry.get("output_tokens"),
+            "response_preview": entry.get("response_preview"),
+        }
+        asyncio.ensure_future(log_bus.publish("log_update", update_payload))
         return real_id
 
     async def get_pending_entries(self) -> list[dict]:

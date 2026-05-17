@@ -308,16 +308,24 @@ async function connectSSE() {
               // Pending entry finalized: replace temp_id with real_id
               const idx = logs.value.findIndex(l => l.id === oldId)
               if (idx >= 0) {
+                // Update log item in list with final data
                 logs.value[idx] = { ...logs.value[idx], ...data, id: newId }
+                
                 // Migrate UI states to new ID
                 if (expanded.value[oldId]) {
                   expanded.value[newId] = true
                   delete expanded.value[oldId]
                 }
+                
+                // CRITICAL: Update fullContent cache with final data to refresh summary bar
                 if (fullContent.value[oldId]) {
                   fullContent.value[newId] = { ...fullContent.value[oldId], ...data, id: newId }
                   delete fullContent.value[oldId]
+                } else {
+                  // If not loaded but expanded, pre-populate from sse data
+                  fullContent.value[newId] = { ...data, id: newId }
                 }
+
                 if (showFullReqState.value[oldId]) {
                   showFullReqState.value[newId] = showFullReqState.value[oldId]
                   delete showFullReqState.value[oldId]
