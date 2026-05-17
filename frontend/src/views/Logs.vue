@@ -2,7 +2,7 @@
   <div class="logs-page">
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
       <div>
-        <h2 class="text-xl font-bold text-white">{{ $t('logs.title') }}</h2>
+        <h2 class="text-xl font-bold" style="color: var(--color-text)">{{ $t('logs.title') }}</h2>
         <p class="text-dim text-sm mt-1">{{ isAdmin ? '全站请求记录' : '我的请求记录' }}</p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
