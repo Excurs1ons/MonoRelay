@@ -139,6 +139,42 @@ def anthropic_to_openai(anthropic_resp: dict, model: str) -> dict:
     }
 
 
+async def handle_anthropic_to_openai(
+    body: dict,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+    downstream_request: str | None = None,
+) -> StreamingResponse | dict:
+    original_model = body.get("model", "unknown")
+    messages = body.get("messages", [])
+    resolved_model, provider_name = router.resolve_model(original_model, messages)
+    anthropic_body = openai_to_anthropic(body)
+    anthropic_body["model"] = resolved_model
+    provider_cfg = config.providers.get(provider_name)
+    if not provider_cfg or not provider_cfg.enabled: return {"error": {"message": "Provider disabled"}}
+    key = key_manager.select_key(provider_name, config.key_selection.strategy)
+    if not key: return {"error": {"message": "No keys"}}
+    url = f"{provider_cfg.base_url}/v1/messages"
+    headers = {"x-api-key": key.key.key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    if provider_cfg.headers: headers.update(provider_cfg.headers)
+    start_time = time.time()
+    if body.get("stream"):
+        from .openai_format import _stream_chat, _stream_anthropic_to_openai
+        async def wrapped_gen():
+            openai_gen = _stream_chat(provider_cfg, url, headers, anthropic_body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=body, config=config)
+            async for chunk in _stream_anthropic_to_openai(openai_gen, original_model): yield chunk
+        return StreamingResponse(wrapped_gen(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+    else:
+        from .openai_format import _non_stream_chat
+        result = await _non_stream_chat(provider_cfg, url, headers, anthropic_body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=body, client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request)
+        return anthropic_to_openai(result, original_model)
+
+
 async def handle_messages(
     body: dict,
     config: AppConfig,
@@ -152,160 +188,94 @@ async def handle_messages(
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
-
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     body["model"] = resolved_model
-
     provider_cfg = config.providers.get(provider_name)
-    if not provider_cfg or not provider_cfg.enabled:
-        stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"[{provider_name}] Provider '{provider_name}' is not enabled", "type": "provider_disabled"}}
-
+    if not provider_cfg or not provider_cfg.enabled: return {"error": {"message": f"Provider disabled"}}
+    if provider_cfg.provider_type == "api": return await handle_anthropic_to_openai(body, config, key_manager, router, request_logger, stats_tracker, client_ip, user_agent, downstream_request)
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
-    if not key:
-        stats_tracker.record_request(provider_name, resolved_model, success=False)
-        return {"error": {"message": f"[{provider_name}] No available keys for provider '{provider_name}'", "type": "no_keys"}}
-
+    if not key: return {"error": {"message": "No available keys"}}
     url = f"{provider_cfg.base_url}/v1/messages"
-    headers = {
-        "x-api-key": key.key.key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
+    headers = {"x-api-key": key.key.key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
     if provider_cfg.headers: headers.update(provider_cfg.headers)
-
-    is_stream = body.get("stream", False)
     start_time = time.time()
-
-    if is_stream:
-        log_id = await request_logger.create_pending(
-            model=resolved_model, provider=provider_name, key_label=key.key.label,
-            client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request
-        )
-        return StreamingResponse(
-            _stream_messages(
-                provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker,
-                log_id=log_id,
-            ),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-                "X-Prisma-Model": resolved_model,
-                "X-Prisma-Provider": provider_name,
-            },
-        )
+    if body.get("stream"):
+        log_id = await request_logger.create_pending(model=resolved_model, provider=provider_name, key_label=key.key.label, client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, streaming=True)
+        return StreamingResponse(_stream_messages(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker, log_id=log_id, config=config), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
     else:
-        return await _non_stream_messages(
-            provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker,
-            client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request
-        )
+        return await _non_stream_messages(provider_cfg, url, headers, body, key, key_manager, provider_name, resolved_model, original_model, request_logger, start_time, stats_tracker, client_ip, user_agent, downstream_request)
 
 
 async def _stream_messages(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
-    log_id=None,
+    log_id=None, config=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
-    yielded_any_data = False
-    
     while attempt <= provider_cfg.retry.max_retries:
         try:
-            tokens_in, tokens_out = None, None
-            cache_hit, cache_miss = 0, 0
-            stream_chunks = 0
-            buffer = b""
+            tokens_in, tokens_out, cache_hit, cache_miss = None, None, 0, 0
+            stream_chunks, buffer = 0, b""
             output_content, output_thinking = [], []
-            first_token_ms = None
-            first_token_recorded = False
-
+            first_token_recorded, first_token_ms = False, None
             async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
                 async with client.stream("POST", url, headers=headers, json=body, timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as response:
                     if response.status_code >= 400:
-                        # (Error handling omitted for brevity, keeping it same as openai_format)
-                        pass
-
+                        error_body = await response.aread()
+                        yield f"event: error\ndata: {json.dumps({'error': {'message': error_body.decode()}})}\n\n".encode()
+                        return
                     last_preview_update = time.time()
-                    async for chunk in response.aiter_bytes():
-                        if chunk:
-                            yield chunk
-                            yielded_any_data = True
-                            buffer += chunk
-                        stream_chunks += 1
-
-                        if not first_token_recorded and chunk:
+                    ttft_timeout = getattr(config.server, "ttft_timeout", 300) if config else 300
+                    try:
+                        response_iter = response.aiter_bytes()
+                        try: first_chunk = await asyncio.wait_for(anext(response_iter), timeout=float(ttft_timeout))
+                        except StopAsyncIteration: first_chunk = None
+                        if first_chunk:
+                            yield first_chunk
+                            buffer += first_chunk
+                            stream_chunks += 1
                             first_token_ms = (time.time() - start_time) * 1000
                             first_token_recorded = True
                             if log_id: asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
-
-                        # Parse SSE events
-                        while b"\n\n" in buffer:
-                            event, buffer = buffer.split(b"\n\n", 1)
-                            for line in event.decode("utf-8", errors="replace").split("\n"):
-                                line = line.strip()
-                                if line.startswith("data: "):
-                                    try:
-                                        data = json.loads(line[6:])
-                                        if data.get("type") == "content_block_delta":
-                                            d = data.get("delta", {})
-                                            if d.get("type") == "text_delta": output_content.append(d.get("text", ""))
-                                            elif d.get("type") == "thinking_delta": output_thinking.append(d.get("thinking", ""))
-                                        elif data.get("type") == "message_start":
-                                            u = data.get("message", {}).get("usage", {})
-                                            if u:
-                                                tokens_in = u.get("input_tokens") or tokens_in
-                                                cache_hit = u.get("cache_read_input_tokens") or cache_hit
-                                        elif data.get("type") == "message_stop":
-                                            u = data.get("message", {}).get("usage", {})
-                                            if u:
-                                                tokens_out = u.get("output_tokens") or tokens_out
-                                                cache_hit = u.get("cache_read_input_tokens") or cache_hit
-                                                cache_miss = u.get("cache_creation_input_tokens") or cache_miss
-                                    except Exception: pass
-                        
-                        # Real-time preview update
-                        if log_id and (time.time() - last_preview_update > 0.1):
-                            preview = _extract_preview("".join(output_content), "".join(output_thinking))
-                            if preview:
-                                if len(preview) > 1000: preview = preview[:1000] + "..."
-                                asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=preview))
-                            last_preview_update = time.time()
-
+                        async for chunk in response_iter:
+                            if chunk:
+                                yield chunk
+                                buffer += chunk
+                            stream_chunks += 1
+                            while b"\n\n" in buffer:
+                                event, buffer = buffer.split(b"\n\n", 1)
+                                for line in event.decode("utf-8", errors="replace").split("\n"):
+                                    if line.startswith("data: "):
+                                        try:
+                                            data = json.loads(line[6:])
+                                            if data.get("type") == "content_block_delta":
+                                                d = data.get("delta", {})
+                                                if d.get("type") == "text_delta": output_content.append(d.get("text", ""))
+                                                elif d.get("type") == "thinking_delta": output_thinking.append(d.get("thinking", ""))
+                                            elif data.get("type") == "message_start":
+                                                u = data.get("message", {}).get("usage", {})
+                                                if u: tokens_in, cache_hit = u.get("input_tokens") or tokens_in, u.get("cache_read_input_tokens") or cache_hit
+                                            elif data.get("type") == "message_stop":
+                                                u = data.get("message", {}).get("usage", {})
+                                                if u: tokens_out, cache_hit, cache_miss = u.get("output_tokens") or tokens_out, u.get("cache_read_input_tokens") or cache_hit, u.get("cache_creation_input_tokens") or cache_miss
+                                        except Exception: pass
+                            if log_id and (time.time() - last_preview_update > 0.1):
+                                preview = _extract_preview("".join(output_content), "".join(output_thinking))
+                                if preview: asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=preview[:1000]))
+                                last_preview_update = time.time()
+                    except asyncio.TimeoutError:
+                        error_msg = f"First token timeout after {ttft_timeout}s"
+                        if log_id: await request_logger.finalize_pending(log_id, status_code=504, error_message=error_msg)
+                        yield f"event: error\ndata: {json.dumps({'error': {'message': error_msg}})}\n\n".encode()
+                        return
             elapsed = time.time() - start_time
-            full_content = "".join(output_content)
-            full_thinking = "".join(output_thinking)
-            resp_preview = _extract_preview(full_content, full_thinking)
-            if len(resp_preview) > 1000: resp_preview = resp_preview[:1000] + "..."
-            
-            key_manager.report_success(key, (tokens_in or 0) + (tokens_out or 0))
-            
-            response_full_str = json.dumps({
-                "type": "message", "role": "assistant", "model": resolved_model,
-                "content": [{"type": "text", "text": full_content}],
-                "usage": {"input_tokens": tokens_in or 0, "output_tokens": tokens_out or 0, "cache_read_input_tokens": cache_hit}
-            }, ensure_ascii=False, indent=2)
-
-            _log_data = dict(
-                status_code=200, latency_ms=round(elapsed * 1000, 2),
-                first_token_ms=first_token_ms or round(elapsed * 1000, 1),
-                streaming=True, input_tokens=tokens_in, output_tokens=tokens_out,
-                cache_hit_tokens=cache_hit, cache_miss_tokens=cache_miss,
-                response_preview=resp_preview,
-                request_full=json.dumps(body, ensure_ascii=False, indent=2),
-                response_full=response_full_str, downstream_response=response_full_str,
-            )
+            full_content, full_thinking = "".join(output_content), "".join(output_thinking)
+            response_full_obj = {"type": "message", "role": "assistant", "model": resolved_model, "content": [{"type": "text", "text": full_content}], "usage": {"input_tokens": tokens_in or 0, "output_tokens": tokens_out or 0, "cache_read_input_tokens": cache_hit}}
+            if full_thinking: response_full_obj["content"].insert(0, {"type": "thinking", "thinking": full_thinking})
+            response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
+            _log_data = dict(status_code=200, latency_ms=round(elapsed * 1000, 2), first_token_ms=first_token_ms or round(elapsed * 1000, 1), streaming=True, input_tokens=tokens_in, output_tokens=tokens_out, cache_hit_tokens=cache_hit, cache_miss_tokens=cache_miss, response_preview=_extract_preview(full_content, full_thinking)[:1000], request_full=json.dumps(body, ensure_ascii=False, indent=2), response_full=response_full_str, downstream_response=response_full_str)
             if log_id: await request_logger.finalize_pending(log_id, **_log_data)
-            else: await request_logger.log_request(model=resolved_model, provider=provider_name, key_label=key.key.label, **_log_data)
-            
-            stats_tracker.record_request(
-                provider_name, resolved_model, input_tokens=tokens_in, output_tokens=tokens_out, 
-                cache_hit_tokens=cache_hit, success=True, latency_ms=elapsed * 1000,
-                cost_per_m_input=provider_cfg.cost_per_m_input, cost_per_m_output=provider_cfg.cost_per_m_output,
-            )
+            stats_tracker.record_request(provider_name, resolved_model, input_tokens=tokens_in, output_tokens=tokens_out, cache_hit_tokens=cache_hit, success=True)
             return
         except Exception as e:
             attempt += 1
@@ -320,41 +290,22 @@ async def _non_stream_messages(
     resolved_model, original_model, request_logger, start_time, stats_tracker,
     client_ip=None, user_agent=None, downstream_request=None,
 ) -> dict:
-    # (Similar non-stream implementation as OpenAI, with Anthropic usage extraction)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
             resp = await client.post(url, headers=headers, json=body)
             elapsed = time.time() - start_time
             if resp.status_code >= 400: return resp.json()
-            
             result = resp.json()
             tokens_in, tokens_out = extract_anthropic_token_usage(result)
             usage = result.get("usage", {})
-            cache_hit = usage.get("cache_read_input_tokens") or 0
-            cache_miss = usage.get("cache_creation_input_tokens") or 0
-            
+            cache_hit, cache_miss = usage.get("cache_read_input_tokens") or 0, usage.get("cache_creation_input_tokens") or 0
             content_text = "".join([p.get("text", "") for p in result.get("content", []) if p.get("type") == "text"])
             thinking_text = "".join([p.get("thinking", "") for p in result.get("content", []) if p.get("type") == "thinking"])
-            resp_preview = _extract_preview(content_text, thinking_text)
-            
-            downstream_response = json.dumps(result, ensure_ascii=False)
-
-            await request_logger.log_request(
-                model=resolved_model, provider=provider_name, key_label=key.key.label,
-                status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
-                first_token_ms=round(elapsed * 1000, 1),
-                input_tokens=tokens_in, output_tokens=tokens_out,
-                cache_hit_tokens=cache_hit, cache_miss_tokens=cache_miss,
-                response_preview=resp_preview,
-                request_full=json.dumps(body, ensure_ascii=False, indent=2),
-                response_full=json.dumps(result, ensure_ascii=False, indent=2),
-                client_ip=client_ip, user_agent=user_agent,
-                downstream_request=downstream_request, downstream_response=downstream_response,
-            )
+            log_data = dict(model=resolved_model, provider=provider_name, key_label=key.key.label, status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2), first_token_ms=round(elapsed * 1000, 1), input_tokens=tokens_in, output_tokens=tokens_out, cache_hit_tokens=cache_hit, cache_miss_tokens=cache_miss, response_preview=_extract_preview(content_text, thinking_text)[:1000], request_full=json.dumps(body, ensure_ascii=False, indent=2), response_full=json.dumps(result, ensure_ascii=False, indent=2), client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False))
+            await request_logger.log_request(**log_data)
             return result
-    except Exception as e:
-        return {"error": {"message": str(e), "type": "proxy_error"}}
+    except Exception as e: return {"error": {"message": str(e)}}
 
-# Other handlers...
+# Other handlers stubs
 async def handle_anthropic_models(*args, **kwargs): pass
 async def handle_anthropic_messages_beta(*args, **kwargs): pass

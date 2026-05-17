@@ -120,7 +120,7 @@ async def handle_chat_completions(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
                 resolved_model, original_model, request_logger, start_time, stats_tracker,
-                original_body=body, log_id=log_id,
+                original_body=body, log_id=log_id, config=config,
             ),
             media_type="text/event-stream",
             headers={
@@ -142,7 +142,7 @@ async def handle_chat_completions(
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
     resolved_model, original_model, request_logger, start_time, stats_tracker,
-    original_body=None, log_id=None,
+    original_body=None, log_id=None, config=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -224,61 +224,79 @@ async def _stream_chat(
                         return
 
                     last_preview_update = time.time()
-                    async for chunk in response.aiter_bytes():
-                        if chunk:
-                            yield chunk
+                    ttft_timeout = getattr(config.server, "ttft_timeout", 300) if config else 300
+                    
+                    try:
+                        response_iter = response.aiter_bytes()
+                        try:
+                            # Wait for the first chunk with timeout
+                            first_chunk = await asyncio.wait_for(anext(response_iter), timeout=float(ttft_timeout))
+                        except StopAsyncIteration:
+                            first_chunk = None
+                        
+                        if first_chunk:
+                            yield first_chunk
                             yielded_any_data = True
-                        buffer += chunk
-                        stream_chunks += 1
-
-                        # Track first token time
-                        if not first_token_recorded:
+                            buffer += first_chunk
+                            stream_chunks += 1
                             first_token_ms = (time.time() - start_time) * 1000
                             first_token_recorded = True
                             if log_id:
                                 asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
-
-                        # Parse SSE events from buffer
-                        while b"\n\n" in buffer:
-                            event, buffer = buffer.split(b"\n\n", 1)
-                            for line in event.decode("utf-8", errors="replace").split("\n"):
-                                line = line.strip()
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    if data_str == "[DONE]": continue
-                                    try:
-                                        data = json.loads(data_str)
-                                        raw_events.append(data)
-                                        if not last_id: last_id = data.get("id")
-                                        if not last_model: last_model = data.get("model")
-                                        if not last_fingerprint: last_fingerprint = data.get("system_fingerprint")
-                                        usage = data.get("usage")
-                                        if usage:
-                                            tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
-                                            tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
-                                            cache_hit = usage.get("prompt_cache_hit_tokens") or usage.get("cache_read_input_tokens") or 0
-                                            cache_miss = usage.get("prompt_cache_miss_tokens") or usage.get("cache_creation_input_tokens") or 0
-                                            details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
-                                            thinking_tokens = details.get("reasoning_tokens")
-                                        # Accumulate content for preview
-                                        choices = data.get("choices", [])
-                                        if choices and isinstance(choices, list) and len(choices) > 0:
-                                            delta = choices[0].get("delta", {})
-                                            content = delta.get("content", "")
-                                            if content: output_content.append(content)
-                                            reasoning = delta.get("reasoning_content", "")
-                                            if reasoning: output_thinking.append(reasoning)
-                                    except Exception: pass
                         
-                        # Real-time preview update (every 0.1s)
-                        if log_id and (time.time() - last_preview_update > 0.1):
-                            current_output = "".join(output_content)
-                            current_thinking = "".join(output_thinking)
-                            if current_output or current_thinking:
-                                partial_preview = _extract_preview(current_output, current_thinking)
-                                if len(partial_preview) > 1000: partial_preview = partial_preview[:1000] + "..."
-                                asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=partial_preview))
-                            last_preview_update = time.time()
+                        async for chunk in response_iter:
+                            if chunk:
+                                yield chunk
+                                yielded_any_data = True
+                            buffer += chunk
+                            stream_chunks += 1
+                            
+                            while b"\n\n" in buffer:
+                                event, buffer = buffer.split(b"\n\n", 1)
+                                for line in event.decode("utf-8", errors="replace").split("\n"):
+                                    line = line.strip()
+                                    if line.startswith("data: "):
+                                        data_str = line[6:]
+                                        if data_str == "[DONE]": continue
+                                        try:
+                                            data = json.loads(data_str)
+                                            raw_events.append(data)
+                                            if not last_id: last_id = data.get("id")
+                                            if not last_model: last_model = data.get("model")
+                                            if not last_fingerprint: last_fingerprint = data.get("system_fingerprint")
+                                            usage = data.get("usage")
+                                            if usage:
+                                                tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
+                                                tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
+                                                cache_hit = usage.get("prompt_cache_hit_tokens") or usage.get("cache_read_input_tokens") or 0
+                                                cache_miss = usage.get("prompt_cache_miss_tokens") or usage.get("cache_creation_input_tokens") or 0
+                                                details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
+                                                thinking_tokens = details.get("reasoning_tokens")
+                                            choices = data.get("choices", [])
+                                            if choices and isinstance(choices, list) and len(choices) > 0:
+                                                delta = choices[0].get("delta", {})
+                                                content = delta.get("content", "")
+                                                if content: output_content.append(content)
+                                                reasoning = delta.get("reasoning_content", "")
+                                                if reasoning: output_thinking.append(reasoning)
+                                        except Exception: pass
+                            
+                            if log_id and (time.time() - last_preview_update > 0.1):
+                                current_output = "".join(output_content)
+                                current_thinking = "".join(output_thinking)
+                                if current_output or current_thinking:
+                                    partial_preview = _extract_preview(current_output, current_thinking)
+                                    if len(partial_preview) > 1000: partial_preview = partial_preview[:1000] + "..."
+                                    asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=partial_preview))
+                                last_preview_update = time.time()
+                    except asyncio.TimeoutError:
+                        logger.error(f"TTFT超时 ({ttft_timeout}s) | 模型={resolved_model} | 提供商={provider_name}")
+                        error_msg = f"First token timeout after {ttft_timeout}s"
+                        if log_id:
+                            await request_logger.finalize_pending(log_id, status_code=504, error_message=error_msg)
+                        yield f"data: {json.dumps({'error': {'message': error_msg, 'type': 'ttft_timeout'}})}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        return
 
             elapsed = time.time() - start_time
             full_output = "".join(output_content)
