@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import AsyncGenerator, Any, Optional
+from typing import AsyncGenerator
 
 import httpx
 from fastapi import Request
@@ -146,9 +146,6 @@ async def _handle_cascade_chat(
     stats_tracker: StatsTracker,
     original_model: str,
     messages: list,
-    client_ip: str | None = None,
-    user_agent: str | None = None,
-    downstream_request: str | None = None,
 ) -> StreamingResponse | dict:
     cascade = config.model_routing.cascade
     max_retries = cascade.max_retries
@@ -204,7 +201,7 @@ async def _handle_cascade_chat(
         else:
             result = await _non_stream_chat(
                 provider_cfg, url, headers, request_body, key, key_manager, provider_name,
-                model, original_model, request_logger, start_time, stats_tracker, original_body=body, log_id=log_id, config=config
+                model, original_model, request_logger, start_time, stats_tracker,
             )
             if isinstance(result, dict) and "error" in result:
                 last_error = result["error"].get("message", "unknown")
@@ -227,9 +224,6 @@ async def handle_chat_completions(
     user_agent: str | None = None,
     downstream_request: str | None = None,
 ) -> StreamingResponse | dict:
-    original_model = body.get("model", "unknown")
-    messages = body.get("messages", [])
-
     cascade = config.model_routing.cascade
     if cascade.enabled and cascade.models:
         return await _handle_cascade_chat(
@@ -279,8 +273,8 @@ async def handle_chat_completions(
     is_stream = body.get("stream", False)
     start_time = time.time()
 
-    mode = "娴佸紡" if is_stream else "闈炴祦寮?
-    logger.info(f"璇锋眰鍙戦€?| {mode} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | URL={url}")
+    mode = "stream" if is_stream else "non-stream"
+    logger.info(f"Request Sent | {mode} | model={resolved_model} | provider={provider_name} | URL={url}")
 
     # 绔嬪嵆璁板綍璇锋眰锛堢姸鎬?0 琛ㄧず澶勭悊涓級
     messages = body.get("messages", [])
@@ -376,7 +370,7 @@ async def handle_completions(
         return StreamingResponse(
             _stream_completion(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=body, log_id=log_id, config=config
+                resolved_model, original_model, request_logger, start_time, stats_tracker,
             ),
             media_type="text/event-stream",
             headers={
@@ -615,30 +609,12 @@ async def _stream_chat(
                         return
 
                     last_preview_update = time.time()
-                    last_preview_update = time.time()
-                    ttft_timeout = getattr(config.server, 'ttft_timeout', 300) if config else 300
-                    try:
-                        response_iter = response.aiter_bytes()
-                        try:
-                            # Wait for the first chunk with timeout
-                            first_chunk = await asyncio.wait_for(anext(response_iter), timeout=float(ttft_timeout))
-                        except StopAsyncIteration: first_chunk = None
-                        
-                        if first_chunk:
-                            yield first_chunk
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
                             yielded_any_data = True
-                            buffer += first_chunk
-                            stream_chunks += 1
-                            first_token_ms = (time.time() - start_time) * 1000
-                            first_token_recorded = True
-                            if log_id: asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
-                        
-                        async for chunk in response_iter:
-                            if chunk:
-                                yield chunk
-                                yielded_any_data = True
-                            buffer += chunk
-                            stream_chunks += 1
+                        buffer += chunk
+                        stream_chunks += 1
 
                         # Track first token time
                         if not first_token_recorded:
@@ -683,7 +659,7 @@ async def _stream_chat(
                                         pass
                         
                         # Real-time preview update (every 1 second)
-                        if log_id and (time.time() - last_preview_update > 0.1):
+                        if log_id and (time.time() - last_preview_update > 1.0):
                             current_output = "".join(output_content)
                             current_thinking = "".join(output_thinking)
                             if current_output or current_thinking:
@@ -1144,30 +1120,12 @@ async def _stream_completion(
                         yield b"data: [DONE]\n\n"
                         return
 
-                    last_preview_update = time.time()
-                    ttft_timeout = getattr(config.server, 'ttft_timeout', 300) if config else 300
-                    try:
-                        response_iter = response.aiter_bytes()
-                        try:
-                            # Wait for the first chunk with timeout
-                            first_chunk = await asyncio.wait_for(anext(response_iter), timeout=float(ttft_timeout))
-                        except StopAsyncIteration: first_chunk = None
-                        
-                        if first_chunk:
-                            yield first_chunk
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
                             yielded_any_data = True
-                            buffer += first_chunk
-                            stream_chunks += 1
-                            first_token_ms = (time.time() - start_time) * 1000
-                            first_token_recorded = True
-                            if log_id: asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
-                        
-                        async for chunk in response_iter:
-                            if chunk:
-                                yield chunk
-                                yielded_any_data = True
-                            buffer += chunk
-                            stream_chunks += 1
+                        buffer += chunk
+                        stream_chunks += 1
 
                         while b"\n\n" in buffer:
                             event, buffer = buffer.split(b"\n\n", 1)

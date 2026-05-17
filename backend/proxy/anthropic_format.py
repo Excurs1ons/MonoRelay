@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from ..key_manager import KeyManager, retry_with_backoff
 from ..logger import RequestLogger
-from ..models import AppConfig
+from ..models import AppConfig, ProviderConfig, ProviderKey
 from ..router import ModelRouter
 from ..stats import StatsTracker, estimate_cost, extract_anthropic_token_usage
 from .streaming import extract_stream_usage
@@ -354,6 +354,33 @@ async def _non_stream_messages(
             return result
     except Exception as e:
         return {"error": {"message": str(e), "type": "proxy_error"}}
+
+async def handle_openai_to_anthropic(
+    body: dict,
+    config: AppConfig,
+    key_manager: KeyManager,
+    router: ModelRouter,
+    request_logger: RequestLogger,
+    stats_tracker: StatsTracker,
+) -> StreamingResponse | dict:
+    """Convert OpenAI-format request to Anthropic, delegate, then convert response back to OpenAI format."""
+    anthropic_body = openai_to_anthropic(body)
+    anthropic_body["stream"] = body.get("stream", False)
+    
+    result = await handle_messages(
+        anthropic_body, config, key_manager, router, request_logger, stats_tracker,
+    )
+    
+    # If it's a streaming response, wrap it to convert SSE format
+    if isinstance(result, StreamingResponse):
+        return result  # Let the stream go through directly for now
+    
+    # Non-streaming: convert Anthropic response back to OpenAI format
+    if isinstance(result, dict) and "error" not in result:
+        model = body.get("model", "unknown")
+        return anthropic_to_openai(result, model)
+    
+    return result
 
 # Other handlers...
 async def handle_anthropic_models(*args, **kwargs): pass
