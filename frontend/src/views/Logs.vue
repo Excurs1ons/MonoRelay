@@ -18,27 +18,27 @@
     <div v-if="loading && !logs.length" class="loading"><div class="spinner"></div></div>
     <div v-else class="card">
       <div v-if="logs.length" class="table-wrap">
-        <table>
+        <table class="logs-table">
           <thead>
             <tr>
-              <th class="w-8"></th>
-              <th>{{ $t('logs.time') }}</th>
-              <th>{{ $t('logs.model') }}</th>
-              <th>{{ $t('logs.provider') }}</th>
-              <th class="text-center">{{ $t('logs.status') }}</th>
-              <th class="text-right">耗时</th>
-              <th class="text-right">Token (I/O)</th>
+              <th class="col-expand"></th>
+              <th class="col-time">{{ $t('logs.time') }}</th>
+              <th class="col-model">{{ $t('logs.model') }}</th>
+              <th class="col-provider">{{ $t('logs.provider') }}</th>
+              <th class="col-status text-center">{{ $t('logs.status') }}</th>
+              <th class="col-latency text-right">耗时</th>
+              <th class="col-tokens text-right">Token</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="log in logs" :key="log.id">
               <tr class="log-row" :class="{ 'row-expanded': expanded[log.id] }" @click="toggleExpand(log.id)">
-                <td class="w-8 text-center">
+                <td class="text-center">
                   <span class="expand-icon" :class="{ rotated: expanded[log.id] }">▶</span>
                 </td>
                 <td class="text-dim text-xs">{{ formatTime(log.timestamp) }}</td>
-                <td class="mono text-xs">{{ log.model }}</td>
-                <td class="text-dim">{{ log.provider }}</td>
+                <td class="mono text-xs truncate-cell">{{ log.model }}</td>
+                <td class="text-dim truncate-cell">{{ log.provider }}</td>
                 <td class="text-center">
                   <span class="badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
                 </td>
@@ -48,6 +48,15 @@
                 <tr v-if="expanded[log.id]" class="expand-row">
                   <td colspan="7">
                     <div class="expand-content">
+                      <!-- Mobile/Expanded Header Summary -->
+                      <div class="expand-header-summary">
+                        <span class="summary-item"><strong>{{ log.model }}</strong></span>
+                        <span class="summary-item">{{ log.provider }}</span>
+                        <span class="summary-item badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
+                        <span class="summary-item">{{ formatMs(log.latency_ms) }}</span>
+                        <span class="summary-item">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</span>
+                      </div>
+
                      <!-- Params Block -->
                      <div v-if="log.temperature || log.top_p || log.max_tokens" class="params-block">
                        <div class="content-label">参数</div>
@@ -260,7 +269,7 @@ async function connectSSE() {
     const authHeader = token ? `Bearer ${token}` : (accessKey ? `Bearer ${accessKey}` : '')
     if (!authHeader) return
 
-    const resp = await fetch('/api/logs/stream', {
+    const resp = await fetch('/api/logs/stream?v=' + Date.now(), {
       headers: { Authorization: authHeader },
       signal: abortController.signal,
     })
@@ -335,12 +344,20 @@ th.text-right { text-align: right; }
 td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
 
 /* Column Widths */
-th:nth-child(2), td:nth-child(2) { min-width: 160px; } /* Time */
-th:nth-child(3), td:nth-child(3) { min-width: 140px; } /* Model */
-th:nth-child(4), td:nth-child(4) { min-width: 100px; } /* Provider */
-th:nth-child(5), td:nth-child(5) { min-width: 80px; }  /* Status */
-th:nth-child(6), td:nth-child(6) { min-width: 80px; }  /* Latency */
-th:nth-child(7), td:nth-child(7) { min-width: 100px; } /* Tokens */
+.logs-table { table-layout: fixed; }
+.col-expand { width: 40px; }
+.col-time { width: 160px; }
+.col-model { width: auto; }
+.col-provider { width: 120px; }
+.col-status { width: 80px; }
+.col-latency { width: 80px; }
+.col-tokens { width: 100px; }
+
+.truncate-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.expand-header-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--color-border); }
+.summary-item { font-size: 12px; color: var(--color-text-dim); }
+
 td.text-right { text-align: right; }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-dim { color: var(--color-text-dim); }
