@@ -1,4 +1,4 @@
-"""OpenAI-compatible API proxy handler (OpenRouter, NVIDIA NIM, OpenAI, Web Reverse)."""
+﻿"""OpenAI-compatible API proxy handler (OpenRouter, NVIDIA NIM, OpenAI, Web Reverse)."""
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +46,8 @@ def _estimate_tokens(text: str) -> int:
     """Estimate token count from text.
 
     Rules:
-    - Chinese characters: 1 char ≈ 1 token
-    - English words: 1 word ≈ 1.3 tokens (average)
+    - Chinese characters: 1 char 鈮?1 token
+    - English words: 1 word 鈮?1.3 tokens (average)
     - Punctuation/spaces: counted as part of words
     """
     if not text:
@@ -123,9 +123,9 @@ def _build_headers(provider_cfg, api_key: str) -> dict[str, str]:
             headers["Accept-Language"] = cloaking.accept_language
             cloaking_applied.append("Accept-Language")
         if cloaking_applied:
-            logger.info(f"Cloaking已启用 | 应用头部: {', '.join(cloaking_applied)}")
+            logger.info(f"Cloaking宸插惎鐢?| 搴旂敤澶撮儴: {', '.join(cloaking_applied)}")
             if cloaking.tls_fingerprint_profile:
-                logger.info(f"TLS指纹配置: {cloaking.tls_fingerprint_profile}")
+                logger.info(f"TLS鎸囩汗閰嶇疆: {cloaking.tls_fingerprint_profile}")
 
     return headers
 
@@ -139,6 +139,9 @@ async def _handle_cascade_chat(
     stats_tracker: StatsTracker,
     original_model: str,
     messages: list,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+    downstream_request: str | None = None,
 ) -> StreamingResponse | dict:
     cascade = config.model_routing.cascade
     max_retries = cascade.max_retries
@@ -173,7 +176,7 @@ async def _handle_cascade_chat(
         is_stream = request_body.get("stream", False)
         start_time = time.time()
 
-        logger.info(f"Cascade尝试 {attempt+1}/{len(cascade_models)} | 模型={model} | 提供商={provider_name}")
+        logger.info(f"Cascade灏濊瘯 {attempt+1}/{len(cascade_models)} | 妯″瀷={model} | 鎻愪緵鍟?{provider_name}")
 
         if is_stream:
             return StreamingResponse(
@@ -198,7 +201,7 @@ async def _handle_cascade_chat(
             )
             if isinstance(result, dict) and "error" in result:
                 last_error = result["error"].get("message", "unknown")
-                logger.warning(f"Cascade {attempt+1} 失败: {last_error}")
+                logger.warning(f"Cascade {attempt+1} 澶辫触: {last_error}")
                 continue
             return result
 
@@ -213,6 +216,9 @@ async def handle_chat_completions(
     router: ModelRouter,
     request_logger: RequestLogger,
     stats_tracker: StatsTracker,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+    downstream_request: str | None = None,
 ) -> StreamingResponse | dict:
     original_model = body.get("model", "unknown")
     messages = body.get("messages", [])
@@ -247,12 +253,12 @@ async def handle_chat_completions(
         return await _handle_web_reverse_chat(
             body, provider_cfg, key_manager, provider_name,
             resolved_model, original_model, request_logger, config.key_selection.strategy,
-            stats_tracker,
+            stats_tracker, client_ip, user_agent, downstream_request
         )
 
     if provider_cfg.provider_type == "anthropic":
         return await handle_openai_to_anthropic(
-            body, config, key_manager, router, request_logger, stats_tracker,
+            body, config, key_manager, router, request_logger, stats_tracker, client_ip, user_agent, downstream_request
         )
 
     key = key_manager.select_key(provider_name, config.key_selection.strategy)
@@ -266,10 +272,10 @@ async def handle_chat_completions(
     is_stream = body.get("stream", False)
     start_time = time.time()
 
-    mode = "流式" if is_stream else "非流式"
-    logger.info(f"请求发送 | {mode} | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
+    mode = "娴佸紡" if is_stream else "闈炴祦寮?
+    logger.info(f"璇锋眰鍙戦€?| {mode} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | URL={url}")
 
-    # 立即记录请求（状态=0 表示处理中）
+    # 绔嬪嵆璁板綍璇锋眰锛堢姸鎬?0 琛ㄧず澶勭悊涓級
     messages = body.get("messages", [])
     request_text = "\n".join([
         f"{m.get('role', 'user')}: {m.get('content', '')}"
@@ -311,7 +317,7 @@ async def handle_chat_completions(
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, log_id=log_id,
+                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, log_id=log_id, config=config,
             ),
             media_type="text/event-stream",
             headers={
@@ -325,7 +331,9 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, log_id=log_id,
+            resolved_model, original_model, request_logger, start_time, stats_tracker,
+            original_body=original_body, client_ip=client_ip, user_agent=user_agent, 
+            downstream_request=downstream_request, log_id=log_id
         )
 
 
@@ -357,7 +365,7 @@ async def handle_completions(
     is_stream = body.get("stream", False)
     start_time = time.time()
 
-    logger.info(f"Completion请求发送 | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
+    logger.info(f"Completion璇锋眰鍙戦€?| 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | URL={url}")
 
     if is_stream:
         return StreamingResponse(
@@ -375,7 +383,7 @@ async def handle_completions(
     else:
         return await _non_stream_completion(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, client_ip, user_agent, downstream_request
         )
 
 
@@ -410,7 +418,7 @@ async def handle_embeddings(
     headers = _build_headers(provider_cfg, key.key.key)
 
     start_time = time.time()
-    logger.info(f"Embeddings请求发送 | 模型={resolved_model} | 提供商={provider_name}")
+    logger.info(f"Embeddings璇锋眰鍙戦€?| 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         attempt = 0
         last_error = None
@@ -437,12 +445,14 @@ async def handle_embeddings(
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        logger.info(f"Ignoring error | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                         await request_logger.log_request(
                             model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=True)
                         return error_data
@@ -451,18 +461,18 @@ async def handle_embeddings(
                         attempt += 1
                         if attempt <= provider_cfg.retry.max_retries:
                             delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                             await asyncio.sleep(delay)
                             last_error = error_data
                             continue
                     
                     key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
-                    logger.error(f"Embeddings错误{status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                    logger.error(f"Embeddings閿欒{status_code} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
                     return error_data
                 
                 key_manager.report_success(key, 0)
-                logger.info(f"Embeddings | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+                logger.info(f"Embeddings | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 鑰楁椂={round(elapsed * 1000, 2)}ms")
                 await request_logger.log_request(
                     model=resolved_model,
                     provider=provider_name,
@@ -470,6 +480,8 @@ async def handle_embeddings(
                     status_code=resp.status_code,
                     latency_ms=round(elapsed * 1000, 2),
                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                 )
                 stats_tracker.record_request(provider_name, resolved_model, success=True)
                 return resp.json()
@@ -477,21 +489,21 @@ async def handle_embeddings(
                 error_type = "proxy_error"
                 
                 if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                    logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                    logger.info(f"Ignoring exception | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                     return {"error": {"message": str(e), "type": error_type}}
                 
                 if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
                     attempt += 1
                     if attempt <= provider_cfg.retry.max_retries:
                         delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                        logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                        logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                         await asyncio.sleep(delay)
                         last_error = {"error": {"message": str(e), "type": error_type}}
                         continue
                 
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
-                logger.error(f"Embeddings失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+                logger.error(f"Embeddings澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
                 return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
         
         return last_error or {"error": {"message": "Max retries exceeded", "type": "max_retries_exceeded"}}
@@ -499,7 +511,7 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, log_id=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, log_id=None, config=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -547,7 +559,7 @@ async def _stream_chat(
                         status_code = response.status_code
 
                         if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                            logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                            logger.info(f"Ignoring error | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                             elapsed = time.time() - start_time
                             if log_id:
                                 await request_logger.update_pending(log_id,
@@ -562,6 +574,8 @@ async def _stream_chat(
                                     latency_ms=round(elapsed * 1000, 2), streaming=True,
                                     error_message=error_text,
                                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                                 )
                             stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
                             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -573,7 +587,7 @@ async def _stream_chat(
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                                logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                                logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                                 await asyncio.sleep(delay)
                                 last_error = {"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}}
                                 continue
@@ -594,6 +608,8 @@ async def _stream_chat(
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
                                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                             )
                         stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
                         err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -601,66 +617,90 @@ async def _stream_chat(
                         yield b"data: [DONE]\n\n"
                         return
 
-                    last_preview_update = time.time()
-                    async for chunk in response.aiter_bytes():
-                        if chunk:
-                            yield chunk
+                                        last_preview_update = time.time()
+                    ttft_timeout = getattr(config.server, 'ttft_timeout', 300) if config else 300
+                    
+                    try:
+                        response_iter = response.aiter_bytes()
+                        try:
+                            # Wait for the first chunk with timeout
+                            first_chunk = await asyncio.wait_for(anext(response_iter), timeout=float(ttft_timeout))
+                        except StopAsyncIteration:
+                            first_chunk = None
+                        
+                        if first_chunk:
+                            yield first_chunk
                             yielded_any_data = True
-                        buffer += chunk
-                        stream_chunks += 1
-
-                        # Track first token time
-                        if not first_token_recorded:
+                            buffer += first_chunk
+                            stream_chunks += 1
                             first_token_ms = (time.time() - start_time) * 1000
                             first_token_recorded = True
-                            # Real-time: first_token_ms via in-memory SSE
                             if log_id:
                                 asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
-
-                        # Parse SSE events from buffer
-                        while b"\n\n" in buffer:
-                            event, buffer = buffer.split(b"\n\n", 1)
-                            for line in event.decode("utf-8", errors="replace").split("\n"):
-                                line = line.strip()
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    if data_str == "[DONE]":
-                                        continue
-                                    try:
-                                        data = json.loads(data_str)
-                                        raw_events.append(data)
-                                        if not last_id: last_id = data.get("id")
-                                        if not last_model: last_model = data.get("model")
-                                        if not last_fingerprint: last_fingerprint = data.get("system_fingerprint")
-                                        usage = data.get("usage")
-                                        if usage:
-                                            tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
-                                            tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
-                                            details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
-                                            thinking_tokens = details.get("reasoning_tokens")
-                                        # Accumulate content for output estimation
-                                        choices = data.get("choices", [])
-                                        if choices and isinstance(choices, list) and len(choices) > 0:
-                                            delta = choices[0].get("delta", {})
-                                            content = delta.get("content", "")
-                                            if content:
-                                                output_content.append(content)
-                                            reasoning = delta.get("reasoning_content", "")
-                                            if reasoning:
-                                                output_thinking.append(reasoning)
-                                    except Exception:
-                                        pass
                         
-                        # Real-time preview update (every 1 second)
-                        if log_id and (time.time() - last_preview_update > 1.0):
-                            current_output = "".join(output_content)
-                            current_thinking = "".join(output_thinking)
-                            if current_output or current_thinking:
-                                partial_preview = _extract_preview(current_output, current_thinking)
-                                if len(partial_preview) > 1000:
-                                    partial_preview = partial_preview[:1000] + "..."
-                                asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=partial_preview))
-                            last_preview_update = time.time()
+                        async for chunk in response_iter:
+                            if chunk:
+                                yield chunk
+                                yielded_any_data = True
+                            buffer += chunk
+                            stream_chunks += 1
+                            
+                            while b'
+
+' in buffer:
+                                event, buffer = buffer.split(b'
+
+', 1)
+                                for line in event.decode('utf-8', errors='replace').split('
+'):
+                                    line = line.strip()
+                                    if line.startswith('data: '):
+                                        data_str = line[6:]
+                                        if data_str == '[DONE]': continue
+                                        try:
+                                            data = json.loads(data_str)
+                                            raw_events.append(data)
+                                            if not last_id: last_id = data.get('id')
+                                            if not last_model: last_model = data.get('model')
+                                            if not last_fingerprint: last_fingerprint = data.get('system_fingerprint')
+                                            usage = data.get('usage')
+                                            if usage:
+                                                tokens_in = usage.get('prompt_tokens') or usage.get('input_tokens')
+                                                tokens_out = usage.get('completion_tokens') or usage.get('output_tokens')
+                                                cache_hit = usage.get('prompt_cache_hit_tokens') or usage.get('cache_read_input_tokens') or 0
+                                                cache_miss = usage.get('prompt_cache_miss_tokens') or usage.get('cache_creation_input_tokens') or 0
+                                                details = usage.get('completion_tokens_details') or usage.get('prompt_tokens_details') or {}
+                                                thinking_tokens = details.get('reasoning_tokens')
+                                            choices = data.get('choices', [])
+                                            if choices and isinstance(choices, list) and len(choices) > 0:
+                                                delta = choices[0].get('delta', {})
+                                                content = delta.get('content', '')
+                                                if content: output_content.append(content)
+                                                reasoning = delta.get('reasoning_content', '')
+                                                if reasoning: output_thinking.append(reasoning)
+                                        except Exception: pass
+                            
+                            # Real-time preview update (every 0.1s for smooth typing)
+                            if log_id and (time.time() - last_preview_update > 0.1):
+                                current_output = ''.join(output_content)
+                                current_thinking = ''.join(output_thinking)
+                                if current_output or current_thinking:
+                                    partial_preview = _extract_preview(current_output, current_thinking)
+                                    if len(partial_preview) > 1000: partial_preview = partial_preview[:1000] + '...'
+                                    asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=partial_preview))
+                                last_preview_update = time.time()
+                    except asyncio.TimeoutError:
+                        logger.error(f'TTFT超时 ({ttft_timeout}s) | 模型={resolved_model} | 提供商={provider_name}')
+                        error_msg = f'First token timeout after {ttft_timeout}s'
+                        if log_id:
+                            await request_logger.finalize_pending(log_id, status_code=504, error_message=error_msg)
+                        yield f'data: {json.dumps({"error": {"message": error_msg, "type": "ttft_timeout"}})}
+
+'.encode()
+                        yield b'data: [DONE]
+
+'
+                        return
 
 
             # Estimate missing tokens independently
@@ -708,25 +748,25 @@ async def _stream_chat(
             response_full_str = json.dumps(raw_events, ensure_ascii=False)
 
             # Detailed logging
-            log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
+            log_parts = [f"娴佸紡杈撳嚭瀹屾垚 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}"]
             if tokens_in is not None:
-                label = "输入token(估算)" if is_estimated_in else "输入token"
+                label = "杈撳叆token(浼扮畻)" if is_estimated_in else "杈撳叆token"
                 log_parts.append(f"{label}={tokens_in}")
             if thinking_tokens is not None:
-                log_parts.append(f"思考token={thinking_tokens}")
-            log_parts.append(f"流式chunk数={stream_chunks}")
+                log_parts.append(f"鎬濊€僼oken={thinking_tokens}")
+            log_parts.append(f"娴佸紡chunk鏁?{stream_chunks}")
             if tokens_out is not None:
-                label = "输出token(估算)" if is_estimated_out else "输出token"
+                label = "杈撳嚭token(浼扮畻)" if is_estimated_out else "杈撳嚭token"
                 log_parts.append(f"{label}={tokens_out}")
             total = (tokens_in or 0) + (tokens_out or 0)
             if tokens_in is not None or tokens_out is not None:
-                log_parts.append(f"总token={total}")
+                log_parts.append(f"鎬籺oken={total}")
             if first_token_ms is not None:
-                log_parts.append(f"首字延迟={round(first_token_ms)}ms")
+                log_parts.append(f"棣栧瓧寤惰繜={round(first_token_ms)}ms")
             if tokens_out and elapsed > 0:
                 speed = tokens_out / elapsed
-                log_parts.append(f"输出速度={round(speed, 1)} t/s")
-            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                log_parts.append(f"杈撳嚭閫熷害={round(speed, 1)} t/s")
+            log_parts.append(f"鑰楁椂={round(elapsed * 1000, 2)}ms")
             logger.info(" | ".join(log_parts))
 
             # Fire-and-forget: log after stream ends, no client delay
@@ -743,7 +783,9 @@ async def _stream_chat(
                 request_preview=request_text if request_text else None,
                 response_preview=response_preview if response_preview else None,
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                response_full=response_full_str,
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
+                response_full=response_full_str, downstream_response=response_full_str, cache_hit_tokens=cache_hit, cache_miss_tokens=cache_miss, downstream_response=response_full_str,
                 temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
@@ -770,7 +812,7 @@ async def _stream_chat(
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
-            logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"娴佸紡璇锋眰澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             if log_id:
                 await request_logger.update_pending(log_id,
                     status_code=500,
@@ -788,6 +830,8 @@ async def _stream_chat(
                     error_message=str(e),
                     request_preview=request_text if request_text else None,
                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                     temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
@@ -802,7 +846,8 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, log_id=None,
+    resolved_model, original_model, request_logger, start_time, stats_tracker,
+    original_body=None, client_ip=None, user_agent=None, downstream_request=None, log_id=None
 ) -> dict:
     from ..cache import response_cache
     
@@ -820,7 +865,7 @@ async def _non_stream_chat(
     
     cached = response_cache.get(body, resolved_model)
     if cached is not None:
-        logger.info(f"Cache hit | 模型={resolved_model}")
+        logger.info(f"Cache hit | 妯″瀷={resolved_model}")
         stats_tracker.record_request(provider_name, resolved_model, success=True)
         return cached
 
@@ -847,7 +892,7 @@ async def _non_stream_chat(
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        logger.info(f"Ignoring error | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                         if log_id:
                             await request_logger.update_request(log_id,
                                 status_code=status_code,
@@ -864,6 +909,8 @@ async def _non_stream_chat(
                                 error_message=resp.text,
                                 request_preview=request_text if request_text else None,
                                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                                 temperature=temperature,
                                 top_p=top_p,
                                 presence_penalty=presence_penalty,
@@ -877,7 +924,7 @@ async def _non_stream_chat(
                         attempt += 1
                         if attempt <= provider_cfg.retry.max_retries:
                             delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                             await asyncio.sleep(delay)
                             last_error = error_data
                             continue
@@ -899,6 +946,8 @@ async def _non_stream_chat(
                             error_message=resp.text,
                             request_preview=request_text if request_text else None,
                             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                             temperature=temperature,
                             top_p=top_p,
                             presence_penalty=presence_penalty,
@@ -933,17 +982,17 @@ async def _non_stream_chat(
                 key_manager.report_success(key, total_tokens)
 
                 # Detailed logging
-                log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
+                log_parts = [f"闈炴祦寮忚姹?| 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}"]
                 if tokens_in is not None:
-                    log_parts.append(f"输入token={tokens_in}")
+                    log_parts.append(f"杈撳叆token={tokens_in}")
                 if thinking_tokens is not None:
-                    log_parts.append(f"思考token={thinking_tokens}")
+                    log_parts.append(f"鎬濊€僼oken={thinking_tokens}")
                 if tokens_out is not None:
-                    log_parts.append(f"输出token={tokens_out}")
+                    log_parts.append(f"杈撳嚭token={tokens_out}")
                 total = (tokens_in or 0) + (tokens_out or 0)
                 if tokens_in is not None or tokens_out is not None:
-                    log_parts.append(f"总token={total}")
-                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                    log_parts.append(f"鎬籺oken={total}")
+                log_parts.append(f"鑰楁椂={round(elapsed * 1000, 2)}ms")
                 logger.info(" | ".join(log_parts))
 
                 if log_id:
@@ -967,6 +1016,8 @@ async def _non_stream_chat(
                         request_preview=request_text if request_text else None,
                         response_preview=response_preview,
                         request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                         response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                         temperature=temperature,
                         top_p=top_p,
@@ -990,7 +1041,7 @@ async def _non_stream_chat(
             error_type = "proxy_error"
             
             if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                logger.info(f"Ignoring exception | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                 elapsed = time.time() - start_time
                 if log_id:
                     await request_logger.update_request(log_id,
@@ -1007,6 +1058,8 @@ async def _non_stream_chat(
                         latency_ms=round(elapsed * 1000, 2),
                         error_message=str(e),
                         request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                     )
                 return {"error": {"message": str(e), "type": error_type}}
             
@@ -1014,14 +1067,14 @@ async def _non_stream_chat(
                 attempt += 1
                 if attempt <= provider_cfg.retry.max_retries:
                     delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                    logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                    logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                     await asyncio.sleep(delay)
                     last_error = {"error": {"message": str(e), "type": error_type}}
                     continue
             
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
-            logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"闈炴祦寮忚姹傚け璐?| 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             if log_id:
                 await request_logger.update_request(log_id,
                     status_code=500,
@@ -1037,6 +1090,8 @@ async def _non_stream_chat(
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=str(e),
                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                 )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
@@ -1073,7 +1128,7 @@ async def _stream_completion(
                         status_code = response.status_code
 
                         if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                            logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                            logger.info(f"Ignoring error | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                             elapsed = time.time() - start_time
                             await request_logger.log_request(
                                 model=resolved_model, provider=provider_name,
@@ -1081,6 +1136,8 @@ async def _stream_completion(
                                 latency_ms=round(elapsed * 1000, 2), streaming=True,
                                 error_message=error_text,
                                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                             )
                             stats_tracker.record_request(provider_name, resolved_model, success=True)
                             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -1092,7 +1149,7 @@ async def _stream_completion(
                             attempt += 1
                             if attempt <= provider_cfg.retry.max_retries:
                                 delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                                logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                                logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                                 await asyncio.sleep(delay)
                                 last_error = {"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}}
                                 continue
@@ -1106,6 +1163,8 @@ async def _stream_completion(
                             latency_ms=round(elapsed * 1000, 2), streaming=True,
                             error_message=error_text,
                             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=False)
                         err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
@@ -1157,11 +1216,11 @@ async def _stream_completion(
             tokens_in = int(tokens_in) if tokens_in is not None else 0
             tokens_out = int(tokens_out) if tokens_out is not None else 0
 
-            log_parts = [f"流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
-            if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
-            log_parts.append(f"流式chunk数={stream_chunks}")
-            if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
-            log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+            log_parts = [f"娴佸紡Completion | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}"]
+            if tokens_in is not None: log_parts.append(f"杈撳叆token={tokens_in}")
+            log_parts.append(f"娴佸紡chunk鏁?{stream_chunks}")
+            if tokens_out is not None: log_parts.append(f"杈撳嚭token={tokens_out}")
+            log_parts.append(f"鑰楁椂={round(elapsed * 1000, 2)}ms")
             logger.info(" | ".join(log_parts))
 
             await request_logger.log_request(
@@ -1174,6 +1233,8 @@ async def _stream_completion(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
@@ -1185,7 +1246,7 @@ async def _stream_completion(
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
-            logger.error(f"流式Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"娴佸紡Completion澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -1195,6 +1256,8 @@ async def _stream_completion(
                 streaming=True,
                 error_message=str(e),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
             )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
@@ -1228,13 +1291,15 @@ async def _non_stream_completion(
                     status_code = resp.status_code
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                        logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        logger.info(f"Ignoring error | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                         await request_logger.log_request(
                             model=resolved_model, provider=provider_name,
                             key_label=key.key.label, status_code=status_code,
                             latency_ms=round(elapsed * 1000, 2),
                             error_message=resp.text,
                             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                         )
                         stats_tracker.record_request(provider_name, resolved_model, success=True)
                         return error_data
@@ -1243,13 +1308,13 @@ async def _non_stream_completion(
                         attempt += 1
                         if attempt <= provider_cfg.retry.max_retries:
                             delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                             await asyncio.sleep(delay)
                             last_error = error_data
                             continue
                     
                     key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    logger.error(f"Completion错误{status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                    logger.error(f"Completion閿欒{status_code} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
                     return error_data
                 
@@ -1270,10 +1335,10 @@ async def _non_stream_completion(
                 tokens_in = int(tokens_in) if tokens_in is not None else None
                 tokens_out = int(tokens_out) if tokens_out is not None else None
 
-                log_parts = [f"非流式Completion | 模型={resolved_model} | 提供商={provider_name}"]
-                if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
-                if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
-                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
+                log_parts = [f"闈炴祦寮廋ompletion | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}"]
+                if tokens_in is not None: log_parts.append(f"杈撳叆token={tokens_in}")
+                if tokens_out is not None: log_parts.append(f"杈撳嚭token={tokens_out}")
+                log_parts.append(f"鑰楁椂={round(elapsed * 1000, 2)}ms")
                 logger.info(" | ".join(log_parts))
 
                 await request_logger.log_request(
@@ -1285,6 +1350,8 @@ async def _non_stream_completion(
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                     response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                 )
                 stats_tracker.record_request(
@@ -1296,20 +1363,20 @@ async def _non_stream_completion(
             error_type = "proxy_error"
             
             if key_manager.should_ignore(provider_name, error_type, provider_cfg):
-                logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
+                logger.info(f"Ignoring exception | 鎻愪緵鍟?{provider_name} | 閿欒绫诲瀷={error_type}")
                 return {"error": {"message": str(e), "type": error_type}}
             
             if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
                 attempt += 1
                 if attempt <= provider_cfg.retry.max_retries:
                     delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                    logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                    logger.warning(f"閲嶈瘯璇锋眰 | 鎻愪緵鍟?{provider_name} | 灏濊瘯={attempt}/{provider_cfg.retry.max_retries}")
                     await asyncio.sleep(delay)
                     last_error = {"error": {"message": str(e), "type": error_type}}
                     continue
             
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-            logger.error(f"Completion失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"Completion澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
     
@@ -1345,7 +1412,7 @@ async def handle_models_list(config: AppConfig) -> dict:
                 "object": "model",
             })
 
-    logger.info(f"模型列表查询 | 返回{len(all_models)}个模型 | 提供商数={len([n for n, p in config.providers.items() if p.enabled])}")
+    logger.info(f"妯″瀷鍒楄〃鏌ヨ | 杩斿洖{len(all_models)}涓ā鍨?| 鎻愪緵鍟嗘暟={len([n for n, p in config.providers.items() if p.enabled])}")
     return {"object": "list", "data": all_models}
 
 
@@ -1408,6 +1475,8 @@ async def _handle_web_reverse_chat(
                 latency_ms=round(elapsed * 1000, 2),
                 request_preview=request_text,
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return result
@@ -1422,6 +1491,8 @@ async def _handle_web_reverse_chat(
             latency_ms=round(elapsed * 1000, 2),
             error_message=str(e),
             request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
         )
         stats_tracker.record_request(provider_name, resolved_model, success=False)
         return {"error": {"message": str(e), "type": "web_reverse_error"}}
@@ -1480,7 +1551,7 @@ async def handle_audio_transcriptions(
     headers.pop("Content-Type", None)
 
     start_time = time.time()
-    logger.info(f"Audio Transcription请求 | 模型={resolved_model} | 提供商={provider_name}")
+    logger.info(f"Audio Transcription璇锋眰 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -1498,10 +1569,10 @@ async def handle_audio_transcriptions(
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
-                logger.error(f"Audio Transcription错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                logger.error(f"Audio Transcription閿欒{resp.status_code} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
                 return resp.json()
             key_manager.report_success(key, 0)
-            logger.info(f"Audio Transcription | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(f"Audio Transcription | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 鑰楁椂={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -1509,13 +1580,15 @@ async def handle_audio_transcriptions(
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return resp.json()
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            logger.error(f"Audio Transcription失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"Audio Transcription澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
@@ -1544,7 +1617,7 @@ async def handle_image_generations(
     headers = _build_headers(provider_cfg, key.key.key)
 
     start_time = time.time()
-    logger.info(f"Image Generation请求 | 模型={resolved_model} | 提供商={provider_name}")
+    logger.info(f"Image Generation璇锋眰 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
         try:
@@ -1557,10 +1630,10 @@ async def handle_image_generations(
             if resp.status_code >= 400:
                 key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                 stats_tracker.record_request(provider_name, resolved_model, success=False)
-                logger.error(f"Image Generation错误{resp.status_code} | 模型={resolved_model} | 提供商={provider_name}")
+                logger.error(f"Image Generation閿欒{resp.status_code} | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name}")
                 return resp.json()
             key_manager.report_success(key, 0)
-            logger.info(f"Image Generation | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000, 2)}ms")
+            logger.info(f"Image Generation | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 鑰楁椂={round(elapsed * 1000, 2)}ms")
             await request_logger.log_request(
                 model=resolved_model,
                 provider=provider_name,
@@ -1568,13 +1641,15 @@ async def handle_image_generations(
                 status_code=resp.status_code,
                 latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
             )
             stats_tracker.record_request(provider_name, resolved_model, success=True)
             return resp.json()
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             stats_tracker.record_request(provider_name, resolved_model, success=False)
-            logger.error(f"Image Generation失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"Image Generation澶辫触 | 妯″瀷={resolved_model} | 鎻愪緵鍟?{provider_name} | 閿欒={e}")
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": "proxy_error"}}
 
 
@@ -1634,6 +1709,8 @@ async def _handle_generic_post(path: str, body: dict, config: AppConfig, key_man
                 model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                 response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
             )
             stats_tracker.record_request(provider_name, resolved_model, success=(resp.status_code < 400))
@@ -1676,6 +1753,8 @@ async def _handle_generic_multipart(path: str, body: dict, files: dict, config: 
                 model=resolved_model, provider=provider_name, key_label=key.key.label,
                 status_code=resp.status_code, latency_ms=round(elapsed * 1000, 2),
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                downstream_response=response_full_str,
+                    client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request, downstream_response=json.dumps(result, ensure_ascii=False)
                 response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None
             )
             stats_tracker.record_request(provider_name, resolved_model, success=(resp.status_code < 400))
