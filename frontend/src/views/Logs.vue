@@ -446,12 +446,13 @@ td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: n
 .expand-header-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 10px 14px; background: var(--color-bg-input); border-radius: 6px; border: 1px solid var(--color-border); }
 .summary-item { font-size: 12px; color: var(--color-text-dim); }
 
+.content-block { min-height: 60px; }
 .content-label { font-size: 11px; font-weight: 700; color: var(--color-accent); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
 .collapse-btn { background: transparent; border: none; color: var(--color-text-dim); cursor: pointer; padding: 2px 4px; font-family: monospace; }
 .content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-text-dim); cursor: pointer; }
 
-.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--color-text); opacity: 0.9; }
-.text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--color-text); }
+.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--color-text); opacity: 0.9; min-height: 40px; }
+.text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--color-text); min-height: 40px; }
 .text-msg { margin-bottom: 12px; }
 .text-role { font-weight: 700; color: var(--color-accent); margin-right: 8px; }
 
