@@ -384,20 +384,20 @@ td.text-right { text-align: right; }
 .content-block { margin-bottom: 16px; }
 .content-label { font-size: 11px; font-weight: 600; color: var(--color-accent); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
 .content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); cursor: pointer; }
-.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 
 .chat-container { display: flex; flex-direction: column; gap: 12px; background: rgba(0,0,0,0.1); padding: 16px; border-radius: 10px; border: 1px solid var(--color-border); }
 .message-item { display: flex; flex-direction: column; max-width: 85%; }
 .msg-user { align-self: flex-end; align-items: flex-end; }
 .msg-assistant { align-self: flex-start; align-items: flex-start; }
 .msg-system { align-self: center; align-items: center; max-width: 100%; }
-.message-bubble { padding: 10px 14px; border-radius: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.message-bubble { padding: 10px 14px; border-radius: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 .msg-user .message-bubble { background: var(--color-accent); color: #fff; border-bottom-right-radius: 2px; }
 .msg-assistant .message-bubble { background: var(--color-bg-input); border: 1px solid var(--color-border); border-bottom-left-radius: 2px; }
 .msg-system .message-bubble { background: rgba(255,255,255,0.05); color: var(--color-text-dim); border-radius: 6px; font-style: italic; }
 
 /* Text body style (plain text view) */
-.text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.6; }
+.text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
 .text-msg { margin-bottom: 8px; word-break: break-word; }
 .text-msg:last-child { margin-bottom: 0; }
 .text-role { font-weight: 600; color: var(--color-accent); margin-right: 6px; }
