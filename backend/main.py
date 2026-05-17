@@ -1512,6 +1512,26 @@ async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
     return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 
+@app.get("/api/logs/stream")
+async def api_logs_stream():
+    """SSE endpoint: streams new/updated log entries in real-time."""
+    from fastapi.responses import StreamingResponse
+    import json
+    queue = await log_bus.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                event_type, data = await queue.get()
+                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await log_bus.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.get("/api/logs/{log_id}")
 async def api_log_detail(log_id: int):
     # Fix: Query by ID directly instead of fetching 1000 rows
