@@ -65,7 +65,7 @@
                   {{ formatMs(log.first_token_ms) }}
                 </td>
                 <td class="text-right mono text-xs">
-                  {{ formatMs(log.id < 0 ? tickingLatencies[log.id] : log.latency_ms) }}
+                  {{ formatMs(log.id < 0 && !log.status_code ? tickingLatencies[log.id] : log.latency_ms) }}
                 </td>
                 <td class="text-right mono text-xs">
                   <div>{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</div>
@@ -84,7 +84,7 @@
                         <span class="summary-item" v-else>客户端 IP: {{ log.client_ip || '未知' }}</span>
                         <span class="summary-item badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code || '...' }}</span>
                         <span class="summary-item">首字: {{ formatMs(log.first_token_ms) }}</span>
-                        <span class="summary-item">全量: {{ formatMs(log.id < 0 ? tickingLatencies[log.id] : log.latency_ms) }}</span>
+                        <span class="summary-item">全量: {{ formatMs(log.id < 0 && !log.status_code ? tickingLatencies[log.id] : log.latency_ms) }}</span>
                         <span class="summary-item">
                           Tokens: {{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}
                           <span v-if="log.cache_hit_tokens" class="text-blue-400 ml-1">(⚡ {{ log.cache_hit_tokens }})</span>
@@ -179,6 +179,7 @@ const isAdmin = computed(() => user.value?.role === 'admin' || user.value?.is_ad
 
 let sseAbort = null
 let tickTimer = null
+let pollTimer = null
 
 async function clearLogs() {
   if (!confirm('确定要清空所有日志吗？此操作不可恢复。')) return
@@ -310,11 +311,19 @@ function startTicking() {
   tickTimer = setInterval(() => {
     const now = Date.now()
     logs.value.forEach(log => {
-      if (log.id < 0 && log._start_time) {
+      // Only tick for entries still in processing (no status_code yet) and still pending
+      if (log.id < 0 && !log.status_code && log._start_time) {
         tickingLatencies.value[log.id] = now - log._start_time
       }
     })
   }, 100)
+}
+
+// Fallback: periodic refresh to catch any events missed during SSE reconnection
+function startPolling() {
+  pollTimer = setInterval(() => {
+    if (!loading.value) fetchLogs()
+  }, 15000)
 }
 
 function subscribeSSE() {
@@ -381,11 +390,13 @@ onMounted(() => {
   fetchLogs()
   subscribeSSE()
   startTicking()
+  startPolling()
 })
 
 onUnmounted(() => {
   if (sseAbort) sseAbort.abort()
   if (tickTimer) clearInterval(tickTimer)
+  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 
