@@ -26,6 +26,7 @@
               <th class="col-model">{{ $t('logs.model') }}</th>
               <th class="col-provider">{{ $t('logs.provider') }}</th>
               <th class="col-status text-center">{{ $t('logs.status') }}</th>
+              <th class="col-ttft text-right">首字</th>
               <th class="col-latency text-right">耗时</th>
               <th class="col-tokens text-right">Token</th>
             </tr>
@@ -42,18 +43,22 @@
                 <td class="text-center">
                   <span class="badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
                 </td>
+                <td class="text-right mono text-xs" :class="log.first_token_ms > 2000 ? 'text-red' : (log.first_token_ms > 800 ? 'text-orange' : 'text-green')">
+                  {{ formatMs(log.first_token_ms) }}
+                </td>
                 <td class="text-right mono text-xs">{{ formatMs(log.latency_ms) }}</td>
                 <td class="text-right mono text-xs">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</td>
               </tr>
                 <tr v-if="expanded[log.id]" class="expand-row">
-                  <td colspan="7">
+                  <td colspan="8">
                     <div class="expand-content">
                       <!-- Mobile/Expanded Header Summary -->
                       <div class="expand-header-summary">
                         <span class="summary-item"><strong>{{ log.model }}</strong></span>
                         <span class="summary-item">{{ log.provider }}</span>
                         <span class="summary-item badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
-                        <span class="summary-item">{{ formatMs(log.latency_ms) }}</span>
+                        <span class="summary-item">首字: {{ formatMs(log.first_token_ms) }}</span>
+                        <span class="summary-item">全量: {{ formatMs(log.latency_ms) }}</span>
                         <span class="summary-item">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</span>
                       </div>
 
@@ -350,8 +355,12 @@ td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: n
 .col-model { width: auto; }
 .col-provider { width: 120px; }
 .col-status { width: 80px; }
+.col-ttft { width: 80px; }
 .col-latency { width: 80px; }
-.col-tokens { width: 100px; }
+
+.text-red { color: #ef4444; }
+.text-orange { color: #f97316; }
+.text-green { color: #22c55e; }
 
 .truncate-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
