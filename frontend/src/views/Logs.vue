@@ -75,40 +75,54 @@
 <!-- Request Section -->
                        <div v-if="log.request_preview || getFullRequest(log.id)" class="content-block">
                          <div class="content-label">
-                           Request
-                           <button v-if="getFullRequest(log.id)" class="content-toggle" @click="toggleFullRequest(log.id)">
+                           <div class="flex items-center gap-2">
+                             <button class="collapse-btn" @click="toggleCollapseReq(log.id)">
+                               {{ collapsedReq[log.id] ? '[+]' : '[-]' }}
+                             </button>
+                             Request
+                           </div>
+                           <button v-if="getFullRequest(log.id) && !collapsedReq[log.id]" class="content-toggle" @click="toggleFullRequest(log.id)">
                              {{ isFullRequest(log.id) ? '对话式' : 'JSON' }}
                            </button>
                          </div>
-                         <div v-if="!isFullRequest(log.id) && getParsedMessages(log.id)" class="text-body">
-                           <div v-for="(msg, idx) in getParsedMessages(log.id)" :key="idx" class="text-msg">
-                             <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                         <div v-if="!collapsedReq[log.id]">
+                           <div v-if="!isFullRequest(log.id) && getParsedMessages(log.id)" class="text-body">
+                             <div v-for="(msg, idx) in getParsedMessages(log.id)" :key="idx" class="text-msg">
+                               <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                             </div>
                            </div>
+                           <pre v-else class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                          </div>
-                         <pre v-else class="content-text">{{ isFullRequest(log.id) ? getFullRequest(log.id) : (log.request_preview || '无预览内容') }}</pre>
                        </div>
 
                        <!-- Response Section -->
                        <div v-if="log.response_preview || getFullResponse(log.id)" class="content-block">
                          <div class="content-label">
-                           Response
-                           <button v-if="getFullResponse(log.id)" class="content-toggle" @click="toggleFullResponse(log.id)">
+                           <div class="flex items-center gap-2">
+                             <button class="collapse-btn" @click="toggleCollapseRes(log.id)">
+                               {{ collapsedRes[log.id] ? '[+]' : '[-]' }}
+                             </button>
+                             Response
+                           </div>
+                           <button v-if="getFullResponse(log.id) && !collapsedRes[log.id]" class="content-toggle" @click="toggleFullResponse(log.id)">
                              {{ isFullResponse(log.id) ? '对话式' : 'JSON' }}
                            </button>
                          </div>
 
-                         <!-- Thinking Sub-section -->
-                         <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
-                           <div class="sub-label">Thinking Process</div>
-                           <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
-                         </div>
-
-                         <div v-if="!isFullResponse(log.id) && getParsedResponse(log.id)" class="text-body">
-                           <div v-for="(msg, idx) in getParsedResponse(log.id)" :key="idx" class="text-msg">
-                             <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                         <div v-if="!collapsedRes[log.id]">
+                           <!-- Thinking Sub-section -->
+                           <div v-if="getThinkingContent(log.id) && !isFullResponse(log.id)" class="thinking-sub-block" style="margin-bottom: 12px;">
+                             <div class="sub-label">Thinking Process</div>
+                             <pre class="content-text thinking-text">{{ getThinkingContent(log.id) }}</pre>
                            </div>
+
+                           <div v-if="!isFullResponse(log.id) && getParsedResponse(log.id)" class="text-body">
+                             <div v-for="(msg, idx) in getParsedResponse(log.id)" :key="idx" class="text-msg">
+                               <span class="text-role">{{ msg.role.toUpperCase() }}:</span>{{ msg.content }}
+                             </div>
+                           </div>
+                           <pre v-else class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
                          </div>
-                         <pre v-else class="content-text">{{ isFullResponse(log.id) ? getFullResponse(log.id) : (getCleanResponseContent(log.id) || '无预览内容') }}</pre>
                        </div>
 
                       <!-- Error Section -->
@@ -142,6 +156,8 @@ const expanded = ref({})
 const fullContent = ref({})
 const showFullReqState = ref({})
 const showFullResState = ref({})
+const collapsedReq = ref({})
+const collapsedRes = ref({})
 const user = ref(null)
 
 const isAdmin = computed(() => user.value?.role === 'admin' || user.value?.is_admin)
@@ -185,6 +201,9 @@ function isFullRequest(id) { return !!showFullReqState.value[id] }
 function isFullResponse(id) { return !!showFullResState.value[id] }
 function toggleFullRequest(id) { showFullReqState.value[id] = !showFullReqState.value[id] }
 function toggleFullResponse(id) { showFullResState.value[id] = !showFullResState.value[id] }
+
+function toggleCollapseReq(id) { collapsedReq.value[id] = !collapsedReq.value[id] }
+function toggleCollapseRes(id) { collapsedRes.value[id] = !collapsedRes.value[id] }
 
 function getFullRequest(id) {
   const full = fullContent.value[id]
@@ -415,7 +434,9 @@ td.text-right { text-align: right; }
 .expand-row td { background: rgba(0,0,0,0.2); padding: 0; }
 .expand-content { padding: 16px 20px; max-height: 500px; overflow-y: auto; }
 .content-block { margin-bottom: 16px; }
-.content-label { font-size: 11px; font-weight: 600; color: var(--color-accent); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.content-label { font-size: 11px; font-weight: 600; color: var(--color-accent); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.collapse-btn { background: transparent; border: none; color: var(--color-text-dim); cursor: pointer; padding: 2px 4px; font-family: monospace; font-size: 12px; transition: color 0.2s; }
+.collapse-btn:hover { color: var(--color-accent); }
 .content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text-dim); cursor: pointer; }
 .content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
 
