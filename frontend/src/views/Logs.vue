@@ -206,10 +206,12 @@ async function fetchLogs() {
 }
 
 async function loadFullContent(id) {
-  if (fullContent.value[id] && fullContent.value[id].request_full) return
+  // Always re-fetch if response_full is missing for a finalized (positive ID) log
+  if (fullContent.value[id] && fullContent.value[id].request_full && fullContent.value[id].response_full) return
   try {
     const data = await api.getLogDetail(id)
-    fullContent.value[id] = data
+    if (!fullContent.value[id]) fullContent.value[id] = {}
+    Object.assign(fullContent.value[id], data)
   } catch (e) { console.error(e) }
 }
 
