@@ -1638,14 +1638,11 @@ async def api_logs_stream():
 
 @app.get("/api/logs/{log_id}")
 async def api_log_detail(log_id: int):
-    # Fix: Query by ID directly instead of fetching 1000 rows
-    if not request_logger._db:
-        await request_logger.init()
-    cursor = await request_logger._db.execute("SELECT * FROM requests WHERE id = ?", (log_id,))
-    row = await cursor.fetchone()
+    # Support checking pending logs for real-time display
+    row = await request_logger.get_log_by_id(log_id)
     if not row:
         raise HTTPException(status_code=404, detail="Log not found")
-    return api_response(data=dict(row))
+    return api_response(data=row)
 
 
 @app.post("/api/stats/reset")

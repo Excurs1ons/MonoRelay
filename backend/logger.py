@@ -407,6 +407,19 @@ class RequestLogger:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_log_by_id(self, log_id: int) -> Optional[dict]:
+        """Get a single log entry by ID, checking both pending and DB."""
+        if log_id < 0:
+            async with self._pending_lock:
+                return self._pending.get(log_id)
+
+        if not self._db:
+            await self.init()
+        
+        cursor = await self._db.execute("SELECT * FROM requests WHERE id = ?", (log_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
     def truncate_content(self, content: str) -> str:
         if not content:
             return ""
