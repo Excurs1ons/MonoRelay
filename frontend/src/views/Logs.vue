@@ -34,16 +34,6 @@
     <div v-else class="card">
       <div v-if="logs.length" class="table-wrap">
         <table class="logs-table">
-          <colgroup>
-            <col class="col-expand">
-            <col class="col-time">
-            <col class="col-model">
-            <col class="col-provider">
-            <col class="col-status">
-            <col class="col-ttft">
-            <col class="col-latency">
-            <col class="col-tokens">
-          </colgroup>
           <thead>
             <tr>
               <th class="col-expand"></th>
@@ -432,15 +422,6 @@ onUnmounted(() => {
 /* Table */
 .table-wrap { overflow-x: auto; min-height: 400px; }
 .logs-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: fixed; }
-.logs-table col { width: auto; }
-.logs-table col.col-expand { width: 35px; }
-.logs-table col.col-time { width: 150px; }
-.logs-table col.col-model { width: auto; min-width: 120px; }
-.logs-table col.col-provider { width: 110px; }
-.logs-table col.col-status { width: 80px; }
-.logs-table col.col-ttft { width: 75px; }
-.logs-table col.col-latency { width: 75px; }
-.logs-table col.col-tokens { width: 90px; }
 thead { position: sticky; top: 0; z-index: 10; background: var(--color-bg); }
 th { text-align: left; padding: 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--color-border-strong); }
 td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
