@@ -300,6 +300,9 @@ async def handle_chat_completions(
             presence_penalty=body.get("presence_penalty"),
             frequency_penalty=body.get("frequency_penalty"),
             max_tokens=body.get("max_tokens"),
+            client_ip=client_ip,
+            user_agent=user_agent,
+            downstream_request=downstream_request,
         )
     else:
         log_id = await request_logger.log_request(
@@ -315,6 +318,9 @@ async def handle_chat_completions(
             presence_penalty=body.get("presence_penalty"),
             frequency_penalty=body.get("frequency_penalty"),
             max_tokens=body.get("max_tokens"),
+            client_ip=client_ip,
+            user_agent=user_agent,
+            downstream_request=downstream_request,
         )
 
     if is_stream:
