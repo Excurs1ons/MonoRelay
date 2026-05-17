@@ -421,18 +421,18 @@ onUnmounted(() => {
 
 /* Table */
 .table-wrap { overflow-x: auto; min-height: 400px; }
-.logs-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: fixed; }
+.logs-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 thead { position: sticky; top: 0; z-index: 10; background: var(--color-bg); }
 th { text-align: left; padding: 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--color-border-strong); }
 td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
 
-.col-expand { width: 35px; }
-.col-time { width: 150px; }
-.col-model { width: auto; }
-.col-provider, .col-client { width: 110px; }
-.col-status { width: 80px; }
-.col-ttft, .col-latency { width: 75px; }
-.col-tokens { width: 90px; }
+.col-expand { width: 35px; min-width: 35px; }
+.col-time { width: 150px; min-width: 120px; }
+.col-model { min-width: 80px; max-width: 100%; }
+.col-provider, .col-client { width: 110px; min-width: 90px; }
+.col-status { width: 80px; min-width: 60px; }
+.col-ttft, .col-latency { width: 75px; min-width: 60px; }
+.col-tokens { width: 90px; min-width: 70px; }
 
 .log-row { cursor: pointer; transition: background 0.15s; }
 .log-row:hover { background: rgba(255,255,255,0.02); }
