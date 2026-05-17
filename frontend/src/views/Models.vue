@@ -138,9 +138,11 @@ onMounted(async () => {
 .card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius, 10px); padding: 20px; }
 .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
 .model-list { max-height: 400px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 6px; }
-.model-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s; }
+.model-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s; max-width: 100%; overflow: hidden; }
 .model-item:hover { background: var(--color-bg-input); }
-.model-tag { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--color-bg-input); border-radius: 6px; font-size: 12px; }
+.model-item .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.model-tag { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--color-bg-input); border-radius: 6px; font-size: 12px; max-width: 100%; overflow: hidden; }
+.model-tag .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .model-remove { background: none; border: none; color: var(--color-red); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-dim { color: var(--color-text-dim); }

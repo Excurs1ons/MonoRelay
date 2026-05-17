@@ -329,7 +329,7 @@ onUnmounted(() => {
 .card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 10px; padding: 20px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; padding: 10px 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--color-border); }
+th { text-align: left; padding: 10px 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--color-border); }
 th.text-right { text-align: right; }
 td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
 td.text-right { text-align: right; }
