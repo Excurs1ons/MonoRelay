@@ -1595,6 +1595,10 @@ async def api_logs(page: int = 1, page_size: int = 20, limit: int = 50):
     start = (page - 1) * page_size
     end = start + page_size
     paginated = logs[start:end]
+    # Strip heavy fields from list; frontend loads them on demand via /api/logs/{id}
+    for item in paginated:
+        item.pop("request_full", None)
+        item.pop("response_full", None)
     return api_response(data=paginated, page=page, page_size=page_size, total=total)
 
 

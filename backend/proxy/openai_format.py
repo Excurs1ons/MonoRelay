@@ -275,11 +275,32 @@ async def handle_chat_completions(
     mode = "流式" if is_stream else "非流式"
     logger.info(f"请求发送 | {mode} | 模型={resolved_model} | 提供商={provider_name} | URL={url}")
 
+    # 立即记录请求（状态=0 表示处理中）
+    messages = body.get("messages", [])
+    request_text = "\n".join([
+        f"{m.get('role', 'user')}: {m.get('content', '')}"
+        for m in messages if m.get("content")
+    ]) if messages else ""
+    log_id = await request_logger.log_request(
+        model=resolved_model,
+        provider=provider_name,
+        key_label=key.key.label,
+        status_code=0,
+        request_preview=request_text if request_text else None,
+        request_full=json.dumps(original_body, ensure_ascii=False, indent=2),
+        streaming=is_stream,
+        temperature=body.get("temperature"),
+        top_p=body.get("top_p"),
+        presence_penalty=body.get("presence_penalty"),
+        frequency_penalty=body.get("frequency_penalty"),
+        max_tokens=body.get("max_tokens"),
+    )
+
     if is_stream:
         return StreamingResponse(
             _stream_chat(
                 provider_cfg, url, headers, body, key, key_manager, provider_name,
-                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
+                resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, log_id=log_id,
             ),
             media_type="text/event-stream",
             headers={
@@ -293,7 +314,7 @@ async def handle_chat_completions(
     else:
         return await _non_stream_chat(
             provider_cfg, url, headers, body, key, key_manager, provider_name,
-            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body,
+            resolved_model, original_model, request_logger, start_time, stats_tracker, original_body=original_body, log_id=log_id,
         )
 
 
@@ -467,7 +488,7 @@ async def handle_embeddings(
 
 async def _stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, log_id=None,
 ) -> AsyncGenerator[bytes, None]:
     attempt = 0
     last_error = None
@@ -486,6 +507,7 @@ async def _stream_chat(
             first_token_recorded = False
             output_content = []
             output_thinking = []
+            raw_events = []
             response_preview = None
             last_id, last_model, last_fingerprint = None, None, None
             
@@ -516,13 +538,20 @@ async def _stream_chat(
                         if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
-                            await request_logger.log_request(
-                                model=resolved_model, provider=provider_name,
-                                key_label=key.key.label, status_code=status_code,
-                                latency_ms=round(elapsed * 1000, 2), streaming=True,
-                                error_message=error_text,
-                                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                            )
+                            if log_id:
+                                await request_logger.update_request(log_id,
+                                    status_code=status_code,
+                                    latency_ms=round(elapsed * 1000, 2),
+                                    error_message=error_text,
+                                )
+                            else:
+                                await request_logger.log_request(
+                                    model=resolved_model, provider=provider_name,
+                                    key_label=key.key.label, status_code=status_code,
+                                    latency_ms=round(elapsed * 1000, 2), streaming=True,
+                                    error_message=error_text,
+                                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                                )
                             stats_tracker.record_request(provider_name, resolved_model, success=True, latency_ms=elapsed * 1000)
                             err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
                             yield f"data: {err}\n\n".encode()
@@ -541,13 +570,20 @@ async def _stream_chat(
                         logger.error(f"Upstream error {status_code}: {error_text}")
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
-                        await request_logger.log_request(
-                            model=resolved_model, provider=provider_name,
-                            key_label=key.key.label, status_code=status_code,
-                            latency_ms=round(elapsed * 1000, 2), streaming=True,
-                            error_message=error_text,
-                            request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                        )
+                        if log_id:
+                            await request_logger.update_request(log_id,
+                                status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2),
+                                error_message=error_text,
+                            )
+                        else:
+                            await request_logger.log_request(
+                                model=resolved_model, provider=provider_name,
+                                key_label=key.key.label, status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2), streaming=True,
+                                error_message=error_text,
+                                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                            )
                         stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
                         err = json.dumps({"error": {"message": f"[{provider_name}] {error_text}", "status_code": status_code}})
                         yield f"data: {err}\n\n".encode()
@@ -565,6 +601,9 @@ async def _stream_chat(
                         if not first_token_recorded:
                             first_token_ms = (time.time() - start_time) * 1000
                             first_token_recorded = True
+                            # Real-time: update first_token_ms in DB as soon as first token arrives
+                            if log_id:
+                                asyncio.ensure_future(request_logger.update_request(log_id, first_token_ms=first_token_ms))
 
                         # Parse SSE events from buffer
                         while b"\n\n" in buffer:
@@ -577,6 +616,7 @@ async def _stream_chat(
                                         continue
                                     try:
                                         data = json.loads(data_str)
+                                        raw_events.append(data)
                                         if not last_id: last_id = data.get("id")
                                         if not last_model: last_model = data.get("model")
                                         if not last_fingerprint: last_fingerprint = data.get("system_fingerprint")
@@ -584,7 +624,7 @@ async def _stream_chat(
                                         if usage:
                                             tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
                                             tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
-                                            details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
+                                            details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
                                             thinking_tokens = details.get("reasoning_tokens")
                                         # Accumulate content for output estimation
                                         choices = data.get("choices", [])
@@ -628,17 +668,7 @@ async def _stream_chat(
 
             key_manager.report_success(key, total_tokens)
             elapsed = time.time() - start_time
-            # Fallback estimation if upstream usage was missing
-            is_estimated_in = False
-            if tokens_in is None:
-                tokens_in = _estimate_input_tokens(body.get("messages", []))
-                is_estimated_in = True
-                
-            is_estimated_out = False
-            if tokens_out is None:
-                tokens_out = _estimate_tokens(full_output) + _estimate_tokens(full_thinking)
-                is_estimated_out = True
-                
+
             tokens_in = int(tokens_in) if tokens_in is not None else 0
             tokens_out = int(tokens_out) if tokens_out is not None else 0
 
@@ -647,31 +677,11 @@ async def _stream_chat(
             response_preview = _extract_preview(full_output, full_thinking)
             if len(response_preview) > 1000:
                 response_preview = response_preview[:1000] + "..."
-            response_full_obj = {
-                "id": last_id or f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion",
-                "created": int(start_time),
-                "model": last_model or resolved_model,
-                "choices": [{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": full_output,
-                    },
-                    "finish_reason": "stop"
-                }],
-                "usage": {
-                    "prompt_tokens": tokens_in,
-                    "completion_tokens": tokens_out,
-                    "total_tokens": (tokens_in or 0) + (tokens_out or 0)
-                }
-            }
-            if last_fingerprint: response_full_obj["system_fingerprint"] = last_fingerprint
-            if full_thinking:
-                response_full_obj["choices"][0]["message"]["reasoning_content"] = full_thinking
-                if thinking_tokens:
-                    response_full_obj["usage"]["completion_tokens_details"] = {"reasoning_tokens": thinking_tokens}
-            response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
+            if len(raw_events) > 200:
+                kept = raw_events[:100] + raw_events[-100:]
+                kept.insert(100, {"_truncated": "removed " + str(len(raw_events) - 200) + " events"})
+                raw_events = kept
+            response_full_str = json.dumps(raw_events, ensure_ascii=False)
 
             # Detailed logging
             log_parts = [f"流式输出完成 | 模型={resolved_model} | 提供商={provider_name}"]
@@ -695,7 +705,8 @@ async def _stream_chat(
             log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
             logger.info(" | ".join(log_parts))
 
-            await request_logger.log_request(
+            # Fire-and-forget: log after stream ends, no client delay
+            _log_data = dict(
                 model=resolved_model,
                 provider=provider_name,
                 key_label=key.key.label,
@@ -715,8 +726,7 @@ async def _stream_chat(
                 frequency_penalty=frequency_penalty,
                 max_tokens=max_tokens,
             )
-            stats_tracker.record_request(
-                provider_name, resolved_model,
+            _stats_data = dict(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
                 success=True,
@@ -728,22 +738,33 @@ async def _stream_chat(
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
+            asyncio.ensure_future(_background_logging(
+                request_logger, stats_tracker, provider_name, resolved_model,
+                _log_data, _stats_data, log_id=log_id,
+            ))
             return
         except Exception as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            await request_logger.log_request(
-                model=resolved_model,
-                provider=provider_name,
-                key_label=key.key.label,
-                status_code=500,
-                latency_ms=round(elapsed * 1000, 2),
-                streaming=True,
-                error_message=str(e),
-                request_preview=request_text if request_text else None,
-                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                temperature=temperature,
+            if log_id:
+                await request_logger.update_request(log_id,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message=str(e),
+                )
+            else:
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    streaming=True,
+                    error_message=str(e),
+                    request_preview=request_text if request_text else None,
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                    temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
@@ -757,7 +778,7 @@ async def _stream_chat(
 
 async def _non_stream_chat(
     provider_cfg, url, headers, body, key, key_manager, provider_name,
-    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body,
+    resolved_model, original_model, request_logger, start_time, stats_tracker, original_body, log_id=None,
 ) -> dict:
     from ..cache import response_cache
     
@@ -803,6 +824,48 @@ async def _non_stream_chat(
                     
                     if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                         logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
+                        if log_id:
+                            await request_logger.update_request(log_id,
+                                status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2),
+                                error_message=resp.text,
+                            )
+                        else:
+                            await request_logger.log_request(
+                                model=resolved_model,
+                                provider=provider_name,
+                                key_label=key.key.label,
+                                status_code=status_code,
+                                latency_ms=round(elapsed * 1000, 2),
+                                error_message=resp.text,
+                                request_preview=request_text if request_text else None,
+                                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                                temperature=temperature,
+                                top_p=top_p,
+                                presence_penalty=presence_penalty,
+                                frequency_penalty=frequency_penalty,
+                                max_tokens=max_tokens,
+                            )
+                        stats_tracker.record_request(provider_name, resolved_model, success=True)
+                        return error_data
+                    
+                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
+                        attempt += 1
+                        if attempt <= provider_cfg.retry.max_retries:
+                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
+                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
+                            await asyncio.sleep(delay)
+                            last_error = error_data
+                            continue
+                    
+                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
+                    if log_id:
+                        await request_logger.update_request(log_id,
+                            status_code=status_code,
+                            latency_ms=round(elapsed * 1000, 2),
+                            error_message=resp.text,
+                        )
+                    else:
                         await request_logger.log_request(
                             model=resolved_model,
                             provider=provider_name,
@@ -818,34 +881,6 @@ async def _non_stream_chat(
                             frequency_penalty=frequency_penalty,
                             max_tokens=max_tokens,
                         )
-                        stats_tracker.record_request(provider_name, resolved_model, success=True)
-                        return error_data
-                    
-                    if key_manager.should_retry(provider_name, status_code, error_type, attempt, provider_cfg):
-                        attempt += 1
-                        if attempt <= provider_cfg.retry.max_retries:
-                            delay = retry_with_backoff(attempt, provider_cfg.retry.backoff_factor, provider_cfg.retry.backoff_max)
-                            logger.warning(f"重试请求 | 提供商={provider_name} | 尝试={attempt}/{provider_cfg.retry.max_retries}")
-                            await asyncio.sleep(delay)
-                            last_error = error_data
-                            continue
-                    
-                    key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
-                    await request_logger.log_request(
-                        model=resolved_model,
-                        provider=provider_name,
-                        key_label=key.key.label,
-                        status_code=status_code,
-                        latency_ms=round(elapsed * 1000, 2),
-                        error_message=resp.text,
-                        request_preview=request_text if request_text else None,
-                        request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                        temperature=temperature,
-                        top_p=top_p,
-                        presence_penalty=presence_penalty,
-                        frequency_penalty=frequency_penalty,
-                        max_tokens=max_tokens,
-                    )
                     stats_tracker.record_request(provider_name, resolved_model, success=False)
                     return error_data
 
@@ -863,7 +898,7 @@ async def _non_stream_chat(
                 thinking_tokens = None
                 usage = result.get("usage", {})
                 if usage:
-                    details = usage.get("completion_tokens_details", {}) or usage.get("prompt_tokens_details", {})
+                    details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
                     thinking_tokens = details.get("reasoning_tokens")
 
                 tokens_in = int(tokens_in) if tokens_in is not None else 0
@@ -887,24 +922,34 @@ async def _non_stream_chat(
                 log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
                 logger.info(" | ".join(log_parts))
 
-                await request_logger.log_request(
-                    model=resolved_model,
-                    provider=provider_name,
-                    key_label=key.key.label,
-                    status_code=resp.status_code,
-                    latency_ms=round(elapsed * 1000, 2),
-                    input_tokens=tokens_in,
-                    output_tokens=tokens_out,
-                    request_preview=request_text if request_text else None,
-                    response_preview=response_preview,
-                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                    response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
-                    temperature=temperature,
-                    top_p=top_p,
-                    presence_penalty=presence_penalty,
-                    frequency_penalty=frequency_penalty,
-                    max_tokens=max_tokens,
-                )
+                if log_id:
+                    await request_logger.update_request(log_id,
+                        status_code=resp.status_code,
+                        latency_ms=round(elapsed * 1000, 2),
+                        input_tokens=tokens_in,
+                        output_tokens=tokens_out,
+                        response_preview=response_preview,
+                        response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
+                    )
+                else:
+                    await request_logger.log_request(
+                        model=resolved_model,
+                        provider=provider_name,
+                        key_label=key.key.label,
+                        status_code=resp.status_code,
+                        latency_ms=round(elapsed * 1000, 2),
+                        input_tokens=tokens_in,
+                        output_tokens=tokens_out,
+                        request_preview=request_text if request_text else None,
+                        response_preview=response_preview,
+                        request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                        response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
+                        temperature=temperature,
+                        top_p=top_p,
+                        presence_penalty=presence_penalty,
+                        frequency_penalty=frequency_penalty,
+                        max_tokens=max_tokens,
+                    )
                 stats_tracker.record_request(
                     provider_name, resolved_model,
                     input_tokens=tokens_in,
@@ -923,15 +968,22 @@ async def _non_stream_chat(
             if key_manager.should_ignore(provider_name, error_type, provider_cfg):
                 logger.info(f"Ignoring exception | 提供商={provider_name} | 错误类型={error_type}")
                 elapsed = time.time() - start_time
-                await request_logger.log_request(
-                    model=resolved_model,
-                    provider=provider_name,
-                    key_label=key.key.label,
-                    status_code=500,
-                    latency_ms=round(elapsed * 1000, 2),
-                    error_message=str(e),
-                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-                )
+                if log_id:
+                    await request_logger.update_request(log_id,
+                        status_code=500,
+                        latency_ms=round(elapsed * 1000, 2),
+                        error_message=str(e),
+                    )
+                else:
+                    await request_logger.log_request(
+                        model=resolved_model,
+                        provider=provider_name,
+                        key_label=key.key.label,
+                        status_code=500,
+                        latency_ms=round(elapsed * 1000, 2),
+                        error_message=str(e),
+                        request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                    )
                 return {"error": {"message": str(e), "type": error_type}}
             
             if key_manager.should_retry(provider_name, 500, error_type, attempt, provider_cfg):
@@ -946,15 +998,22 @@ async def _non_stream_chat(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"非流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
-            await request_logger.log_request(
-                model=resolved_model,
-                provider=provider_name,
-                key_label=key.key.label,
-                status_code=500,
-                latency_ms=round(elapsed * 1000, 2),
-                error_message=str(e),
-                request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
-            )
+            if log_id:
+                await request_logger.update_request(log_id,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message=str(e),
+                )
+            else:
+                await request_logger.log_request(
+                    model=resolved_model,
+                    provider=provider_name,
+                    key_label=key.key.label,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message=str(e),
+                    request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
+                )
             stats_tracker.record_request(provider_name, resolved_model, success=False)
             return {"error": {"message": f"[{provider_name}] {str(e)}", "type": error_type}}
     
@@ -1709,3 +1768,18 @@ async def handle_runs_cancel(thread_id, run_id, config, key_manager, request_log
 async def handle_audio_translations(body, file, config, key_manager, router, request_logger, stats_tracker):
     return await _handle_generic_multipart("/audio/translations", body, {"file": file}, config, key_manager, router, request_logger, stats_tracker)
 
+
+
+async def _background_logging(request_logger, stats_tracker, provider_name, resolved_model, log_data, stats_data, log_id=None):
+    """Fire-and-forget: log request and stats without blocking the stream response."""
+    try:
+        if log_id:
+            await request_logger.update_request(log_id, **log_data)
+        else:
+            await request_logger.log_request(**log_data)
+    except Exception as e:
+        logger.warning(f"Background logging failed: {e}")
+    try:
+        stats_tracker.record_request(provider_name, resolved_model, **stats_data)
+    except Exception as e:
+        logger.warning(f"Background stats failed: {e}")

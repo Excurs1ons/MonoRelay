@@ -82,7 +82,7 @@ async function fetchRemoteModels(force = false) {
   fetchingRemote.value = true
   try {
     const data = await api.getRemoteModels(selectedProvider.value)
-    remoteModels.value = data.data || []
+    const raw = data.data || []; const seen = new Set(); remoteModels.value = raw.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
     if (!force && !remoteModels.value.length) {
       toast.info('点击"获取模型列表"从上游加载')
     }

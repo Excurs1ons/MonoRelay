@@ -129,7 +129,7 @@ class RequestLogger:
         if not self._db:
             await self.init()
 
-        await self._db.execute(
+        cursor = await self._db.execute(
             """
             INSERT INTO requests (
                 timestamp, model, provider, key_label, status_code, latency_ms,
@@ -165,6 +165,26 @@ class RequestLogger:
                 max_tokens,
             ),
         )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def update_request(self, request_id: int, **kwargs):
+        """Update fields of an existing log entry by ID."""
+        if not self._db:
+            return
+        allowed = {
+            "status_code", "latency_ms", "first_token_ms",
+            "input_tokens", "output_tokens", "estimated_cost",
+            "response_preview", "response_full",
+            "error_message", "error_type", "error_code", "error_details",
+            "key_label", "streaming",
+        }
+        updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [request_id]
+        await self._db.execute(f"UPDATE requests SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
     async def cleanup_old_entries(self):
