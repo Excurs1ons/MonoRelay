@@ -657,8 +657,8 @@ async def _stream_chat(
                                     except Exception:
                                         pass
                         
-                        # Real-time preview update (every 1 second)
-                        if log_id and (time.time() - last_preview_update > 1.0):
+                        # Real-time preview update (every 0.1s for smooth "typing" effect)
+                        if log_id and (time.time() - last_preview_update > 0.1):
                             current_output = "".join(output_content)
                             current_thinking = "".join(output_thinking)
                             if current_output or current_thinking:
