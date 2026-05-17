@@ -1,6 +1,7 @@
 """Request logging with async SQLite storage."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -11,14 +12,44 @@ import aiosqlite
 logger = logging.getLogger("monorelay.logger")
 
 
+class LogEventBus:
+    """Async pub/sub for real-time log streaming via SSE."""
+
+    def __init__(self):
+        self._subscribers: list[asyncio.Queue] = []
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue()
+        async with self._lock:
+            self._subscribers.append(queue)
+        return queue
+
+    async def unsubscribe(self, queue: asyncio.Queue):
+        async with self._lock:
+            if queue in self._subscribers:
+                self._subscribers.remove(queue)
+
+    async def publish(self, event_type: str, data: dict):
+        async with self._lock:
+            for q in self._subscribers:
+                await q.put((event_type, data))
+
+
+log_bus = LogEventBus()
+
+
 class RequestLogger:
-    def __init__(self, db_path: str = "./data/requests.db"):
+    def __init__(self, db_path: str = "./data/requests.db", max_age_days: int = 30, content_preview_length: int = 200):
         self.db_path = db_path
+        self.max_age_days = max_age_days
+        self.content_preview_length = content_preview_length
         self._db: Optional[aiosqlite.Connection] = None
-        self.content_preview_length = 200
+        self._pending: dict[int, dict] = {}
+        self._pending_lock = asyncio.Lock()
+        self._next_temp_id = -1
 
     async def init(self):
-        """Initialize database and ensure columns exist."""
         import os
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
@@ -59,14 +90,19 @@ class RequestLogger:
         )
         
         # Migration: Add missing columns if any
-        # 1. Full JSON columns and new multi-tenant columns
         new_cols = [
             ("request_full", "TEXT"),
             ("response_full", "TEXT"),
             ("user_id", "INTEGER"),
             ("error_type", "TEXT"),
             ("error_code", "TEXT"),
-            ("error_details", "TEXT")
+            ("error_details", "TEXT"),
+            ("first_token_ms", "REAL"),
+            ("temperature", "REAL"),
+            ("top_p", "REAL"),
+            ("presence_penalty", "REAL"),
+            ("frequency_penalty", "REAL"),
+            ("max_tokens", "INTEGER")
         ]
         
         for col_name, col_type in new_cols:
@@ -81,6 +117,13 @@ class RequestLogger:
         await self._db.execute("CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user_id)")
         
         await self._db.commit()
+        logger.info(f"Request logger initialized with database at {self.db_path}")
+
+    async def close(self):
+        """Close the database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
 
     async def log_request(
         self,
@@ -90,7 +133,6 @@ class RequestLogger:
         key_label: Optional[str] = None,
         status_code: Optional[int] = None,
         latency_ms: Optional[float] = None,
-        first_token_ms: Optional[float] = None,
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
         estimated_cost: Optional[float] = None,
@@ -103,6 +145,7 @@ class RequestLogger:
         error_code: Optional[str] = None,
         error_details: Optional[str] = None,
         streaming: bool = False,
+        first_token_ms: Optional[float] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         presence_penalty: Optional[float] = None,
@@ -112,7 +155,7 @@ class RequestLogger:
         if not self._db:
             await self.init()
 
-        await self._db.execute(
+        cursor = await self._db.execute(
             """
             INSERT INTO requests (
                 timestamp, user_id, model, provider, key_label, status_code, latency_ms,
@@ -150,6 +193,113 @@ class RequestLogger:
             ),
         )
         await self._db.commit()
+        return cursor.lastrowid
+
+    async def update_request(self, request_id: int, **kwargs):
+        """Update fields of an existing log entry by ID."""
+        if not self._db:
+            return
+        allowed = {
+            "status_code", "latency_ms", "first_token_ms",
+            "input_tokens", "output_tokens", "estimated_cost",
+            "response_preview", "response_full",
+            "error_message", "error_type", "error_code", "error_details",
+            "key_label", "streaming",
+        }
+        updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [request_id]
+        await self._db.execute(f"UPDATE requests SET {set_clause} WHERE id = ?", values)
+        await self._db.commit()
+
+    async def create_pending(self, **data) -> int:
+        """Store in memory without DB write, publish SSE 'log_new'. Returns temp_id (< 0)."""
+        async with self._pending_lock:
+            temp_id = self._next_temp_id
+            self._next_temp_id -= 1
+            entry = {"id": temp_id, "timestamp": time.time(), **data}
+            self._pending[temp_id] = entry
+        # Publish lightweight event for real-time display
+        asyncio.ensure_future(log_bus.publish("log_new", entry))
+        return temp_id
+
+    async def update_pending(self, temp_id: int, **kwargs):
+        """Update in-memory pending entry, publish SSE 'log_update'. No DB write."""
+        async with self._pending_lock:
+            entry = self._pending.get(temp_id)
+            if not entry:
+                return
+            entry.update(kwargs)
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": temp_id, **kwargs}))
+
+    async def finalize_pending(self, temp_id: int, **final_data) -> int:
+        """Write pending entry to DB and publish SSE with _real_id. Returns DB id (or -1 on error)."""
+        async with self._pending_lock:
+            entry = self._pending.pop(temp_id, None)
+        if not entry:
+            return -1
+        entry.update(final_data)
+        entry.pop("id", None)  # Remove temp id; DB auto-increments
+        streaming_val = 1 if entry.pop("streaming", False) else 0
+
+        if not self._db:
+            await self.init()
+        cursor = await self._db.execute(
+            """INSERT INTO requests (
+                timestamp, user_id, model, provider, key_label, status_code, latency_ms,
+                first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
+                response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
+                streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.get("timestamp", time.time()),
+                entry.get("user_id"),
+                entry.get("model", ""),
+                entry.get("provider", ""),
+                entry.get("key_label"),
+                entry.get("status_code"),
+                entry.get("latency_ms"),
+                entry.get("first_token_ms"),
+                entry.get("input_tokens"),
+                entry.get("output_tokens"),
+                entry.get("estimated_cost"),
+                entry.get("request_preview"),
+                entry.get("response_preview"),
+                entry.get("request_full"),
+                entry.get("response_full"),
+                entry.get("error_message"),
+                entry.get("error_type"),
+                entry.get("error_code"),
+                entry.get("error_details"),
+                streaming_val,
+                entry.get("temperature"),
+                entry.get("top_p"),
+                entry.get("presence_penalty"),
+                entry.get("frequency_penalty"),
+                entry.get("max_tokens"),
+            ),
+        )
+        await self._db.commit()
+        real_id = cursor.lastrowid
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": temp_id, "_real_id": real_id}))
+        return real_id
+
+    async def get_pending_entries(self) -> list[dict]:
+        """Return all in-memory pending log entries (for initial load)."""
+        async with self._pending_lock:
+            return list(self._pending.values())
+
+    async def cleanup_old_entries(self):
+        if not self._db:
+            return
+        cutoff = time.time() - (self.max_age_days * 86400)
+        cursor = await self._db.execute("DELETE FROM requests WHERE timestamp < ?", (cutoff,))
+        await self._db.commit()
+        deleted = cursor.rowcount
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old log entries")
 
     async def get_recent_requests(self, limit: int = 50, user_id: Optional[int] = None) -> list[dict]:
         if not self._db:
@@ -165,10 +315,25 @@ class RequestLogger:
         params.append(limit)
         
         cursor = await self._db.execute(query, tuple(params))
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        rows = [dict(row) for row in await cursor.fetchall()]
+        
+        # Merge with pending if no user_id or user_id matches
+        async with self._pending_lock:
+            pending = [v for v in self._pending.values() if user_id is None or v.get("user_id") == user_id]
+        
+        merged = pending + rows
+        merged.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+        return merged[:limit]
 
     async def clear_all(self, user_id: Optional[int] = None):
+        async with self._pending_lock:
+            if user_id is not None:
+                to_remove = [k for k, v in self._pending.items() if v.get("user_id") == user_id]
+                for k in to_remove:
+                    del self._pending[k]
+            else:
+                self._pending.clear()
+
         if not self._db:
             await self.init()
 
@@ -177,9 +342,7 @@ class RequestLogger:
         else:
             await self._db.execute("DELETE FROM requests")
         await self._db.commit()
-        deleted = self._db.total_changes
-        if deleted:
-            logger.info(f"Cleaned up {deleted} log entries")
+        logger.info(f"Request logs cleared (user_id={user_id})")
 
     async def get_stats_summary(self) -> dict:
         if not self._db:
@@ -246,9 +409,3 @@ class RequestLogger:
         if len(content) <= self.content_preview_length:
             return content
         return content[: self.content_preview_length] + "..."
-
-    async def close(self):
-        """Close the database connection."""
-        if self._db:
-            await self._db.close()
-            self._db = None

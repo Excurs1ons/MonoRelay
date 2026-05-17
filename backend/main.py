@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
-from .logger import RequestLogger
+from .logger import RequestLogger, log_bus
 from .models import AppConfig, ProviderConfig, ProviderKey
 from .router import ModelRouter
 from .stats import StatsTracker
