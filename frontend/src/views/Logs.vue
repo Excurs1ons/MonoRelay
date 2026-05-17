@@ -288,10 +288,17 @@ async function connectSSE() {
           if (m[1] === 'log_new') {
             logs.value = [data, ...logs.value.filter(l => l.id !== data.id)]
           } else if (m[1] === 'log_update') {
-            const idx = logs.value.findIndex(l => l.id === data.id)
-            if (idx >= 0) {
-              logs.value[idx] = { ...logs.value[idx], ...data }
+            if (data._real_id != null) {
+              // Pending entry finalized: replace temp_id with real_id
+              const idx = logs.value.findIndex(l => l.id === data.id)
+              if (idx >= 0) logs.value[idx] = { ...logs.value[idx], id: data._real_id }
               logs.value = [...logs.value]
+            } else {
+              const idx = logs.value.findIndex(l => l.id === data.id)
+              if (idx >= 0) {
+                logs.value[idx] = { ...logs.value[idx], ...data }
+                logs.value = [...logs.value]
+              }
             }
           }
         } catch {}

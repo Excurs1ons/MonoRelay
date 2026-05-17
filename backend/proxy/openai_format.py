@@ -281,20 +281,37 @@ async def handle_chat_completions(
         f"{m.get('role', 'user')}: {m.get('content', '')}"
         for m in messages if m.get("content")
     ]) if messages else ""
-    log_id = await request_logger.log_request(
-        model=resolved_model,
-        provider=provider_name,
-        key_label=key.key.label,
-        status_code=0,
-        request_preview=request_text if request_text else None,
-        request_full=json.dumps(original_body, ensure_ascii=False, indent=2),
-        streaming=is_stream,
-        temperature=body.get("temperature"),
-        top_p=body.get("top_p"),
-        presence_penalty=body.get("presence_penalty"),
-        frequency_penalty=body.get("frequency_penalty"),
-        max_tokens=body.get("max_tokens"),
-    )
+    if is_stream:
+        # Streaming: keep in memory until complete to avoid frequent DB writes
+        log_id = await request_logger.create_pending(
+            model=resolved_model,
+            provider=provider_name,
+            key_label=key.key.label,
+            status_code=0,
+            request_preview=request_text if request_text else None,
+            request_full=json.dumps(original_body, ensure_ascii=False, indent=2),
+            streaming=True,
+            temperature=body.get("temperature"),
+            top_p=body.get("top_p"),
+            presence_penalty=body.get("presence_penalty"),
+            frequency_penalty=body.get("frequency_penalty"),
+            max_tokens=body.get("max_tokens"),
+        )
+    else:
+        log_id = await request_logger.log_request(
+            model=resolved_model,
+            provider=provider_name,
+            key_label=key.key.label,
+            status_code=0,
+            request_preview=request_text if request_text else None,
+            request_full=json.dumps(original_body, ensure_ascii=False, indent=2),
+            streaming=False,
+            temperature=body.get("temperature"),
+            top_p=body.get("top_p"),
+            presence_penalty=body.get("presence_penalty"),
+            frequency_penalty=body.get("frequency_penalty"),
+            max_tokens=body.get("max_tokens"),
+        )
 
     if is_stream:
         return StreamingResponse(
@@ -539,7 +556,7 @@ async def _stream_chat(
                             logger.info(f"Ignoring error | 提供商={provider_name} | 错误类型={error_type}")
                             elapsed = time.time() - start_time
                             if log_id:
-                                await request_logger.update_request(log_id,
+                                await request_logger.update_pending(log_id,
                                     status_code=status_code,
                                     latency_ms=round(elapsed * 1000, 2),
                                     error_message=error_text,
@@ -571,7 +588,7 @@ async def _stream_chat(
                         key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
                         elapsed = time.time() - start_time
                         if log_id:
-                            await request_logger.update_request(log_id,
+                            await request_logger.update_pending(log_id,
                                 status_code=status_code,
                                 latency_ms=round(elapsed * 1000, 2),
                                 error_message=error_text,
@@ -601,9 +618,9 @@ async def _stream_chat(
                         if not first_token_recorded:
                             first_token_ms = (time.time() - start_time) * 1000
                             first_token_recorded = True
-                            # Real-time: update first_token_ms in DB as soon as first token arrives
+                            # Real-time: first_token_ms via in-memory SSE
                             if log_id:
-                                asyncio.ensure_future(request_logger.update_request(log_id, first_token_ms=first_token_ms))
+                                asyncio.ensure_future(request_logger.update_pending(log_id, first_token_ms=first_token_ms))
 
                         # Parse SSE events from buffer
                         while b"\n\n" in buffer:
@@ -748,7 +765,7 @@ async def _stream_chat(
             elapsed = time.time() - start_time
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             if log_id:
-                await request_logger.update_request(log_id,
+                await request_logger.update_pending(log_id,
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=str(e),
@@ -1773,10 +1790,12 @@ async def handle_audio_translations(body, file, config, key_manager, router, req
 async def _background_logging(request_logger, stats_tracker, provider_name, resolved_model, log_data, stats_data, log_id=None):
     """Fire-and-forget: log request and stats without blocking the stream response."""
     try:
-        if log_id:
-            await request_logger.update_request(log_id, **log_data)
-        else:
+        if log_id is None:
             await request_logger.log_request(**log_data)
+        elif log_id < 0:
+            await request_logger.finalize_pending(log_id, **log_data)
+        else:
+            await request_logger.update_request(log_id, **log_data)
     except Exception as e:
         logger.warning(f"Background logging failed: {e}")
     try:

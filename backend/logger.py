@@ -45,6 +45,9 @@ class RequestLogger:
         self.max_age_days = max_age_days
         self.content_preview_length = content_preview_length
         self._db: Optional[aiosqlite.Connection] = None
+        self._pending: dict[int, dict] = {}
+        self._pending_lock = asyncio.Lock()
+        self._next_temp_id = -1
 
     async def init(self):
         self._db = await aiosqlite.connect(self.db_path)
@@ -194,24 +197,7 @@ class RequestLogger:
             ),
         )
         await self._db.commit()
-        row_id = cursor.lastrowid
-        # Publish SSE event for real-time streaming
-        event_data = {
-            "id": row_id,
-            "timestamp": time.time(),
-            "model": model,
-            "provider": provider,
-            "key_label": key_label,
-            "status_code": status_code,
-            "latency_ms": latency_ms,
-            "first_token_ms": first_token_ms,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "error_message": error_message,
-            "streaming": streaming,
-        }
-        asyncio.ensure_future(log_bus.publish("log_new", event_data))
-        return row_id
+        return cursor.lastrowid
 
     async def update_request(self, request_id: int, **kwargs):
         """Update fields of an existing log entry by ID."""
@@ -231,7 +217,82 @@ class RequestLogger:
         values = list(updates.values()) + [request_id]
         await self._db.execute(f"UPDATE requests SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
-        asyncio.ensure_future(log_bus.publish("log_update", {"id": request_id, **updates}))
+
+    async def create_pending(self, **data) -> int:
+        """Store in memory without DB write, publish SSE 'log_new'. Returns temp_id (< 0)."""
+        async with self._pending_lock:
+            temp_id = self._next_temp_id
+            self._next_temp_id -= 1
+            entry = {"id": temp_id, "timestamp": time.time(), **data}
+            self._pending[temp_id] = entry
+        # Publish lightweight event for real-time display
+        asyncio.ensure_future(log_bus.publish("log_new", entry))
+        return temp_id
+
+    async def update_pending(self, temp_id: int, **kwargs):
+        """Update in-memory pending entry, publish SSE 'log_update'. No DB write."""
+        async with self._pending_lock:
+            entry = self._pending.get(temp_id)
+            if not entry:
+                return
+            entry.update(kwargs)
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": temp_id, **kwargs}))
+
+    async def finalize_pending(self, temp_id: int, **final_data) -> int:
+        """Write pending entry to DB and publish SSE with _real_id. Returns DB id (or -1 on error)."""
+        async with self._pending_lock:
+            entry = self._pending.pop(temp_id, None)
+        if not entry:
+            return -1
+        entry.update(final_data)
+        entry.pop("id", None)  # Remove temp id; DB auto-increments
+        streaming_val = 1 if entry.pop("streaming", False) else 0
+
+        if not self._db:
+            await self.init()
+        cursor = await self._db.execute(
+            """INSERT INTO requests (
+                timestamp, model, provider, key_label, status_code, latency_ms,
+                first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
+                response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
+                streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.get("timestamp", time.time()),
+                entry.get("model", ""),
+                entry.get("provider", ""),
+                entry.get("key_label"),
+                entry.get("status_code"),
+                entry.get("latency_ms"),
+                entry.get("first_token_ms"),
+                entry.get("input_tokens"),
+                entry.get("output_tokens"),
+                entry.get("estimated_cost"),
+                entry.get("request_preview"),
+                entry.get("response_preview"),
+                entry.get("request_full"),
+                entry.get("response_full"),
+                entry.get("error_message"),
+                entry.get("error_type"),
+                entry.get("error_code"),
+                entry.get("error_details"),
+                streaming_val,
+                entry.get("temperature"),
+                entry.get("top_p"),
+                entry.get("presence_penalty"),
+                entry.get("frequency_penalty"),
+                entry.get("max_tokens"),
+            ),
+        )
+        await self._db.commit()
+        real_id = cursor.lastrowid
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": temp_id, "_real_id": real_id}))
+        return real_id
+
+    async def get_pending_entries(self) -> list[dict]:
+        """Return all in-memory pending log entries (for initial load)."""
+        async with self._pending_lock:
+            return list(self._pending.values())
 
     async def cleanup_old_entries(self):
         if not self._db:
@@ -249,10 +310,15 @@ class RequestLogger:
         cursor = await self._db.execute(
             "SELECT * FROM requests ORDER BY timestamp DESC LIMIT ?", (limit,)
         )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        rows = [dict(row) for row in await cursor.fetchall()]
+        pending = list(self._pending.values())
+        # Merge: pending first (newest), then DB, capped at limit
+        merged = pending + rows
+        merged.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+        return merged[:limit]
 
     async def clear_all(self):
+        self._pending.clear()
         if not self._db:
             return
         await self._db.execute("DELETE FROM requests")
