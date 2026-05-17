@@ -11,10 +11,6 @@
           <option :value="50">50</option>
           <option :value="100">100</option>
         </select>
-        <button class="btn btn-ghost" @click="fetchLogs">
-          <RefreshCw :size="14" :class="{ 'spin': loading }" class="mr-1" />
-          {{ $t('logs.refresh') }}
-        </button>
         <button v-if="isAdmin" class="btn btn-ghost" style="color:#ef4444" @click="clearLogs">清空</button>
       </div>
     </div>
@@ -122,9 +118,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { api } from '@/api'
-import { RefreshCw } from 'lucide-vue-next'
 
 const loading = ref(true)
 const logs = ref([])
@@ -255,7 +250,37 @@ function getCleanResponseContent(id) {
 function formatTime(ts) { return ts ? new Date(ts * 1000).toLocaleString() : '-' }
 function formatMs(ms) { return ms ? (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms.toFixed(0) + 'ms') : '-' }
 
-onMounted(fetchLogs)
+let pollTimer = null
+
+function startPolling() {
+  stopPolling()
+  if (document.visibilityState === 'visible') {
+    pollTimer = setInterval(fetchLogs, 1000)
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') startPolling()
+  else stopPolling()
+}
+
+onMounted(() => {
+  fetchLogs()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 </script>
 
 <style scoped>
@@ -306,9 +331,6 @@ td.text-right { text-align: right; }
 .thinking-sub-block { margin-top: 12px; padding-left: 12px; border-left: 2px solid rgba(168, 85, 247, 0.3); }
 .sub-label { font-size: 10px; font-weight: 600; color: #a855f7; text-transform: uppercase; margin-bottom: 6px; }
 .thinking-text { background: rgba(168, 85, 247, 0.02); border-color: rgba(168, 85, 247, 0.1); color: var(--color-text-dim); font-style: italic; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
 /* Params Block */
 .params-block { margin-bottom: 12px; }
 .params-grid { display: flex; flex-wrap: wrap; gap: 8px; }
