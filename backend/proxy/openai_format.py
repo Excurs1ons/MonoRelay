@@ -607,6 +607,7 @@ async def _stream_chat(
                         yield b"data: [DONE]\n\n"
                         return
 
+                    last_preview_update = time.time()
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             yield chunk
@@ -655,6 +656,18 @@ async def _stream_chat(
                                                 output_thinking.append(reasoning)
                                     except Exception:
                                         pass
+                        
+                        # Real-time preview update (every 1 second)
+                        if log_id and (time.time() - last_preview_update > 1.0):
+                            current_output = "".join(output_content)
+                            current_thinking = "".join(output_thinking)
+                            if current_output or current_thinking:
+                                partial_preview = _extract_preview(current_output, current_thinking)
+                                if len(partial_preview) > 1000:
+                                    partial_preview = partial_preview[:1000] + "..."
+                                asyncio.ensure_future(request_logger.update_pending(log_id, response_preview=partial_preview))
+                            last_preview_update = time.time()
+
 
             # Estimate missing tokens independently
             is_estimated_in = False
