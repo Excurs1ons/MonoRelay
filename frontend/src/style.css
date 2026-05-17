@@ -158,6 +158,20 @@ html {
   border-radius: 3px;
 }
 
+/* Number input spinners - theme aware */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  background: var(--color-bg-input);
+  border-left: 1px solid var(--color-border);
+  height: auto;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  color: var(--color-text);
+  background: var(--color-bg-input);
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
