@@ -326,7 +326,7 @@ class RequestLogger:
                 entry.get("error_type"),
                 entry.get("error_code"),
                 entry.get("error_details"),
-                1 if entry.get("streaming") else 0,
+                streaming_val,
                 entry.get("temperature"),
                 entry.get("top_p"),
                 entry.get("presence_penalty"),
