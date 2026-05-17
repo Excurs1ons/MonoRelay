@@ -89,6 +89,7 @@
 html {
   font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
   scroll-behavior: smooth;
+  overflow-y: scroll;
 }
 
 @layer base {
