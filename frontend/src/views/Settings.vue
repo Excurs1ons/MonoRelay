@@ -137,6 +137,11 @@
             <input v-model.number="config.server.port" type="number" class="form-input" />
           </div>
         </div>
+        <div class="form-group">
+          <label>首字超时 (TTFT Timeout)</label>
+          <input v-model.number="config.server.ttft_timeout" type="number" class="form-input" placeholder="300" />
+          <p class="help-text">流式响应首个字符的最大等待时间（秒）。超过此时间将中断连接。</p>
+        </div>
       </div>
 
       <!-- Global Request Params -->

@@ -223,6 +223,7 @@ class ServerConfig(BaseModel):
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     public_host: str = ""
+    ttft_timeout: int = 300
     turnstile_enabled: bool = False
     turnstile_site_key: str = ""
 
