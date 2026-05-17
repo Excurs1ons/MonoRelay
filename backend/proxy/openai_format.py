@@ -224,6 +224,9 @@ async def handle_chat_completions(
     user_agent: str | None = None,
     downstream_request: str | None = None,
 ) -> StreamingResponse | dict:
+    original_model = body.get("model", "unknown")
+    messages = body.get("messages", [])
+
     cascade = config.model_routing.cascade
     if cascade.enabled and cascade.models:
         return await _handle_cascade_chat(
