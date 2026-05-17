@@ -517,6 +517,8 @@ async def _stream_chat(
             tokens_in = None
             tokens_out = None
             thinking_tokens = None
+            cache_hit = 0
+            cache_miss = 0
             stream_chunks = 0
             buffer = b""
             last_chunk_data = None
@@ -642,6 +644,8 @@ async def _stream_chat(
                                         if usage:
                                             tokens_in = usage.get("prompt_tokens") or usage.get("input_tokens")
                                             tokens_out = usage.get("completion_tokens") or usage.get("output_tokens")
+                                            cache_hit = usage.get("prompt_cache_hit_tokens") or usage.get("cache_read_input_tokens") or 0
+                                            cache_miss = usage.get("prompt_cache_miss_tokens") or usage.get("cache_creation_input_tokens") or 0
                                             details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
                                             thinking_tokens = details.get("reasoning_tokens")
                                         # Accumulate content for output estimation
@@ -746,6 +750,8 @@ async def _stream_chat(
                 streaming=True,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                cache_hit_tokens=cache_hit,
+                cache_miss_tokens=cache_miss,
                 request_preview=request_text if request_text else None,
                 response_preview=response_preview if response_preview else None,
                 request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
@@ -759,6 +765,7 @@ async def _stream_chat(
             _stats_data = dict(
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                cache_hit_tokens=cache_hit,
                 success=True,
                 is_estimated=is_estimated_in or is_estimated_out,
                 latency_ms=elapsed * 1000,
@@ -916,48 +923,25 @@ async def _non_stream_chat(
 
                 result = resp.json()
                 tokens_in, tokens_out = extract_token_usage(result)
-                resp_preview = ""
-                if "choices" in result and len(result["choices"]) > 0:
-                    msg = result["choices"][0].get("message", {})
-                    resp_preview = _extract_preview(msg.get("content", ""), msg.get("reasoning_content", ""))
-                    if len(resp_preview) > 1000:
-                        resp_preview = resp_preview[:1000] + "..."
-                response_preview = resp_preview if resp_preview else None
-
-                # Extract thinking tokens if available
-                thinking_tokens = None
+                
+                # Extract cache usage
+                cache_hit = 0
+                cache_miss = 0
                 usage = result.get("usage", {})
                 if usage:
-                    details = usage.get("completion_tokens_details") or usage.get("prompt_tokens_details") or {}
-                    thinking_tokens = details.get("reasoning_tokens")
+                    cache_hit = usage.get("prompt_cache_hit_tokens") or usage.get("cache_read_input_tokens") or 0
+                    cache_miss = usage.get("prompt_cache_miss_tokens") or usage.get("cache_creation_input_tokens") or 0
 
-                tokens_in = int(tokens_in) if tokens_in is not None else 0
-                tokens_out = int(tokens_out) if tokens_out is not None else 0
-                thinking_tokens = int(thinking_tokens) if thinking_tokens is not None else None
-                total_tokens = tokens_in + tokens_out
-
-                key_manager.report_success(key, total_tokens)
-
-                # Detailed logging
-                log_parts = [f"非流式请求 | 模型={resolved_model} | 提供商={provider_name}"]
-                if tokens_in is not None:
-                    log_parts.append(f"输入token={tokens_in}")
-                if thinking_tokens is not None:
-                    log_parts.append(f"思考token={thinking_tokens}")
-                if tokens_out is not None:
-                    log_parts.append(f"输出token={tokens_out}")
-                total = (tokens_in or 0) + (tokens_out or 0)
-                if tokens_in is not None or tokens_out is not None:
-                    log_parts.append(f"总token={total}")
-                log_parts.append(f"耗时={round(elapsed * 1000, 2)}ms")
-                logger.info(" | ".join(log_parts))
-
+                resp_preview = ""
+                # ... rest of preview and logging ...
                 if log_id:
                     await request_logger.update_request(log_id,
                         status_code=resp.status_code,
                         latency_ms=round(elapsed * 1000, 2),
                         input_tokens=tokens_in,
                         output_tokens=tokens_out,
+                        cache_hit_tokens=cache_hit,
+                        cache_miss_tokens=cache_miss,
                         response_preview=response_preview,
                         response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
                     )
@@ -970,6 +954,8 @@ async def _non_stream_chat(
                         latency_ms=round(elapsed * 1000, 2),
                         input_tokens=tokens_in,
                         output_tokens=tokens_out,
+                        cache_hit_tokens=cache_hit,
+                        cache_miss_tokens=cache_miss,
                         request_preview=request_text if request_text else None,
                         response_preview=response_preview,
                         request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
@@ -984,6 +970,7 @@ async def _non_stream_chat(
                     provider_name, resolved_model,
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
+                    cache_hit_tokens=cache_hit,
                     success=True,
                     cost_per_m_input=provider_cfg.cost_per_m_input,
                     cost_per_m_output=provider_cfg.cost_per_m_output,

@@ -23,9 +23,14 @@ def estimate_cost(
     output_tokens: int,
     cost_per_m_input: float = 0.0,
     cost_per_m_output: float = 0.0,
+    cache_hit_tokens: int = 0,
 ) -> float:
+    # Usually cache hit tokens are cheaper (e.g., 1/10th or 1/20th)
+    # For now, we use a simple estimate or assume cost_per_m_input applies to non-cached
     if cost_per_m_input > 0 or cost_per_m_output > 0:
-        return (input_tokens / 1_000_000) * cost_per_m_input + (output_tokens / 1_000_000) * cost_per_m_output
+        # Prompt caching discount: usually 90% off for hits
+        effective_input = (input_tokens - cache_hit_tokens) + (cache_hit_tokens * 0.1)
+        return (effective_input / 1_000_000) * cost_per_m_input + (output_tokens / 1_000_000) * cost_per_m_output
     return 0.0
 
 
@@ -70,6 +75,7 @@ class StatsTracker:
         self.total_errors: int = 0
         self.total_tokens_in: int = 0
         self.total_tokens_out: int = 0
+        self.total_cache_hit_tokens: int = 0
         self.total_cost: float = 0.0
         self.requests_by_provider: dict[str, int] = {}
         self.requests_by_model: dict[str, int] = {}
@@ -90,6 +96,7 @@ class StatsTracker:
             self.total_errors = data.get("total_errors", 0)
             self.total_tokens_in = data.get("total_tokens_in", 0)
             self.total_tokens_out = data.get("total_tokens_out", 0)
+            self.total_cache_hit_tokens = data.get("total_cache_hit_tokens", 0)
             self.total_cost = data.get("total_cost", 0.0)
             self.requests_by_provider = data.get("requests_by_provider", {})
             self.requests_by_model = data.get("requests_by_model", {})
@@ -109,6 +116,7 @@ class StatsTracker:
                 "total_errors": self.total_errors,
                 "total_tokens_in": self.total_tokens_in,
                 "total_tokens_out": self.total_tokens_out,
+                "total_cache_hit_tokens": self.total_cache_hit_tokens,
                 "total_cost": self.total_cost,
                 "requests_by_provider": self.requests_by_provider,
                 "requests_by_model": self.requests_by_model,
@@ -126,6 +134,7 @@ class StatsTracker:
         model: str,
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
+        cache_hit_tokens: int = 0,
         success: bool = True,
         is_estimated: bool = False,
         latency_ms: float = 0,
@@ -141,13 +150,15 @@ class StatsTracker:
 
         in_tokens = input_tokens or 0
         out_tokens = output_tokens or 0
+        hit_tokens = cache_hit_tokens or 0
 
         if input_tokens is not None:
             self.total_tokens_in += in_tokens
         if output_tokens is not None:
             self.total_tokens_out += out_tokens
+        self.total_cache_hit_tokens += hit_tokens
 
-        cost = estimate_cost(model, in_tokens, out_tokens, cost_per_m_input, cost_per_m_output)
+        cost = estimate_cost(model, in_tokens, out_tokens, cost_per_m_input, cost_per_m_output, hit_tokens)
         if input_tokens is not None or output_tokens is not None:
             self.total_cost += cost
 
@@ -157,12 +168,15 @@ class StatsTracker:
 
         ms = self.model_stats.setdefault(model, {
             "requests": 0, "errors": 0, "total_tokens_in": 0, "total_tokens_out": 0,
+            "total_cache_hit_tokens": 0,
             "streaming_requests": 0, "_first_token_history": [], "_speed_history": [],
         })
         ms["requests"] += 1
         if not success: ms["errors"] += 1
         ms["total_tokens_in"] += in_tokens
         ms["total_tokens_out"] += out_tokens
+        ms["total_cache_hit_tokens"] += hit_tokens
+        
         if is_streaming:
             ms["streaming_requests"] += 1
             if first_token_ms is not None:
@@ -181,6 +195,7 @@ class StatsTracker:
             "error_rate": self.total_errors / max(self.total_requests, 1),
             "total_tokens_in": self.total_tokens_in,
             "total_tokens_out": self.total_tokens_out,
+            "total_cache_hit_tokens": self.total_cache_hit_tokens,
             "total_tokens": self.total_tokens_in + self.total_tokens_out,
             "estimated_total_cost": round(self.total_cost, 6),
             "requests_by_provider": dict(self.requests_by_provider),
@@ -190,6 +205,8 @@ class StatsTracker:
 
     def _migrate_model_stats(self):
         for model, ms in self.model_stats.items():
+            if "total_cache_hit_tokens" not in ms:
+                ms["total_cache_hit_tokens"] = 0
             if "total_first_token_ms" in ms:
                 count = ms.get("first_token_count", 0)
                 ms["_first_token_history"] = [ms["total_first_token_ms"] / count] * min(count, MAX_HISTORY) if count > 0 else []
@@ -216,6 +233,7 @@ class StatsTracker:
             result[model] = {
                 "requests": ms["requests"], "errors": ms["errors"],
                 "total_tokens_in": ms["total_tokens_in"], "total_tokens_out": ms["total_tokens_out"],
+                "total_cache_hit_tokens": ms.get("total_cache_hit_tokens", 0),
                 "avg_first_token_ms": round(avg_ft, 1) if avg_ft is not None else None,
                 "avg_speed_tps": round(avg_sp, 1) if avg_sp is not None else None,
                 "streaming_requests": ms["streaming_requests"],
@@ -228,6 +246,7 @@ class StatsTracker:
         self.total_errors = 0
         self.total_tokens_in = 0
         self.total_tokens_out = 0
+        self.total_cache_hit_tokens = 0
         self.total_cost = 0.0
         self.requests_by_provider = {}
         self.requests_by_model = {}

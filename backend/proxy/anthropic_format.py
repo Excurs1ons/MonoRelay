@@ -90,12 +90,13 @@ def openai_to_anthropic(openai_body: dict) -> dict:
             if not merged_messages or merged_messages[-1]["role"] != msg["role"]:
                 merged_messages.append(msg)
             else:
-                # Same role, merge content
+                # Same role, merge content deterministically
                 prev_content = merged_messages[-1]["content"]
                 curr_content = msg["content"]
                 
                 if isinstance(prev_content, str) and isinstance(curr_content, str):
-                    merged_messages[-1]["content"] = prev_content + "\n\n" + curr_content
+                    # Standardize separator to a single newline for consistency
+                    merged_messages[-1]["content"] = prev_content + "\n" + curr_content
                 elif isinstance(prev_content, list) or isinstance(curr_content, list):
                     # Convert both to list if they aren't already
                     p_list = prev_content if isinstance(prev_content, list) else [{"type": "text", "text": prev_content}]
@@ -226,8 +227,6 @@ async def _stream_anthropic_to_openai(
                                 "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
                             }
                         }
-                        # Some clients expect at least one choice or ignore chunks with usage only
-                        # but we can try yielding it.
                         yield f"data: {json.dumps(openai_chunk)}\n\n".encode()
                 elif event_type == "message_stop":
                     openai_chunk = {
@@ -288,7 +287,6 @@ async def handle_openai_to_anthropic(
     start_time = time.time()
 
     if is_stream:
-        # We need to wrap the stream to convert it back to OpenAI format
         async def wrapped_gen():
             anthropic_gen = _stream_messages(
                 provider_cfg, url, headers, anthropic_body, key, key_manager, provider_name,
@@ -309,7 +307,6 @@ async def handle_openai_to_anthropic(
             },
         )
     else:
-        # Non-stream: call and convert response back
         result = await _non_stream_messages(
             provider_cfg, url, headers, anthropic_body, key, key_manager, provider_name,
             resolved_model, original_model, request_logger, start_time, stats_tracker,
@@ -392,7 +389,6 @@ def openai_to_anthropic_response(openai_resp: dict, model: str) -> dict:
             stop_reason = "max_tokens"
         elif finish_reason == "tool_calls":
             stop_reason = "tool_use"
-        # Map other finish reasons as needed
 
     usage = openai_resp.get("usage", {})
     
@@ -469,10 +465,8 @@ async def handle_anthropic_to_openai(
 ) -> StreamingResponse | dict:
     """Handle Anthropic-style request by converting it to OpenAI format."""
     original_model = body.get("model", "unknown")
-    
-    # Anthropic format uses 'messages' and optionally 'system'
     messages = body.get("messages", [])
-    
+
     resolved_model, provider_name = router.resolve_model(original_model, messages)
     
     # Convert body to OpenAI format
@@ -504,7 +498,7 @@ async def handle_anthropic_to_openai(
                 provider_cfg, url, headers, openai_body, key, key_manager, provider_name,
                 resolved_model, original_model, request_logger, start_time, stats_tracker,
             )
-            async for chunk in _stream_openai_to_anthropic(openai_gen):
+            async for chunk in _stream_anthropic_to_openai(openai_gen, original_model):
                 yield chunk
 
         return StreamingResponse(
@@ -609,6 +603,8 @@ async def _stream_messages(
         try:
             tokens_in = None
             tokens_out = None
+            cache_hit = 0
+            cache_miss = 0
             stream_chunks = 0
             buffer = b""
             output_content = []
@@ -684,16 +680,26 @@ async def _stream_messages(
                                             d = data.get("delta", {})
                                             if d.get("type") == "text_delta": output_content.append(d.get("text", ""))
                                             elif d.get("type") == "thinking_delta": output_thinking.append(d.get("thinking", ""))
+                                        elif data.get("type") == "message_start":
+                                            u = data.get("message", {}).get("usage", {})
+                                            if u:
+                                                tokens_in = u.get("input_tokens") or tokens_in
+                                                cache_hit = u.get("cache_read_input_tokens") or cache_hit
+                                                cache_miss = u.get("cache_creation_input_tokens") or cache_miss
                                         elif data.get("type") == "message_stop":
                                             usage = data.get("message", {}).get("usage", {})
                                             if usage:
-                                                tokens_in = usage.get("input_tokens")
-                                                tokens_out = usage.get("output_tokens")
+                                                tokens_in = usage.get("input_tokens") or tokens_in
+                                                tokens_out = usage.get("output_tokens") or tokens_out
+                                                cache_hit = usage.get("cache_read_input_tokens") or cache_hit
+                                                cache_miss = usage.get("cache_creation_input_tokens") or cache_miss
                                         elif data.get("type") == "message_delta":
                                             usage = data.get("usage", {})
                                             if usage:
                                                 tokens_in = usage.get("input_tokens") or tokens_in
                                                 tokens_out = usage.get("output_tokens") or tokens_out
+                                                cache_hit = usage.get("cache_read_input_tokens") or cache_hit
+                                                cache_miss = usage.get("cache_creation_input_tokens") or cache_miss
                                     except Exception:
                                         pass
 
@@ -708,6 +714,7 @@ async def _stream_messages(
 
             log_parts = [f"Anthropic流式 | 模型={resolved_model} | 提供商={provider_name}"]
             if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+            if cache_hit: log_parts.append(f"缓存命中={cache_hit}")
             log_parts.append(f"流式chunk数={stream_chunks}")
             if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
             total = (tokens_in or 0) + (tokens_out or 0)
@@ -726,7 +733,12 @@ async def _stream_messages(
                 "role": "assistant",
                 "model": resolved_model,
                 "content": [{"type": "text", "text": full_content}],
-                "usage": {"input_tokens": tokens_in or 0, "output_tokens": tokens_out or 0}
+                "usage": {
+                    "input_tokens": tokens_in or 0, 
+                    "output_tokens": tokens_out or 0,
+                    "cache_read_input_tokens": cache_hit,
+                    "cache_creation_input_tokens": cache_miss,
+                }
             }
             if full_thinking: response_full_obj["content"].insert(0, {"type": "thinking", "thinking": full_thinking})
             response_full_str = json.dumps(response_full_obj, ensure_ascii=False, indent=2)
@@ -740,13 +752,17 @@ async def _stream_messages(
                 streaming=True,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
+                cache_hit_tokens=cache_hit,
+                cache_miss_tokens=cache_miss,
                 response_preview=resp_preview,
                 request_full=json.dumps(body, ensure_ascii=False, indent=2),
                 response_full=response_full_str,
             )
             stats_tracker.record_request(
                 provider_name, resolved_model,
-                input_tokens=tokens_in, output_tokens=tokens_out, success=True,
+                input_tokens=tokens_in, output_tokens=tokens_out, 
+                cache_hit_tokens=cache_hit,
+                success=True,
                 cost_per_m_input=provider_cfg.cost_per_m_input,
                 cost_per_m_output=provider_cfg.cost_per_m_output,
             )
@@ -826,6 +842,12 @@ async def _non_stream_messages(
 
                 result = resp.json()
                 tokens_in, tokens_out = extract_anthropic_token_usage(result)
+                
+                # Extract cache usage
+                usage = result.get("usage", {})
+                cache_hit = usage.get("cache_read_input_tokens") or 0
+                cache_miss = usage.get("cache_creation_input_tokens") or 0
+
                 content_text, thinking_text = "", ""
                 for p in result.get("content", []):
                     if p.get("type") == "text": content_text += p.get("text", "")
@@ -841,6 +863,7 @@ async def _non_stream_messages(
 
                 log_parts = [f"Anthropic非流式 | 模型={resolved_model} | 提供商={provider_name}"]
                 if tokens_in is not None: log_parts.append(f"输入token={tokens_in}")
+                if cache_hit: log_parts.append(f"缓存命中={cache_hit}")
                 if tokens_out is not None: log_parts.append(f"输出token={tokens_out}")
                 total = (tokens_in or 0) + (tokens_out or 0)
                 if tokens_in is not None or tokens_out is not None: log_parts.append(f"总token={total}")
@@ -855,13 +878,17 @@ async def _non_stream_messages(
                     latency_ms=round(elapsed * 1000, 2),
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
+                    cache_hit_tokens=cache_hit,
+                    cache_miss_tokens=cache_miss,
                     request_full=json.dumps(body, ensure_ascii=False, indent=2),
                     response_full=json.dumps(result, ensure_ascii=False, indent=2) if result else None,
+                    response_preview=resp_preview,
                 )
                 stats_tracker.record_request(
                     provider_name, resolved_model,
                     input_tokens=tokens_in,
                     output_tokens=tokens_out,
+                    cache_hit_tokens=cache_hit,
                     success=True,
                     cost_per_m_input=provider_cfg.cost_per_m_input,
                     cost_per_m_output=provider_cfg.cost_per_m_output,

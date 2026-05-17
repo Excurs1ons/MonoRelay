@@ -47,7 +47,12 @@
                   {{ formatMs(log.first_token_ms) }}
                 </td>
                 <td class="text-right mono text-xs">{{ formatMs(log.latency_ms) }}</td>
-                <td class="text-right mono text-xs">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</td>
+                <td class="text-right mono text-xs">
+                  <div>{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</div>
+                  <div v-if="log.cache_hit_tokens" class="text-blue-400" style="font-size: 10px;">
+                    ⚡ {{ log.cache_hit_tokens }}
+                  </div>
+                </td>
               </tr>
                 <tr v-if="expanded[log.id]" class="expand-row">
                   <td colspan="8">
@@ -59,7 +64,10 @@
                         <span class="summary-item badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
                         <span class="summary-item">首字: {{ formatMs(log.first_token_ms) }}</span>
                         <span class="summary-item">全量: {{ formatMs(log.latency_ms) }}</span>
-                        <span class="summary-item">{{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}</span>
+                        <span class="summary-item">
+                          Tokens: {{ log.input_tokens || 0 }}/{{ log.output_tokens || 0 }}
+                          <span v-if="log.cache_hit_tokens" class="text-blue-400 ml-1">(⚡ {{ log.cache_hit_tokens }})</span>
+                        </span>
                       </div>
 
                      <!-- Params Block -->
