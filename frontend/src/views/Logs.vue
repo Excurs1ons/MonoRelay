@@ -58,8 +58,8 @@
                 <td class="text-dim truncate-cell" v-if="activeTab === 'upstream'">{{ log.provider }}</td>
                 <td class="text-dim truncate-cell mono" v-else>{{ log.client_ip || '-' }}</td>
                 <td class="text-center">
-                  <span v-if="log.id < 0" class="badge badge-blue animate-pulse">处理中</span>
-                  <span v-else class="badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code }}</span>
+                  <span v-if="log.id < 0 && !log.status_code" class="badge badge-blue animate-pulse">处理中</span>
+                  <span v-else class="badge" :class="log.status_code < 400 ? 'badge-green' : 'badge-red'">{{ log.status_code || '...' }}</span>
                 </td>
                 <td class="text-right mono text-xs" :class="getLatencyColor(log.first_token_ms)">
                   {{ formatMs(log.first_token_ms) }}

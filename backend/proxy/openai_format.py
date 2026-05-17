@@ -784,12 +784,17 @@ async def _stream_chat(
             ))
             return
         except GeneratorExit:
-            # Client disconnected - clean up pending entry
+            # Client disconnected - clean up and finalize pending entry
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.warning(f"流式请求被客户端取消 | 模型={resolved_model} | 提供商={provider_name}")
             if log_id:
                 await request_logger.update_pending(log_id,
+                    status_code=499,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message="Client disconnected",
+                )
+                await request_logger.finalize_pending(log_id,
                     status_code=499,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message="Client disconnected",
@@ -802,6 +807,11 @@ async def _stream_chat(
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
             if log_id:
                 await request_logger.update_pending(log_id,
+                    status_code=500,
+                    latency_ms=round(elapsed * 1000, 2),
+                    error_message=str(e),
+                )
+                await request_logger.finalize_pending(log_id,
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=str(e),
