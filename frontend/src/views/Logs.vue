@@ -250,36 +250,68 @@ function getCleanResponseContent(id) {
 function formatTime(ts) { return ts ? new Date(ts * 1000).toLocaleString() : '-' }
 function formatMs(ms) { return ms ? (ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms.toFixed(0) + 'ms') : '-' }
 
-let pollTimer = null
+let abortController = null
 
-function startPolling() {
-  stopPolling()
-  if (document.visibilityState === 'visible') {
-    pollTimer = setInterval(fetchLogs, 1000)
+async function connectSSE() {
+  abortController = new AbortController()
+  try {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token') || ''
+    const accessKey = localStorage.getItem('access_key') || ''
+    const authHeader = token ? `Bearer ${token}` : (accessKey ? `Bearer ${accessKey}` : '')
+    if (!authHeader) return
+
+    const resp = await fetch('/api/logs/stream', {
+      headers: { Authorization: authHeader },
+      signal: abortController.signal,
+    })
+    if (!resp.ok || !resp.body) {
+      setTimeout(connectSSE, 3000)
+      return
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const parts = buf.split('\n\n')
+      buf = parts.pop() || ''
+      for (const part of parts) {
+        if (!part.trim()) continue
+        const m = part.match(/^event: (\S+)\ndata: (.+)$/m)
+        if (!m) continue
+        try {
+          const data = JSON.parse(m[2])
+          if (m[1] === 'log_new') {
+            logs.value = [data, ...logs.value.filter(l => l.id !== data.id)]
+          } else if (m[1] === 'log_update') {
+            const idx = logs.value.findIndex(l => l.id === data.id)
+            if (idx >= 0) {
+              logs.value[idx] = { ...logs.value[idx], ...data }
+              logs.value = [...logs.value]
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      await new Promise(r => setTimeout(r, 3000))
+      connectSSE()
+    }
   }
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function onVisibilityChange() {
-  if (document.visibilityState === 'visible') startPolling()
-  else stopPolling()
 }
 
 onMounted(() => {
   fetchLogs()
-  document.addEventListener('visibilitychange', onVisibilityChange)
-  startPolling()
+  connectSSE()
 })
 
 onUnmounted(() => {
-  stopPolling()
-  document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (abortController) abortController.abort()
 })
 </script>
 

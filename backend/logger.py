@@ -1,6 +1,7 @@
 """Request logging with async SQLite storage."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -9,6 +10,33 @@ from typing import Optional
 import aiosqlite
 
 logger = logging.getLogger("monorelay.logger")
+
+
+class LogEventBus:
+    """Async pub/sub for real-time log streaming via SSE."""
+
+    def __init__(self):
+        self._subscribers: list[asyncio.Queue] = []
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue()
+        async with self._lock:
+            self._subscribers.append(queue)
+        return queue
+
+    async def unsubscribe(self, queue: asyncio.Queue):
+        async with self._lock:
+            if queue in self._subscribers:
+                self._subscribers.remove(queue)
+
+    async def publish(self, event_type: str, data: dict):
+        async with self._lock:
+            for q in self._subscribers:
+                await q.put((event_type, data))
+
+
+log_bus = LogEventBus()
 
 
 class RequestLogger:
@@ -166,7 +194,24 @@ class RequestLogger:
             ),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        row_id = cursor.lastrowid
+        # Publish SSE event for real-time streaming
+        event_data = {
+            "id": row_id,
+            "timestamp": time.time(),
+            "model": model,
+            "provider": provider,
+            "key_label": key_label,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "first_token_ms": first_token_ms,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "error_message": error_message,
+            "streaming": streaming,
+        }
+        asyncio.ensure_future(log_bus.publish("log_new", event_data))
+        return row_id
 
     async def update_request(self, request_id: int, **kwargs):
         """Update fields of an existing log entry by ID."""
@@ -186,6 +231,7 @@ class RequestLogger:
         values = list(updates.values()) + [request_id]
         await self._db.execute(f"UPDATE requests SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": request_id, **updates}))
 
     async def cleanup_old_entries(self):
         if not self._db:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import sys
@@ -17,13 +18,13 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import ConfigManager
 from .key_manager import KeyManager
-from .logger import RequestLogger
+from .logger import RequestLogger, log_bus
 from .models import AppConfig, ProviderConfig, ProviderKey, SSOConfig
 from .router import ModelRouter
 from .stats import StatsTracker
@@ -1624,6 +1625,24 @@ async def api_stats_reset():
 async def api_logs_clear():
     await request_logger.clear_all()
     return api_response(message="请求日志已清空")
+
+
+@app.get("/api/logs/stream")
+async def api_logs_stream():
+    """SSE endpoint: streams new/updated log entries in real-time."""
+    queue = await log_bus.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                event_type, data = await queue.get()
+                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await log_bus.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/stats/file")
