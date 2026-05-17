@@ -328,10 +328,19 @@ onUnmounted(() => {
 .mb-4 { margin-bottom: 16px; }
 .card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 10px; padding: 20px; }
 .table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; padding: 10px 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--color-border); }
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+thead { position: sticky; top: 0; z-index: 10; background: var(--color-bg); }
+th { text-align: left; padding: 12px; color: var(--color-text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--color-border-strong); }
 th.text-right { text-align: right; }
-td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
+td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
+
+/* Column Widths */
+th:nth-child(2), td:nth-child(2) { min-width: 160px; } /* Time */
+th:nth-child(3), td:nth-child(3) { min-width: 140px; } /* Model */
+th:nth-child(4), td:nth-child(4) { min-width: 100px; } /* Provider */
+th:nth-child(5), td:nth-child(5) { min-width: 80px; }  /* Status */
+th:nth-child(6), td:nth-child(6) { min-width: 80px; }  /* Latency */
+th:nth-child(7), td:nth-child(7) { min-width: 100px; } /* Tokens */
 td.text-right { text-align: right; }
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
 .text-dim { color: var(--color-text-dim); }
