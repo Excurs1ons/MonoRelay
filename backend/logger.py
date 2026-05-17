@@ -197,7 +197,27 @@ class RequestLogger:
             ),
         )
         await self._db.commit()
-        return cursor.lastrowid
+        real_id = cursor.lastrowid
+        
+        # Publish event for real-time display
+        asyncio.ensure_future(log_bus.publish("log_new", {
+            "id": real_id,
+            "timestamp": time.time(),
+            "model": model,
+            "provider": provider,
+            "key_label": key_label,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "first_token_ms": first_token_ms,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost": estimated_cost,
+            "request_preview": request_preview,
+            "response_preview": response_preview,
+            "streaming": streaming,
+        }))
+        
+        return real_id
 
     async def update_request(self, request_id: int, **kwargs):
         """Update fields of an existing log entry by ID."""
@@ -217,6 +237,9 @@ class RequestLogger:
         values = list(updates.values()) + [request_id]
         await self._db.execute(f"UPDATE requests SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
+        
+        # Publish update event
+        asyncio.ensure_future(log_bus.publish("log_update", {"id": request_id, **updates}))
 
     async def create_pending(self, **data) -> int:
         """Store in memory without DB write, publish SSE 'log_new'. Returns temp_id (< 0)."""

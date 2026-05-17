@@ -246,6 +246,7 @@ async def auth_middleware(request: Request, call_next):
             "/api/providers",
             "/api/models/pricing",
             "/api/logs",
+            "/api/logs/stream",
             "/v1/models",
         ]
 
@@ -1609,16 +1610,30 @@ async def api_logs_stream():
     queue = await log_bus.subscribe()
 
     async def event_generator():
+        import json
         try:
             while True:
-                event_type, data = await queue.get()
-                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                try:
+                    # Wait for 20 seconds for new data, otherwise send a heartbeat
+                    event_type, data = await asyncio.wait_for(queue.get(), timeout=20.0)
+                    yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    # Heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
         except asyncio.CancelledError:
             pass
         finally:
             await log_bus.unsubscribe(queue)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Critical for Nginx
+        }
+    )
 
 
 @app.get("/api/logs/{log_id}")
