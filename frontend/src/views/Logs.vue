@@ -302,15 +302,40 @@ async function connectSSE() {
           if (m[1] === 'log_new') {
             logs.value = [data, ...logs.value.filter(l => l.id !== data.id)]
           } else if (m[1] === 'log_update') {
+            const oldId = data.id
             if (data._real_id != null) {
+              const newId = data._real_id
               // Pending entry finalized: replace temp_id with real_id
-              const idx = logs.value.findIndex(l => l.id === data.id)
-              if (idx >= 0) logs.value[idx] = { ...logs.value[idx], id: data._real_id }
+              const idx = logs.value.findIndex(l => l.id === oldId)
+              if (idx >= 0) {
+                logs.value[idx] = { ...logs.value[idx], ...data, id: newId }
+                // Migrate UI states to new ID
+                if (expanded.value[oldId]) {
+                  expanded.value[newId] = true
+                  delete expanded.value[oldId]
+                }
+                if (fullContent.value[oldId]) {
+                  fullContent.value[newId] = { ...fullContent.value[oldId], ...data, id: newId }
+                  delete fullContent.value[oldId]
+                }
+                if (showFullReqState.value[oldId]) {
+                  showFullReqState.value[newId] = showFullReqState.value[oldId]
+                  delete showFullReqState.value[oldId]
+                }
+                if (showFullResState.value[oldId]) {
+                  showFullResState.value[newId] = showFullResState.value[oldId]
+                  delete showFullResState.value[oldId]
+                }
+              }
               logs.value = [...logs.value]
             } else {
-              const idx = logs.value.findIndex(l => l.id === data.id)
+              const idx = logs.value.findIndex(l => l.id === oldId)
               if (idx >= 0) {
                 logs.value[idx] = { ...logs.value[idx], ...data }
+                // Also update fullContent if it exists to keep expanded view synced
+                if (fullContent.value[oldId]) {
+                  fullContent.value[oldId] = { ...fullContent.value[oldId], ...data }
+                }
                 logs.value = [...logs.value]
               }
             }

@@ -309,7 +309,14 @@ class RequestLogger:
         )
         await self._db.commit()
         real_id = cursor.lastrowid
-        asyncio.ensure_future(log_bus.publish("log_update", {"id": temp_id, "_real_id": real_id}))
+        
+        # Publish update event with new ID and ALL final data to ensure UI consistency
+        asyncio.ensure_future(log_bus.publish("log_update", {
+            "id": temp_id, 
+            "_real_id": real_id,
+            **entry,
+            **final_data
+        }))
         return real_id
 
     async def get_pending_entries(self) -> list[dict]:
