@@ -441,7 +441,8 @@ td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: n
 .expand-icon { display: inline-block; font-size: 10px; transition: transform 0.2s; color: var(--color-text-dim); }
 .expand-icon.rotated { transform: rotate(90deg); color: var(--color-accent); }
 
-.expand-content { padding: 20px; background: var(--color-bg-card); border-bottom: 1px solid var(--color-border); }
+.expand-row td { white-space: normal; padding: 0; }
+.expand-content { padding: 20px; background: var(--color-bg-card); border-bottom: 1px solid var(--color-border); width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: auto; }
 .expand-header-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 10px 14px; background: var(--color-bg-input); border-radius: 6px; border: 1px solid var(--color-border); }
 .summary-item { font-size: 12px; color: var(--color-text-dim); }
 
