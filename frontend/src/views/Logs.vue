@@ -416,15 +416,15 @@ td { padding: 12px; border-bottom: 1px solid var(--color-border); white-space: n
 .expand-icon { display: inline-block; font-size: 10px; transition: transform 0.2s; color: var(--color-text-dim); }
 .expand-icon.rotated { transform: rotate(90deg); color: var(--color-accent); }
 
-.expand-content { padding: 20px; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--color-border); }
-.expand-header-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--color-border); }
+.expand-content { padding: 20px; background: var(--color-bg-card); border-bottom: 1px solid var(--color-border); }
+.expand-header-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 10px 14px; background: var(--color-bg-input); border-radius: 6px; border: 1px solid var(--color-border); }
 .summary-item { font-size: 12px; color: var(--color-text-dim); }
 
 .content-label { font-size: 11px; font-weight: 700; color: var(--color-accent); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
 .collapse-btn { background: transparent; border: none; color: var(--color-text-dim); cursor: pointer; padding: 2px 4px; font-family: monospace; }
-.content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: rgba(255,255,255,0.02); color: var(--color-text-dim); cursor: pointer; }
+.content-toggle { font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-text-dim); cursor: pointer; }
 
-.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #d1d1d1; }
+.content-text { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--color-text); opacity: 0.9; }
 .text-body { background: var(--color-bg-input); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--color-text); }
 .text-msg { margin-bottom: 12px; }
 .text-role { font-weight: 700; color: var(--color-accent); margin-right: 8px; }
