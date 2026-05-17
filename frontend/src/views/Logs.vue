@@ -180,13 +180,27 @@ const isAdmin = computed(() => user.value?.role === 'admin' || user.value?.is_ad
 let sseAbort = null
 let tickTimer = null
 
+async function clearLogs() {
+  if (!confirm('确定要清空所有日志吗？此操作不可恢复。')) return
+  try {
+    loading.value = true
+    await api.clearLogs()
+    logs.value = []
+  } catch (e) {
+    console.error('清空日志失败:', e)
+    alert('清空日志失败: ' + (e.message || e))
+  } finally {
+    loading.value = false
+  }
+}
+
 async function fetchLogs() {
   loading.value = true
   try {
-    user.value = await api.getMe()
+    try { user.value = await api.getMe() } catch {}
     const data = await api.getLogs(limit.value)
     logs.value = (data.logs || data || []).map(l => ({ ...l, _start_time: l.timestamp * 1000 }))
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error('刷新日志失败:', e) }
   finally { loading.value = false }
 }
 
