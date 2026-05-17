@@ -1064,8 +1064,13 @@ async def api_cache_enable(enabled: bool = True, ttl_seconds: int = 300, max_siz
 async def chat_completions(request: Request):
     try:
         body = await request.json()
+        client_ip = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for") or request.client.host
+        user_agent = request.headers.get("user-agent")
+        downstream_request = json.dumps(body, ensure_ascii=False)
+
         result = await handle_chat_completions(
             body, config_manager.config, key_manager, model_router, request_logger, stats_tracker,
+            client_ip=client_ip, user_agent=user_agent, downstream_request=downstream_request
         )
         if isinstance(result, dict) and "error" in result:
             return JSONResponse(status_code=503, content=result)

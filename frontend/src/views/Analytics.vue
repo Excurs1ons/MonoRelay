@@ -61,8 +61,8 @@
             <tr v-for="q in slowQueries" :key="q.id">
               <td class="mono">{{ q.model }}</td>
               <td>{{ q.provider }}</td>
-              <td class="text-right">{{ q.first_token_ms?.toFixed(0) || '-' }}ms</td>
-              <td class="text-right">{{ q.latency_ms?.toFixed(0) || '-' }}ms</td>
+              <td class="text-right">{{ formatMs(q.first_token_ms) }}</td>
+              <td class="text-right">{{ formatMs(q.latency_ms) }}</td>
             </tr>
           </tbody>
         </table>
@@ -124,6 +124,12 @@ function formatNum(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
   return n?.toString() || '0'
+}
+
+function formatMs(ms) {
+  if (ms == null) return '-'
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
+  return ms.toFixed(0) + 'ms'
 }
 
 function getProviderPercent(requests) {

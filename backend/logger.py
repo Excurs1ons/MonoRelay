@@ -86,7 +86,11 @@ class RequestLogger:
                 frequency_penalty REAL,
                 max_tokens INTEGER,
                 cache_hit_tokens INTEGER DEFAULT 0,
-                cache_miss_tokens INTEGER DEFAULT 0
+                cache_miss_tokens INTEGER DEFAULT 0,
+                client_ip TEXT,
+                user_agent TEXT,
+                downstream_request TEXT,
+                downstream_response TEXT
             )
             """
         )
@@ -106,7 +110,11 @@ class RequestLogger:
             ("frequency_penalty", "REAL"),
             ("max_tokens", "INTEGER"),
             ("cache_hit_tokens", "INTEGER DEFAULT 0"),
-            ("cache_miss_tokens", "INTEGER DEFAULT 0")
+            ("cache_miss_tokens", "INTEGER DEFAULT 0"),
+            ("client_ip", "TEXT"),
+            ("user_agent", "TEXT"),
+            ("downstream_request", "TEXT"),
+            ("downstream_response", "TEXT")
         ]
         
         for col_name, col_type in new_cols:
@@ -157,6 +165,10 @@ class RequestLogger:
         max_tokens: Optional[int] = None,
         cache_hit_tokens: int = 0,
         cache_miss_tokens: int = 0,
+        client_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        downstream_request: Optional[str] = None,
+        downstream_response: Optional[str] = None,
     ):
         if not self._db:
             await self.init()
@@ -168,8 +180,8 @@ class RequestLogger:
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens,
-                cache_hit_tokens, cache_miss_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cache_hit_tokens, cache_miss_tokens, client_ip, user_agent, downstream_request, downstream_response
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
@@ -199,6 +211,10 @@ class RequestLogger:
                 max_tokens,
                 cache_hit_tokens,
                 cache_miss_tokens,
+                client_ip,
+                user_agent,
+                downstream_request,
+                downstream_response,
             ),
         )
         await self._db.commit()
@@ -222,6 +238,7 @@ class RequestLogger:
             "streaming": streaming,
             "cache_hit_tokens": cache_hit_tokens,
             "cache_miss_tokens": cache_miss_tokens,
+            "client_ip": client_ip,
         }))
         
         return real_id
@@ -236,6 +253,7 @@ class RequestLogger:
             "response_preview", "response_full",
             "error_message", "error_type", "error_code", "error_details",
             "key_label", "streaming", "cache_hit_tokens", "cache_miss_tokens",
+            "client_ip", "user_agent", "downstream_request", "downstream_response"
         }
         updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
         if not updates:
@@ -286,8 +304,8 @@ class RequestLogger:
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens,
-                cache_hit_tokens, cache_miss_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                cache_hit_tokens, cache_miss_tokens, client_ip, user_agent, downstream_request, downstream_response
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry.get("timestamp", time.time()),
                 entry.get("user_id"),
@@ -316,6 +334,10 @@ class RequestLogger:
                 entry.get("max_tokens"),
                 entry.get("cache_hit_tokens", 0),
                 entry.get("cache_miss_tokens", 0),
+                entry.get("client_ip"),
+                entry.get("user_agent"),
+                entry.get("downstream_request"),
+                entry.get("downstream_response"),
             ),
         )
         await self._db.commit()
@@ -333,6 +355,7 @@ class RequestLogger:
             "response_preview": entry.get("response_preview"),
             "cache_hit_tokens": entry.get("cache_hit_tokens", 0),
             "cache_miss_tokens": entry.get("cache_miss_tokens", 0),
+            "client_ip": entry.get("client_ip"),
         }
         asyncio.ensure_future(log_bus.publish("log_update", update_payload))
         return real_id
