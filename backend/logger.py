@@ -50,18 +50,13 @@ class RequestLogger:
         self._next_temp_id = -1
 
     async def init(self):
-        import os
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
-        
         await self._db.execute(
             """
             CREATE TABLE IF NOT EXISTS requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp REAL NOT NULL,
-                user_id INTEGER,
                 model TEXT NOT NULL,
                 provider TEXT NOT NULL,
                 key_label TEXT,
@@ -88,39 +83,50 @@ class RequestLogger:
             )
             """
         )
-        
-        # Migration: Add missing columns if any
-        new_cols = [
-            ("request_full", "TEXT"),
-            ("response_full", "TEXT"),
-            ("user_id", "INTEGER"),
-            ("error_type", "TEXT"),
-            ("error_code", "TEXT"),
-            ("error_details", "TEXT"),
-            ("first_token_ms", "REAL"),
-            ("temperature", "REAL"),
-            ("top_p", "REAL"),
-            ("presence_penalty", "REAL"),
-            ("frequency_penalty", "REAL"),
-            ("max_tokens", "INTEGER")
-        ]
-        
-        for col_name, col_type in new_cols:
+        await self._db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp)
+            """
+        )
+        await self._db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model)
+            """
+        )
+        await self._db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_requests_provider ON requests(provider)
+            """
+        )
+        # 迁移：为已有数据库添加 first_token_ms 字段
+        try:
+            await self._db.execute(
+                "ALTER TABLE requests ADD COLUMN first_token_ms REAL"
+            )
+        except Exception:
+            pass
+        # 迁移：添加请求参数字段
+        for col in ["temperature REAL", "top_p REAL", "presence_penalty REAL", "frequency_penalty REAL", "max_tokens INTEGER"]:
             try:
-                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col_name} {col_type}")
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
             except Exception:
                 pass
-
-        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp)")
-        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model)")
-        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_requests_provider ON requests(provider)")
-        await self._db.execute("CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user_id)")
-        
+        # 迁移：添加错误详情字段
+        for col in ["error_type TEXT", "error_code TEXT", "error_details TEXT"]:
+            try:
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
+            except Exception:
+                pass
+        # 迁移：添加完整请求/响应字段
+        for col in ["request_full TEXT", "response_full TEXT"]:
+            try:
+                await self._db.execute(f"ALTER TABLE requests ADD COLUMN {col}")
+            except Exception:
+                pass
         await self._db.commit()
         logger.info(f"Request logger initialized with database at {self.db_path}")
 
     async def close(self):
-        """Close the database connection."""
         if self._db:
             await self._db.close()
             self._db = None
@@ -129,7 +135,6 @@ class RequestLogger:
         self,
         model: str,
         provider: str,
-        user_id: Optional[int] = None,
         key_label: Optional[str] = None,
         status_code: Optional[int] = None,
         latency_ms: Optional[float] = None,
@@ -158,15 +163,14 @@ class RequestLogger:
         cursor = await self._db.execute(
             """
             INSERT INTO requests (
-                timestamp, user_id, model, provider, key_label, status_code, latency_ms,
+                timestamp, model, provider, key_label, status_code, latency_ms,
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 time.time(),
-                user_id,
                 model,
                 provider,
                 key_label,
@@ -248,14 +252,13 @@ class RequestLogger:
             await self.init()
         cursor = await self._db.execute(
             """INSERT INTO requests (
-                timestamp, user_id, model, provider, key_label, status_code, latency_ms,
+                timestamp, model, provider, key_label, status_code, latency_ms,
                 first_token_ms, input_tokens, output_tokens, estimated_cost, request_preview,
                 response_preview, request_full, response_full, error_message, error_type, error_code, error_details,
                 streaming, temperature, top_p, presence_penalty, frequency_penalty, max_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry.get("timestamp", time.time()),
-                entry.get("user_id"),
                 entry.get("model", ""),
                 entry.get("provider", ""),
                 entry.get("key_label"),
@@ -301,48 +304,26 @@ class RequestLogger:
         if deleted:
             logger.info(f"Cleaned up {deleted} old log entries")
 
-    async def get_recent_requests(self, limit: int = 50, user_id: Optional[int] = None) -> list[dict]:
+    async def get_recent_requests(self, limit: int = 50) -> list[dict]:
         if not self._db:
-            await self.init()
-        
-        query = "SELECT * FROM requests"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(user_id)
-        
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
-        
-        cursor = await self._db.execute(query, tuple(params))
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM requests ORDER BY timestamp DESC LIMIT ?", (limit,)
+        )
         rows = [dict(row) for row in await cursor.fetchall()]
-        
-        # Merge with pending if no user_id or user_id matches
-        async with self._pending_lock:
-            pending = [v for v in self._pending.values() if user_id is None or v.get("user_id") == user_id]
-        
+        pending = list(self._pending.values())
+        # Merge: pending first (newest), then DB, capped at limit
         merged = pending + rows
         merged.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
         return merged[:limit]
 
-    async def clear_all(self, user_id: Optional[int] = None):
-        async with self._pending_lock:
-            if user_id is not None:
-                to_remove = [k for k, v in self._pending.items() if v.get("user_id") == user_id]
-                for k in to_remove:
-                    del self._pending[k]
-            else:
-                self._pending.clear()
-
+    async def clear_all(self):
+        self._pending.clear()
         if not self._db:
-            await self.init()
-
-        if user_id is not None:
-            await self._db.execute("DELETE FROM requests WHERE user_id = ?", (user_id,))
-        else:
-            await self._db.execute("DELETE FROM requests")
+            return
+        await self._db.execute("DELETE FROM requests")
         await self._db.commit()
-        logger.info(f"Request logs cleared (user_id={user_id})")
+        logger.info("All request logs cleared")
 
     async def get_stats_summary(self) -> dict:
         if not self._db:
