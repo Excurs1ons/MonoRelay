@@ -550,10 +550,12 @@ async def _stream_chat(
             frequency_penalty = body.get("frequency_penalty")
             max_tokens = body.get("max_tokens")
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
+            # cap read timeout to 50s so upstream timeout fires before client timeout (~60s)
+            _sread = min(provider_cfg.timeout, 50)
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0, read=_sread)) as client:
                 async with client.stream(
                     "POST", url, headers=headers, json=body,
-                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
+                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0, read=_sread),
                 ) as response:
                     if response.status_code >= 400:
                         error_body = await response.aread()
