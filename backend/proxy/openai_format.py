@@ -802,7 +802,7 @@ async def _stream_chat(
             stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
             raise  # Must re-raise GeneratorExit to close cleanly
         except asyncio.CancelledError:
-            # Task cancelled (e.g. client timeout / upstream timeout) - clean up without yielding
+            # Task cancelled (e.g. client timeout / upstream timeout) - yield error SSE then finish
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.warning(f"流式请求被取消 | 模型={resolved_model} | 提供商={provider_name} | 耗时={round(elapsed * 1000)}ms")
@@ -825,7 +825,10 @@ async def _stream_chat(
                     error_message="Request cancelled",
                 )
             stats_tracker.record_request(provider_name, resolved_model, success=False, latency_ms=elapsed * 1000)
-            return  # Generator ends cleanly -> StreamingResponse sees normal EOF, no 500
+            err = json.dumps({"error": {"message": "Request cancelled (upstream timeout)", "type": "timeout_error"}})
+            yield f"data: {err}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+            return
         except BaseException as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
