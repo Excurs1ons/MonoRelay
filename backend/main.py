@@ -2944,6 +2944,13 @@ async def api_update_provider(name: str, request: Request):
             raise HTTPException(status_code=404, detail=f"Provider '{name}' not found")
 
         update_data = body.get("config", body)
+        # Map flat api_key field to keys array (frontend sends api_key, backend uses keys)
+        if "api_key" in update_data:
+            api_key = update_data.pop("api_key")
+            if api_key:
+                update_data["keys"] = [{"key": api_key, "label": "main", "enabled": True}]
+            else:
+                update_data["keys"] = []
         existing = cfg.providers[name].model_dump()
         existing.update({k: v for k, v in update_data.items() if v is not None})
         cfg.providers[name] = ProviderConfig(**existing)
