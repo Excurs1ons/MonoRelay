@@ -834,17 +834,17 @@ async def _stream_chat(
         except BaseException as e:
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
-            logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 错误={e}")
+            logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 类型={type(e).__name__} | 错误={e} | repr={repr(e)}")
             if log_id:
                 await request_logger.update_pending(log_id,
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
-                    error_message=str(e),
+                    error_message=f"{type(e).__name__}: {str(e)}",
                 )
                 await request_logger.finalize_pending(log_id,
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
-                    error_message=str(e),
+                    error_message=f"{type(e).__name__}: {str(e)}",
                 )
             else:
                 await request_logger.log_request(
@@ -854,7 +854,7 @@ async def _stream_chat(
                     status_code=500,
                     latency_ms=round(elapsed * 1000, 2),
                     streaming=True,
-                    error_message=str(e),
+                    error_message=f"{type(e).__name__}: {str(e)}",
                     request_preview=request_text if request_text else None,
                     request_full=json.dumps(original_body if "original_body" in locals() else body, ensure_ascii=False, indent=2),
                     temperature=temperature,
@@ -867,6 +867,7 @@ async def _stream_chat(
             err = json.dumps({"error": {"message": str(e), "type": "proxy_error"}})
             yield f"data: {err}\n\n".encode()
             yield b"data: [DONE]\n\n"
+            return
 
 
 async def _non_stream_chat(
