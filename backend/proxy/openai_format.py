@@ -550,12 +550,10 @@ async def _stream_chat(
             frequency_penalty = body.get("frequency_penalty")
             max_tokens = body.get("max_tokens")
 
-            # cap read timeout to 50s so upstream timeout fires before client timeout (~60s)
-            _sread = min(provider_cfg.timeout, 50)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0, read=_sread)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0)) as client:
                 async with client.stream(
                     "POST", url, headers=headers, json=body,
-                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0, read=_sread),
+                    timeout=httpx.Timeout(provider_cfg.timeout, connect=10.0),
                 ) as response:
                     if response.status_code >= 400:
                         error_body = await response.aread()
@@ -835,14 +833,15 @@ async def _stream_chat(
             key_manager.report_failure(provider_name, key, provider_cfg.rate_limit_cooldown)
             elapsed = time.time() - start_time
             logger.error(f"流式请求失败 | 模型={resolved_model} | 提供商={provider_name} | 类型={type(e).__name__} | 错误={e} | repr={repr(e)}")
+            upstream_code = 504 if isinstance(e, httpx.TimeoutException) else 502
             if log_id:
                 await request_logger.update_pending(log_id,
-                    status_code=500,
+                    status_code=upstream_code,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=f"{type(e).__name__}: {str(e)}",
                 )
                 await request_logger.finalize_pending(log_id,
-                    status_code=500,
+                    status_code=upstream_code,
                     latency_ms=round(elapsed * 1000, 2),
                     error_message=f"{type(e).__name__}: {str(e)}",
                 )
@@ -851,7 +850,7 @@ async def _stream_chat(
                     model=resolved_model,
                     provider=provider_name,
                     key_label=key.key.label,
-                    status_code=500,
+                    status_code=upstream_code,
                     latency_ms=round(elapsed * 1000, 2),
                     streaming=True,
                     error_message=f"{type(e).__name__}: {str(e)}",
